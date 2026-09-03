@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, Store, CreditCard, Bell, Shield } from 'lucide-react';
+import { Save, Store, Bell } from 'lucide-react';
 
 export default function Configuracion() {
   const [localNombre, setLocalNombre] = useState('BurgerPOS');

@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Plus, Minus, Trash2, Send, X, Search, Check, Clock } from 'lucide-react';
-import type { Pedido, PedidoItem, Producto, Mesa } from '../lib/types';
+import { useEffect, useState } from 'react';
+import { Plus, Minus, Trash2, Send, X, Search, Clock } from 'lucide-react';
+import type { Pedido, PedidoItem, Producto } from '../lib/types';
 import { mockPedidos, mockMesas, mockProductos, mockCategorias, mockEmpleados } from '../lib/mockData';
+import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
 
 const estadoItemColors: Record<string, string> = {
   pendiente: 'bg-yellow-100 text-yellow-700',
@@ -19,8 +20,8 @@ const estadoItemLabels: Record<string, string> = {
 };
 
 export default function Pedidos() {
-  const [pedidos, setPedidos] = useState<Pedido[]>(mockPedidos);
-  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(mockPedidos[0]);
+  const [pedidos, setPedidos] = useState<Pedido[]>(() => loadDemoPedidos());
+  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos()[0] || mockPedidos[0] || null);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
@@ -29,14 +30,16 @@ export default function Pedidos() {
   const [newPersonas, setNewPersonas] = useState(2);
   const [newMozaId, setNewMozaId] = useState('');
 
-  const mesasDisponibles = mockMesas.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada');
-  const mozas = mockEmpleados.filter(e => e.rol === 'moza');
-
   const filteredProductos = mockProductos.filter(p => {
     const matchCat = categoriaFiltro === 'todos' || p.categoria_id === categoriaFiltro;
     const matchBusq = p.nombre.toLowerCase().includes(busqueda.toLowerCase());
     return matchCat && matchBusq && p.disponible && !p.agotado;
   });
+  const pendingItemsToKitchen = selectedPedido?.items?.filter(i => i.estado === 'pendiente') || [];
+
+  useEffect(() => {
+    saveDemoPedidos(pedidos);
+  }, [pedidos]);
 
   const addItem = (producto: Producto) => {
     if (!selectedPedido) return;
@@ -85,7 +88,17 @@ export default function Pedidos() {
 
   const sendToKitchen = () => {
     if (!selectedPedido) return;
-    const updated = { ...selectedPedido, estado: 'en_preparacion' as const };
+    const items = (selectedPedido.items || []).map(item => (
+      item.estado === 'pendiente'
+        ? { ...item, estado: 'en_preparacion' as const, updated_at: new Date().toISOString() }
+        : item
+    ));
+    const updated = {
+      ...selectedPedido,
+      items,
+      estado: 'en_preparacion' as const,
+      updated_at: new Date().toISOString(),
+    };
     updatePedido(updated);
   };
 
@@ -125,12 +138,12 @@ export default function Pedidos() {
           className="w-full bg-amber-500 hover:bg-amber-400 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm transition-colors"
         >
           <Plus size={16} />
-          Nuevo Pedido
+          Nueva Comanda
         </button>
 
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-3 border-b border-slate-100">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Pedidos Activos</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Comandas Activas</p>
           </div>
           <div className="divide-y divide-slate-50 max-h-[calc(100vh-240px)] overflow-y-auto">
             {pedidos.filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado').map(pedido => (
@@ -189,7 +202,7 @@ export default function Pedidos() {
                 {!selectedPedido.items?.length ? (
                   <div className="flex flex-col items-center justify-center h-40 text-slate-400">
                     <Plus size={32} className="mb-2 opacity-30" />
-                    <p className="text-sm">No hay productos en este pedido</p>
+                    <p className="text-sm">No hay productos en esta comanda</p>
                     <button onClick={() => setShowAddProduct(true)} className="mt-2 text-amber-500 text-sm font-medium hover:underline">
                       Agregar productos
                     </button>
@@ -255,11 +268,11 @@ export default function Pedidos() {
                 </div>
                 <button
                   onClick={sendToKitchen}
-                  disabled={!selectedPedido.items?.some(i => i.estado === 'pendiente')}
+                  disabled={pendingItemsToKitchen.length === 0}
                   className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
                 >
                   <Send size={16} />
-                  Enviar a Cocina
+                  {pendingItemsToKitchen.length > 0 ? 'Enviar a Cocina' : 'Sin productos nuevos para enviar'}
                 </button>
               </div>
             </div>
@@ -323,7 +336,7 @@ export default function Pedidos() {
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-400">
             <div className="text-center">
               <Clock size={40} className="mx-auto mb-3 opacity-30" />
-              <p>Seleccioná un pedido para gestionarlo</p>
+              <p>Seleccioná una comanda para gestionarla</p>
             </div>
           </div>
         )}
@@ -333,7 +346,7 @@ export default function Pedidos() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
-              <h3 className="font-bold text-slate-800">Nuevo Pedido</h3>
+              <h3 className="font-bold text-slate-800">Nueva Comanda</h3>
               <button onClick={() => setShowNewOrder(false)}><X size={16} className="text-slate-400" /></button>
             </div>
             <div className="p-5 space-y-4">
@@ -374,7 +387,7 @@ export default function Pedidos() {
             </div>
             <div className="flex gap-3 p-5 border-t border-slate-100">
               <button onClick={() => setShowNewOrder(false)} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium">Cancelar</button>
-              <button onClick={createOrder} disabled={!newMesaId} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold disabled:opacity-50 hover:bg-amber-400 transition-colors">Crear Pedido</button>
+              <button onClick={createOrder} disabled={!newMesaId} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold disabled:opacity-50 hover:bg-amber-400 transition-colors">Crear Comanda</button>
             </div>
           </div>
         </div>

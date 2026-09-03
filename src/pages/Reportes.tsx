@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { TrendingUp, DollarSign, ShoppingBag, Users, Clock, BarChart3, PieChart, ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUp, ArrowDown } from 'lucide-react';
 import { mockVentasSemana, mockProductosMasVendidos } from '../lib/mockData';
 
 type Periodo = 'dia' | 'semana' | 'mes';
@@ -75,7 +75,7 @@ export default function Reportes() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard label="Ventas Totales" value={`$${(totalVentas / 1000).toFixed(0)}k`} sub="+" change="+14% vs anterior" positive />
-        <MetricCard label="Pedidos" value={String(totalPedidos)} sub="pedidos" change="+11% vs anterior" positive />
+        <MetricCard label="Comandas" value={String(totalPedidos)} sub="comandas" change="+11% vs anterior" positive />
         <MetricCard label="Ticket Promedio" value={`$${ticketPromedio.toLocaleString()}`} sub="por pedido" change="+3% vs anterior" positive />
         <MetricCard label="Margen Bruto" value={`${margenBruto}%`} sub="rentabilidad" change="+2.1pp" positive />
       </div>
@@ -101,7 +101,7 @@ export default function Reportes() {
                   style={{ height: `${(d.valor / maxVenta) * 100}%`, minHeight: '12px' }}
                 >
                   <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1.5 rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
-                    <div>{d.pedidos} pedidos</div>
+                    <div>{d.pedidos} comandas</div>
                     <div className="font-bold">${d.valor.toLocaleString()}</div>
                   </div>
                 </div>
@@ -139,7 +139,7 @@ export default function Reportes() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-2xl border border-slate-200 p-6">
           <h3 className="font-semibold text-slate-800 mb-1">Horarios de Mayor Movimiento</h3>
-          <p className="text-sm text-slate-500 mb-4">Pedidos por franja horaria (promedio semana)</p>
+          <p className="text-sm text-slate-500 mb-4">Comandas por franja horaria (promedio semana)</p>
           <div className="flex items-end gap-1.5 h-32">
             {horariosPico.map((h, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1">
@@ -150,14 +150,14 @@ export default function Reportes() {
                     minHeight: '4px',
                     background: h.pedidos === maxHorario ? '#f59e0b' : h.pedidos > maxHorario * 0.7 ? '#fb923c' : '#94a3b8'
                   }}
-                  title={`${h.hora}: ${h.pedidos} pedidos`}
+                  title={`${h.hora}: ${h.pedidos} comandas`}
                 />
                 <span className="text-xs text-slate-400" style={{ fontSize: '9px' }}>{h.hora.split('-')[0]}</span>
               </div>
             ))}
           </div>
           <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
-            Pico máximo: 21-22hs con 52 pedidos promedio
+            Pico máximo: 21-22hs con 52 comandas promedio
           </div>
         </div>
 
@@ -251,7 +251,7 @@ export default function Reportes() {
                     <span className="text-sm font-medium text-slate-700 truncate">{e.nombre}</span>
                     <span className="text-sm font-bold text-slate-800">${(e.ventas / 1000).toFixed(0)}k</span>
                   </div>
-                  <span className="text-xs text-slate-400">{e.pedidos} pedidos</span>
+                  <span className="text-xs text-slate-400">{e.pedidos} comandas</span>
                 </div>
               </div>
             ))}
@@ -267,6 +267,7 @@ function MetricCard({ label, value, sub, change, positive }: { label: string; va
     <div className="bg-white border border-slate-200 rounded-2xl p-5">
       <p className="text-sm text-slate-500 mb-1">{label}</p>
       <p className="text-2xl font-bold text-slate-800">{value}</p>
+      <p className="text-xs text-slate-400 mt-0.5">{sub}</p>
       <div className={`flex items-center gap-1 mt-1.5 text-xs font-medium ${positive ? 'text-emerald-600' : 'text-red-500'}`}>
         {positive ? <ArrowUp size={11} /> : <ArrowDown size={11} />}
         <span>{change}</span>

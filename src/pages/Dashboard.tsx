@@ -1,4 +1,4 @@
-import { TrendingUp, DollarSign, Users, UtensilsCrossed, ShoppingBag, Clock, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
+import { TrendingUp, DollarSign, UtensilsCrossed, ShoppingBag, Clock, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
 import { mockMesas, mockVentasSemana, mockProductosMasVendidos, mockIngredientes } from '../lib/mockData';
 
 const estadoColors: Record<string, string> = {
@@ -39,7 +39,7 @@ export default function Dashboard() {
           trend="up"
         />
         <StatCard
-          label="Pedidos Hoy"
+          label="Comandas Hoy"
           value="31"
           sub="6 en curso"
           icon={ShoppingBag}
@@ -69,7 +69,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-5">
             <div>
               <h3 className="font-semibold text-slate-800">Ventas de la Semana</h3>
-              <p className="text-sm text-slate-500">Ingresos y pedidos por día</p>
+              <p className="text-sm text-slate-500">Ingresos y comandas por día</p>
             </div>
             <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-600 text-xs font-medium px-2.5 py-1 rounded-full">
               <TrendingUp size={12} />
@@ -83,7 +83,7 @@ export default function Dashboard() {
                 <div className="w-full rounded-t-md bg-amber-500/90 hover:bg-amber-500 transition-all duration-200 cursor-pointer relative group"
                   style={{ height: `${(d.ventas / maxVenta) * 100}%`, minHeight: '8px' }}>
                   <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                    {d.pedidos} pedidos
+                    {d.pedidos} comandas
                   </div>
                 </div>
                 <span className="text-xs text-slate-500">{d.dia}</span>
@@ -177,7 +177,7 @@ export default function Dashboard() {
             <thead>
               <tr className="border-b border-slate-100">
                 <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Empleada</th>
-                <th className="text-right py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Pedidos</th>
+                <th className="text-right py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Comandas</th>
                 <th className="text-right py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Ventas</th>
                 <th className="text-right py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Promedio/mesa</th>
                 <th className="text-right py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Ranking</th>

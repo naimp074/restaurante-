@@ -1,19 +1,183 @@
-import { useState } from 'react';
-import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle } from 'lucide-react';
-import type { Producto, CategoriaProducto } from '../lib/types';
-import { mockProductos, mockCategorias } from '../lib/mockData';
+import { useEffect, useState } from 'react';
+import * as XLSX from 'xlsx';
+import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload } from 'lucide-react';
+import type { Ingrediente, Producto, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
+import { mockProductos, mockCategorias, mockIngredientes } from '../lib/mockData';
+import { loadDemoProducciones } from '../lib/demoStore';
 
-export default function Productos() {
+const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
+
+const getRecetaItemTipo = (item: RecetaItem): TipoComponenteReceta => item.tipo || 'stock';
+
+const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = mockIngredientes) => {
+  if (getRecetaItemTipo(item) === 'produccion') {
+    const produccion = item.produccion || loadDemoProducciones().find(p => p.id === item.produccion_id);
+    return {
+      codigo: produccion?.id || '',
+      nombre: produccion?.nombre || 'Producción',
+      unidad: produccion?.unidad_medida || item.unidad_medida,
+      costoUnitario: produccion?.costo_unitario || 0,
+      stockActual: produccion?.stock_actual || 0,
+      stockLabel: 'Stock producido',
+      produccion,
+    };
+  }
+
+  const ingrediente = item.ingrediente || catalogo.find(i => i.id === item.ingrediente_id);
+  return {
+    codigo: ingrediente?.codigo || item.ingrediente_id || '',
+    nombre: ingrediente?.nombre || 'Insumo',
+    unidad: ingrediente?.unidad_medida || item.unidad_medida,
+    costoUnitario: ingrediente?.costo_por_unidad || 0,
+    stockActual: ingrediente?.stock_actual || 0,
+    stockLabel: 'Stock actual',
+    ingrediente,
+  };
+};
+
+const calcularCostoReceta = (receta: RecetaItem[] = [], catalogo: Ingrediente[] = mockIngredientes) =>
+  receta.reduce((sum, item) => {
+    const data = getRecetaItemData(item, catalogo);
+    return sum + item.cantidad * data.costoUnitario;
+  }, 0);
+
+interface ComboImportDraft {
+  key: string;
+  codigo: string;
+  nombre: string;
+  descripcion: string;
+  categoria_id?: string;
+  precio_venta: number;
+  costo_total?: number;
+  tiempo_preparacion: number;
+  receta: RecetaItem[];
+}
+
+const normalizeText = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const cleanArticuloNombre = (value: string) =>
+  value
+    .replace(/^(stock|produccion|producción)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const mapUnidadExcel = (value: unknown): UnidadMedida => {
+  const raw = normalizeText(String(value ?? ''));
+  if (!raw || raw === 'u' || raw === 'un' || raw === 'unidad' || raw === 'unidades') return 'unidad';
+  if (raw === 'g' || raw === 'gr' || raw === 'gramo' || raw === 'gramos') return 'gramos';
+  if (raw === 'kg' || raw === 'kilo' || raw === 'kilos') return 'kilos';
+  if (raw === 'ml' || raw === 'mililitro' || raw === 'mililitros') return 'mililitros';
+  if (raw === 'l' || raw === 'lt' || raw === 'litro' || raw === 'litros') return 'litros';
+  if (raw === 'feta') return 'feta';
+  if (raw === 'porcion' || raw === 'porción') return 'porcion';
+  if (raw === 'paquete' || raw === 'paq') return 'paquete';
+  return 'unidad';
+};
+
+const parseNumber = (value: unknown) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const normalized = String(value ?? '')
+    .replace(/\$/g, '')
+    .replace(/\s/g, '')
+    .replace(/\.(?=\d{3}(,|$))/g, '')
+    .replace(',', '.');
+  const parsed = parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getRowValue = (row: Record<string, unknown>, aliases: string[]) => {
+  const wanted = aliases.map(normalizeText);
+  const key = Object.keys(row).find(header => wanted.includes(normalizeText(header)));
+  return key ? row[key] : undefined;
+};
+
+const findCategoriaByName = (value: unknown) => {
+  const normalized = normalizeText(String(value ?? ''));
+  if (!normalized) return undefined;
+  return mockCategorias.find(cat => normalizeText(cat.nombre) === normalized || normalizeText(cat.nombre).includes(normalized));
+};
+
+const findIngredienteEnCatalogo = (catalogo: Ingrediente[], codigo?: string, nombre?: string) => {
+  const codigoNorm = normalizeText(codigo || '');
+  if (codigoNorm) {
+    const byCodigo = catalogo.find(item => normalizeText(item.codigo || item.id) === codigoNorm);
+    if (byCodigo) return byCodigo;
+  }
+
+  const nombreNorm = normalizeText(cleanArticuloNombre(nombre || ''));
+  if (!nombreNorm) return undefined;
+  return catalogo.find(item => {
+    const itemName = normalizeText(item.nombre);
+    return itemName === nombreNorm || itemName.includes(nombreNorm) || nombreNorm.includes(itemName);
+  });
+};
+
+const findProduccionByName = (value: unknown) => {
+  const normalized = normalizeText(cleanArticuloNombre(String(value ?? '')));
+  return loadDemoProducciones().find(item => normalizeText(item.nombre) === normalized || normalizeText(item.nombre).includes(normalized));
+};
+
+const pickBestSheet = (workbook: XLSX.WorkBook) => {
+  let bestName = workbook.SheetNames[0];
+  let bestCount = -1;
+  workbook.SheetNames.forEach(name => {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: '' });
+    if (rows.length > bestCount) {
+      bestCount = rows.length;
+      bestName = name;
+    }
+  });
+  return workbook.Sheets[bestName];
+};
+
+interface ProductosProps {
+  apartadoInicial?: 'combos' | 'precios';
+}
+
+export default function Productos({ apartadoInicial }: ProductosProps) {
   const [productos, setProductos] = useState<Producto[]>(mockProductos);
+  const [insumosCatalogo, setInsumosCatalogo] = useState<Ingrediente[]>(mockIngredientes);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
+  const [vista, setVista] = useState<'catalogo' | 'precios' | 'planilla'>(apartadoInicial === 'precios' ? 'precios' : 'catalogo');
+  const [apartado, setApartado] = useState<'combos' | 'precios' | null>(apartadoInicial || null);
   const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editForm, setEditForm] = useState<Partial<Producto>>({});
+  const [margenMasivo, setMargenMasivo] = useState('');
+  const [showImport, setShowImport] = useState(false);
+  const [importDrafts, setImportDrafts] = useState<ComboImportDraft[]>([]);
+  const [importError, setImportError] = useState('');
+  const [importInsumos, setImportInsumos] = useState<Ingrediente[]>([]);
+  const [detalleCombo, setDetalleCombo] = useState<Producto | null>(null);
+
+  const createRecetaItem = (productoId: string, ingredienteId?: string): RecetaItem => {
+    const ingrediente = insumosCatalogo.find(i => i.id === ingredienteId) || insumosCatalogo[0];
+    const cantidad = 1;
+
+    return {
+      id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      producto_id: productoId,
+      tipo: 'stock',
+      ingrediente_id: ingrediente.id,
+      cantidad,
+      unidad_medida: ingrediente.unidad_medida,
+      costo_calculado: cantidad * ingrediente.costo_por_unidad,
+      created_at: new Date().toISOString(),
+      ingrediente,
+    };
+  };
 
   const filtered = productos.filter(p => {
     const matchCat = categoriaFiltro === 'todos' || p.categoria_id === categoriaFiltro;
-    const matchSearch = p.nombre.toLowerCase().includes(busqueda.toLowerCase());
+    const matchSearch = `${p.codigo || ''} ${p.nombre}`.toLowerCase().includes(busqueda.toLowerCase());
     return matchCat && matchSearch;
   });
 
@@ -37,8 +201,9 @@ export default function Productos() {
 
   const openNew = () => {
     setEditForm({
-      nombre: '', descripcion: '', precio_venta: 0, costo_produccion: 0,
+      codigo: '', nombre: '', descripcion: '', precio_venta: 0, costo_produccion: 0,
       tiempo_preparacion: 10, disponible: true, agotado: false, activo: true,
+      receta: [],
     });
     setSelectedProducto(null);
     setShowForm(true);
@@ -46,171 +211,1096 @@ export default function Productos() {
 
   const saveProducto = () => {
     if (!editForm.nombre) return;
+    const receta = editForm.receta || [];
+    const costoReceta = calcularCostoReceta(receta, insumosCatalogo);
+    const costoProduccion = receta.length > 0 ? costoReceta : editForm.costo_produccion || 0;
+    const precioVenta = editForm.precio_venta || 0;
+    const margenGanancia = precioVenta > 0
+      ? ((precioVenta - costoProduccion) / precioVenta) * 100
+      : 0;
+    const categoria = mockCategorias.find(c => c.id === editForm.categoria_id);
+
     if (selectedProducto) {
-      setProductos(prev => prev.map(p => p.id === selectedProducto.id ? { ...p, ...editForm } as Producto : p));
+      setProductos(prev => prev.map(p => p.id === selectedProducto.id ? {
+        ...p,
+        ...editForm,
+        costo_produccion: costoProduccion,
+        margen_ganancia: margenGanancia,
+        categoria,
+        receta,
+        updated_at: new Date().toISOString(),
+      } as Producto : p));
     } else {
+      const newId = `prod-${Date.now()}`;
       const newProd: Producto = {
-        id: `prod-${Date.now()}`,
+        id: newId,
+        codigo: editForm.codigo?.trim() || `COMBO-${Date.now().toString().slice(-5)}`,
         nombre: editForm.nombre || '',
         descripcion: editForm.descripcion || '',
         categoria_id: editForm.categoria_id,
-        precio_venta: editForm.precio_venta || 0,
-        costo_produccion: editForm.costo_produccion || 0,
-        margen_ganancia: editForm.precio_venta && editForm.costo_produccion
-          ? ((editForm.precio_venta - editForm.costo_produccion) / editForm.precio_venta) * 100
-          : 0,
+        precio_venta: precioVenta,
+        costo_produccion: costoProduccion,
+        margen_ganancia: margenGanancia,
         disponible: true, agotado: false, activo: true,
         tiempo_preparacion: editForm.tiempo_preparacion || 10,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-        categoria: mockCategorias.find(c => c.id === editForm.categoria_id),
+        categoria,
+        receta: receta.map(item => ({ ...item, producto_id: newId })),
       };
       setProductos(prev => [newProd, ...prev]);
     }
     setShowForm(false);
   };
 
+  const procesarPlanillaCombos = async (file: File) => {
+    setImportError('');
+    setImportInsumos([]);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheet = pickBestSheet(workbook);
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      const grouped = new Map<string, ComboImportDraft>();
+      const insumosNuevos = new Map<string, Ingrediente>();
+      let workingCatalog = [...insumosCatalogo];
+
+      const ensureArticulo = (codigoRaw: string, nombreRaw: string, costoUnitario: number, unidad: UnidadMedida) => {
+        const codigo = codigoRaw.trim();
+        const nombreLimpio = cleanArticuloNombre(nombreRaw) || codigo || 'Artículo';
+        const existente = findIngredienteEnCatalogo(workingCatalog, codigo, nombreLimpio);
+        if (existente) {
+          const actualizado: Ingrediente = {
+            ...existente,
+            codigo: existente.codigo || codigo || existente.codigo,
+            costo_por_unidad: costoUnitario > 0 ? costoUnitario : existente.costo_por_unidad,
+            unidad_medida: unidad || existente.unidad_medida,
+            updated_at: new Date().toISOString(),
+          };
+          workingCatalog = workingCatalog.map(item => item.id === existente.id ? actualizado : item);
+          insumosNuevos.set(actualizado.id, actualizado);
+          return actualizado;
+        }
+
+        const nuevo: Ingrediente = {
+          id: `ing-import-${codigo || normalizeText(nombreLimpio).replace(/\s+/g, '-') || Date.now()}`,
+          codigo: codigo || undefined,
+          nombre: nombreLimpio,
+          unidad_medida: unidad,
+          stock_actual: 0,
+          stock_minimo: 0,
+          costo_por_unidad: costoUnitario,
+          activo: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        workingCatalog = [...workingCatalog, nuevo];
+        insumosNuevos.set(nuevo.id, nuevo);
+        return nuevo;
+      };
+
+      rows.forEach((row, rowIndex) => {
+        const nombre = String(getRowValue(row, [
+          'descripcion combo',
+          'descripción combo',
+          'producto para la venta',
+          'combo',
+          'nombre',
+          'producto',
+          'producto final',
+        ]) || '').trim();
+        const codigo = String(getRowValue(row, [
+          'codigo combo',
+          'código combo',
+          'codigo',
+          'código',
+          'sku',
+          'cod',
+        ]) || '').trim();
+
+        if (!nombre && !codigo) return;
+
+        const key = nombre ? `nom:${normalizeText(nombre)}` : `cod:${normalizeText(codigo)}`;
+        const categoria = findCategoriaByName(getRowValue(row, ['categoria', 'categoría', 'rubro']));
+        const precio = parseNumber(getRowValue(row, ['precio', 'precio venta', 'precio_venta', 'venta']));
+        const costoTotal = parseNumber(getRowValue(row, ['costo total', 'costo combo', 'costo']));
+        const tiempo = parseNumber(getRowValue(row, ['tiempo', 'tiempo preparacion', 'minutos']));
+        const descripcion = String(getRowValue(row, ['descripcion', 'descripción', 'detalle']) || '').trim();
+        const existing = grouped.get(key);
+        const draft: ComboImportDraft = existing || {
+          key,
+          codigo,
+          nombre: nombre || codigo,
+          descripcion: descripcion && normalizeText(descripcion) !== normalizeText(nombre) ? descripcion : '',
+          categoria_id: categoria?.id || 'cat-5',
+          precio_venta: precio,
+          costo_total: costoTotal || undefined,
+          tiempo_preparacion: tiempo || 10,
+          receta: [],
+        };
+
+        if (!draft.nombre && nombre) draft.nombre = nombre;
+        if (!draft.codigo && codigo) draft.codigo = codigo;
+        if (!draft.precio_venta && precio) draft.precio_venta = precio;
+        if ((!draft.costo_total || draft.costo_total <= 0) && costoTotal > 0) draft.costo_total = costoTotal;
+        if (!draft.categoria_id && categoria?.id) draft.categoria_id = categoria.id;
+
+        const articuloNombre = String(getRowValue(row, [
+          'descripcion articulo',
+          'descripción artículo',
+          'descripcion artículo',
+          'descripción articulo',
+          'componente',
+          'insumo',
+          'ingrediente',
+          'produccion',
+          'producción',
+          'item receta',
+          'articulo',
+          'artículo',
+        ]) || '').trim();
+        const articuloCodigo = String(getRowValue(row, [
+          'codigo articulo',
+          'código artículo',
+          'codigo artículo',
+          'código articulo',
+          'cod articulo',
+          'sku articulo',
+        ]) || '').trim();
+
+        if (articuloNombre || articuloCodigo) {
+          const origenText = normalizeText(String(getRowValue(row, ['origen', 'tipo', 'fuente']) || articuloNombre || ''));
+          const esProduccion = origenText.includes('produ') && !origenText.includes('stock');
+          const produccion = esProduccion ? findProduccionByName(articuloNombre) : undefined;
+          const cantidad = parseNumber(getRowValue(row, [
+            'cantidad en combo',
+            'cantidad',
+            'cant',
+            'qty',
+          ])) || 1;
+          const unidad = mapUnidadExcel(getRowValue(row, ['unidad', 'unidad medida', 'unidad_medida']));
+          const costoUnitario = parseNumber(getRowValue(row, [
+            'costo unitario articulo',
+            'costo unitario artículo',
+            'costo unitario',
+            'costo_unitario',
+            'costo',
+          ]));
+          const incidencia = parseNumber(getRowValue(row, [
+            'incidencia sobre el costo del combo',
+            'incidencia en el producto para venta',
+            'incidencia',
+          ]));
+
+          const nuevaLinea: RecetaItem = produccion
+            ? {
+                id: `import-rec-${rowIndex}-${Date.now()}`,
+                producto_id: 'import',
+                tipo: 'produccion',
+                produccion_id: produccion.id,
+                cantidad,
+                unidad_medida: unidad || produccion.unidad_medida,
+                costo_calculado: incidencia || cantidad * (produccion.costo_unitario || costoUnitario),
+                created_at: new Date().toISOString(),
+                produccion,
+              }
+            : (() => {
+                const ingrediente = ensureArticulo(articuloCodigo, articuloNombre, costoUnitario, unidad);
+                return {
+                  id: `import-rec-${rowIndex}-${Date.now()}`,
+                  producto_id: 'import',
+                  tipo: 'stock' as TipoComponenteReceta,
+                  ingrediente_id: ingrediente.id,
+                  cantidad,
+                  unidad_medida: unidad || ingrediente.unidad_medida,
+                  costo_calculado: incidencia || cantidad * ingrediente.costo_por_unidad,
+                  created_at: new Date().toISOString(),
+                  ingrediente,
+                };
+              })();
+
+          const yaCargado = draft.receta.find(item =>
+            (nuevaLinea.produccion_id && item.produccion_id === nuevaLinea.produccion_id)
+            || (nuevaLinea.ingrediente_id && item.ingrediente_id === nuevaLinea.ingrediente_id)
+          );
+
+          if (yaCargado) {
+            yaCargado.cantidad += nuevaLinea.cantidad;
+            yaCargado.costo_calculado += nuevaLinea.costo_calculado;
+          } else {
+            draft.receta.push(nuevaLinea);
+          }
+        }
+
+        grouped.set(key, draft);
+      });
+
+      const drafts = Array.from(grouped.values());
+      if (!drafts.length) {
+        setImportError('No pude detectar combos. Usá columnas como Código Combo y Descripción Combo (formato coffee).');
+        return;
+      }
+      setImportInsumos(Array.from(insumosNuevos.values()));
+      setImportDrafts(drafts);
+    } catch {
+      setImportError('No pude leer el archivo. Probá con Excel .xlsx o CSV.');
+    }
+  };
+
+  const confirmarImportacionCombos = () => {
+    if (!importDrafts.length) return;
+
+    if (importInsumos.length) {
+      setInsumosCatalogo(prev => {
+        const map = new Map(prev.map(item => [item.id, item]));
+        importInsumos.forEach(item => map.set(item.id, item));
+        return Array.from(map.values());
+      });
+    }
+
+    setProductos(prev => {
+      let next = [...prev];
+
+      importDrafts.forEach((draft, index) => {
+        const existing = next.find(producto =>
+          normalizeText(producto.nombre) === normalizeText(draft.nombre)
+          || (draft.codigo && normalizeText(producto.codigo || '') === normalizeText(draft.codigo))
+        );
+        const id = existing?.id || `prod-import-${Date.now()}-${index}`;
+        const receta = draft.receta.map(item => ({ ...item, producto_id: id }));
+        const costoIncidencias = receta.reduce((sum, item) => sum + item.costo_calculado, 0);
+        const costoProduccion = costoIncidencias > 0
+          ? costoIncidencias
+          : (draft.costo_total && draft.costo_total > 0 ? draft.costo_total : 0);
+        const precioVenta = draft.precio_venta || existing?.precio_venta || precioPorMargen(costoProduccion, 50) || 0;
+        const categoria = mockCategorias.find(cat => cat.id === draft.categoria_id);
+        const producto: Producto = {
+          ...(existing || {}),
+          id,
+          codigo: draft.codigo || existing?.codigo || `COMBO-${String(index + 1).padStart(3, '0')}`,
+          nombre: draft.nombre,
+          descripcion: draft.descripcion || existing?.descripcion || '',
+          categoria_id: draft.categoria_id,
+          precio_venta: precioVenta,
+          costo_produccion: costoProduccion,
+          margen_ganancia: precioVenta > 0 ? ((precioVenta - costoProduccion) / precioVenta) * 100 : 0,
+          disponible: existing?.disponible ?? true,
+          agotado: existing?.agotado ?? false,
+          activo: existing?.activo ?? true,
+          tiempo_preparacion: draft.tiempo_preparacion || 10,
+          created_at: existing?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          categoria,
+          receta,
+        };
+
+        next = existing
+          ? next.map(item => item.id === existing.id ? producto : item)
+          : [producto, ...next];
+      });
+
+      return next;
+    });
+
+    setShowImport(false);
+    setImportDrafts([]);
+    setImportInsumos([]);
+    setImportError('');
+    setVista('planilla');
+    setApartado('combos');
+  };
+
   const margen = (precio: number, costo: number) => precio > 0 ? ((precio - costo) / precio * 100).toFixed(1) : '0';
   const margenColor = (m: number) => m >= 50 ? 'text-emerald-600' : m >= 35 ? 'text-amber-600' : 'text-red-600';
+  const precioPromedio = productos.length
+    ? productos.reduce((sum, p) => sum + p.precio_venta, 0) / productos.length
+    : 0;
+  const redondearPrecio = (precio: number) => Math.ceil(precio / 100) * 100;
+  const precioPorMargen = (costo: number, margenDeseado: number) => {
+    if (costo <= 0 || margenDeseado <= 0 || margenDeseado >= 100) return 0;
+    return redondearPrecio(costo / (1 - margenDeseado / 100));
+  };
+  const aplicarMargenMasivo = () => {
+    const margenDeseado = parseFloat(margenMasivo);
+    if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100) return;
+    const confirmar = window.confirm(`Esto actualizará el precio de ${filtered.length} combos con ${margenDeseado}% de margen. ¿Confirmar?`);
+    if (!confirmar) return;
+
+    setProductos(prev => prev.map(producto => {
+      const incluido = filtered.some(item => item.id === producto.id);
+      if (!incluido) return producto;
+      const precioVenta = precioPorMargen(producto.costo_produccion, margenDeseado);
+      return {
+        ...producto,
+        precio_venta: precioVenta || producto.precio_venta,
+        margen_ganancia: margenDeseado,
+        updated_at: new Date().toISOString(),
+      };
+    }));
+  };
+  const actualizarMargenProducto = (productoId: string, margenDeseado: number) => {
+    if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100) return;
+    setProductos(prev => prev.map(producto => {
+      if (producto.id !== productoId) return producto;
+      const precioVenta = precioPorMargen(producto.costo_produccion, margenDeseado);
+      return {
+        ...producto,
+        precio_venta: precioVenta || producto.precio_venta,
+        margen_ganancia: margenDeseado,
+        updated_at: new Date().toISOString(),
+      };
+    }));
+  };
+  const exportarListaPrecios = () => {
+    const headers = ['Combo', 'Categoria', 'Costo', 'Margen %', 'Precio lista', 'Estado'];
+    const rows = filtered.map(producto => [
+      producto.nombre,
+      producto.categoria?.nombre || '',
+      producto.costo_produccion,
+      margen(producto.precio_venta, producto.costo_produccion),
+      producto.precio_venta,
+      producto.agotado ? 'Agotado' : producto.disponible ? 'Activo' : 'Inactivo',
+    ]);
+    const csv = [headers, ...rows]
+      .map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `lista-precios-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportarRecetasCombos = () => {
+    const headers = [
+      'Código Combo',
+      'Descripción Combo',
+      'Costo Total',
+      'Código Artículo',
+      'Descripción Artículo',
+      'Costo Unitario Artículo',
+      'Cantidad en Combo',
+      'Unidad',
+      'Incidencia Sobre el Costo del Combo',
+    ];
+    const rows: (string | number)[][] = [];
+
+    productos.forEach(producto => {
+      const receta = producto.receta || [];
+      const costoTotal = receta.length ? calcularCostoReceta(receta, insumosCatalogo) : producto.costo_produccion;
+
+      if (receta.length === 0) {
+        rows.push([
+          producto.codigo || producto.id,
+          producto.nombre.toUpperCase(),
+          costoTotal,
+          '',
+          'SIN COMPONENTES CARGADOS',
+          0,
+          0,
+          '',
+          0,
+        ]);
+        return;
+      }
+
+      receta.forEach(item => {
+        const data = getRecetaItemData(item, insumosCatalogo);
+        const prefijo = getRecetaItemTipo(item) === 'produccion' ? 'PRODUCCIÓN' : 'STOCK';
+        rows.push([
+          producto.codigo || producto.id,
+          producto.nombre.toUpperCase(),
+          Number(costoTotal.toFixed(2)),
+          data.codigo,
+          `${prefijo}  ${data.nombre}`.toUpperCase(),
+          Number(data.costoUnitario.toFixed(2)),
+          item.cantidad,
+          'U',
+          Number((item.cantidad * data.costoUnitario).toFixed(2)),
+        ]);
+      });
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    worksheet['!autofilter'] = { ref: `A1:I${Math.max(rows.length + 1, 1)}` };
+    worksheet['!cols'] = [
+      { wch: 14 },
+      { wch: 34 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 34 },
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 10 },
+      { wch: 34 },
+    ];
+
+    for (let row = 2; row <= rows.length + 1; row += 1) {
+      ['C', 'F', 'I'].forEach(column => {
+        const cell = worksheet[`${column}${row}`];
+        if (cell) cell.z = '#,##0.00';
+      });
+      const cantidadCell = worksheet[`G${row}`];
+      if (cantidadCell) cantidadCell.z = '0.000###';
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Recetas de combos');
+    XLSX.writeFile(workbook, `recetas-combos-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+  const updateRecetaItem = (itemId: string, changes: Partial<RecetaItem>) => {
+    setEditForm(form => {
+      const receta = (form.receta || []).map(item => {
+        if (item.id !== itemId) return item;
+
+        const tipo = (changes.tipo || item.tipo || 'stock') as TipoComponenteReceta;
+        const cantidad = changes.cantidad ?? item.cantidad;
+
+        if (tipo === 'produccion') {
+          const producciones = loadDemoProducciones();
+          const produccionId = changes.produccion_id || item.produccion_id || producciones[0]?.id;
+          const produccion = producciones.find(p => p.id === produccionId) || producciones[0];
+          const unidad = changes.unidad_medida || produccion?.unidad_medida || item.unidad_medida;
+
+          return {
+            ...item,
+            ...changes,
+            tipo,
+            ingrediente_id: undefined,
+            ingrediente: undefined,
+            produccion_id: produccionId,
+            produccion,
+            cantidad,
+            unidad_medida: unidad,
+            costo_calculado: cantidad * (produccion?.costo_unitario || 0),
+          };
+        }
+
+        const ingredienteId = changes.ingrediente_id || item.ingrediente_id || insumosCatalogo[0]?.id;
+        const ingrediente = insumosCatalogo.find(i => i.id === ingredienteId) || item.ingrediente || insumosCatalogo[0];
+        const unidad = changes.unidad_medida || ingrediente?.unidad_medida || item.unidad_medida;
+
+        return {
+          ...item,
+          ...changes,
+          tipo,
+          ingrediente_id: ingredienteId,
+          ingrediente,
+          produccion_id: undefined,
+          produccion: undefined,
+          cantidad,
+          unidad_medida: unidad,
+          costo_calculado: cantidad * (ingrediente?.costo_por_unidad || 0),
+        };
+      });
+
+      return {
+        ...form,
+        receta,
+        costo_produccion: receta.length > 0 ? calcularCostoReceta(receta, insumosCatalogo) : form.costo_produccion,
+      };
+    });
+  };
+
+  const addRecetaItem = () => {
+    setEditForm(form => {
+      const productId = selectedProducto?.id || 'combo-nuevo';
+      const receta = [...(form.receta || []), createRecetaItem(productId)];
+      return {
+        ...form,
+        receta,
+        costo_produccion: calcularCostoReceta(receta, insumosCatalogo),
+      };
+    });
+  };
+
+  const removeRecetaItem = (itemId: string) => {
+    setEditForm(form => {
+      const receta = (form.receta || []).filter(item => item.id !== itemId);
+      return {
+        ...form,
+        receta,
+        costo_produccion: receta.length > 0 ? calcularCostoReceta(receta, insumosCatalogo) : 0,
+      };
+    });
+  };
+
+  const costoRecetaActual = calcularCostoReceta(editForm.receta || [], insumosCatalogo);
+  const costoProduccionActual = (editForm.receta?.length || 0) > 0 ? costoRecetaActual : editForm.costo_produccion || 0;
+
+  const filasPlanilla = filtered.flatMap(producto => {
+    const receta = producto.receta || [];
+    const costoTotal = receta.length ? calcularCostoReceta(receta, insumosCatalogo) : producto.costo_produccion;
+    if (!receta.length) {
+      return [{
+        key: `${producto.id}-empty`,
+        codigoCombo: producto.codigo || producto.id,
+        descripcionCombo: producto.nombre,
+        costoTotal,
+        codigoArticulo: '',
+        descripcionArticulo: 'Sin componentes',
+        costoUnitario: 0,
+        cantidad: 0,
+        unidad: '',
+        incidencia: 0,
+        producto,
+      }];
+    }
+    return receta.map(item => {
+      const data = getRecetaItemData(item, insumosCatalogo);
+      const prefijo = getRecetaItemTipo(item) === 'produccion' ? 'PRODUCCIÓN' : 'STOCK';
+      return {
+        key: `${producto.id}-${item.id}`,
+        codigoCombo: producto.codigo || producto.id,
+        descripcionCombo: producto.nombre,
+        costoTotal,
+        codigoArticulo: data.codigo,
+        descripcionArticulo: `${prefijo}  ${data.nombre}`,
+        costoUnitario: data.costoUnitario,
+        cantidad: item.cantidad,
+        unidad: 'U',
+        incidencia: item.cantidad * data.costoUnitario,
+        producto,
+      };
+    });
+  });
+
+  useEffect(() => {
+    if (!apartadoInicial) return;
+    setApartado(apartadoInicial);
+    setVista(apartadoInicial === 'precios' ? 'precios' : 'catalogo');
+  }, [apartadoInicial]);
+
+  if (!apartado) {
+    return (
+      <div className="space-y-5">
+        <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-sm">
+          <div className="bg-gradient-to-r from-slate-900 to-blue-950 px-6 py-5">
+            <h2 className="text-white font-bold text-xl">Productos</h2>
+            <p className="text-slate-300 text-sm mt-1">Elegí a qué apartado querés entrar.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-5">
+          <button
+            onClick={() => {
+              setApartado('combos');
+              setVista('catalogo');
+            }}
+            className="bg-white border border-slate-200 rounded-2xl p-6 text-left hover:border-amber-300 hover:shadow-lg transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mb-4">
+              <Grid3X3 size={22} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Combos</h3>
+            <p className="text-sm text-slate-500 mt-1">Crear, editar y ver los combos del menú con sus recetas y costos.</p>
+            <p className="text-xs font-semibold text-amber-600 mt-4">{productos.length} combos cargados</p>
+          </button>
+
+          <button
+            onClick={() => {
+              setApartado('precios');
+              setVista('precios');
+            }}
+            className="bg-white border border-slate-200 rounded-2xl p-6 text-left hover:border-blue-300 hover:shadow-lg transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center mb-4">
+              <List size={22} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Lista de precio</h3>
+            <p className="text-sm text-slate-500 mt-1">Consultar precios, costos, margen y estado de cada combo.</p>
+            <p className="text-xs font-semibold text-blue-600 mt-4">Precio promedio ${Math.round(precioPromedio).toLocaleString()}</p>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 flex-1">
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2.5 flex-1 max-w-sm">
-            <Search size={14} className="text-slate-400" />
-            <input
-              value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
-              placeholder="Buscar producto..."
-              className="bg-transparent text-sm outline-none flex-1 placeholder-slate-400"
-            />
-          </div>
-          <div className="flex gap-1.5 bg-white border border-slate-200 rounded-xl p-1">
-            <button
-              onClick={() => setCategoriaFiltro('todos')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${categoriaFiltro === 'todos' ? 'bg-amber-500 text-white' : 'text-slate-500 hover:text-slate-700'}`}
-            >Todos</button>
-            {mockCategorias.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => setCategoriaFiltro(cat.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${categoriaFiltro === cat.id ? 'bg-amber-500 text-white' : 'text-slate-500 hover:text-slate-700'}`}
-              >{cat.nombre}</button>
-            ))}
-          </div>
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-800">{apartado === 'precios' ? 'Lista de precio' : 'Combos'}</h2>
+          <p className="text-sm text-slate-500">
+            {apartado === 'precios'
+              ? 'Precios, costos y márgenes de venta'
+              : vista === 'planilla'
+                ? 'Misma estructura que el Excel: combo, artículos, costos e incidencia'
+                : 'Catálogo y recetas de combos'}
+          </p>
         </div>
-        <button
-          onClick={openNew}
-          className="bg-amber-500 hover:bg-amber-400 text-white font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 text-sm transition-colors"
-        >
-          <Plus size={16} />
-          Nuevo Producto
-        </button>
+        {apartado === 'combos' && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
+              <button
+                onClick={() => setVista('catalogo')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  vista === 'catalogo' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Catálogo
+              </button>
+              <button
+                onClick={() => setVista('planilla')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  vista === 'planilla' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Planilla recetas
+              </button>
+            </div>
+            <button
+              onClick={() => setShowImport(true)}
+              className="border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+            >
+              <Upload size={16} />
+              Importar planilla
+            </button>
+            <button
+              onClick={exportarRecetasCombos}
+              className="border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+            >
+              <Download size={16} />
+              Exportar recetas
+            </button>
+            <button
+              onClick={openNew}
+              className="bg-amber-500 hover:bg-amber-400 text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
+            >
+              <Plus size={16} />
+              Agregar combo
+            </button>
+          </div>
+        )}
+        {apartado === 'precios' && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <span className="text-xs font-semibold text-slate-500">Margen general %</span>
+              <input
+                type="number"
+                value={margenMasivo}
+                onChange={e => setMargenMasivo(e.target.value)}
+                className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm text-right outline-none focus:border-amber-400"
+                min="1"
+                max="99"
+                placeholder="45"
+              />
+              <button
+                onClick={aplicarMargenMasivo}
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 transition-colors"
+              >
+                Aplicar
+              </button>
+            </div>
+            <button
+              onClick={exportarListaPrecios}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <Download size={15} />
+              Exportar lista
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/50">
-                <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Producto</th>
-                <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Categoría</th>
-                <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio Venta</th>
-                <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo</th>
-                <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estado</th>
-                <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
+      <div className="grid grid-cols-12 gap-4">
+        <aside className="col-span-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-100">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Categorías</p>
+            <button
+              onClick={() => setCategoriaFiltro('todos')}
+              className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
+                categoriaFiltro === 'todos' ? 'bg-amber-500 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Todos
+              <span className="text-xs opacity-80">{productos.length}</span>
+            </button>
+          </div>
+          <div className="p-2 space-y-1">
+            {mockCategorias.map(cat => {
+              const count = productos.filter(p => p.categoria_id === cat.id).length;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setCategoriaFiltro(cat.id)}
+                  className={`w-full flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+                    categoriaFiltro === cat.id ? 'bg-amber-50 text-amber-700' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>{cat.nombre}</span>
+                  <span className="text-xs text-slate-400">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className="col-span-9 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex-1 max-w-md">
+              <Search size={14} className="text-slate-400" />
+              <input
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                placeholder="Buscar combo..."
+                className="bg-transparent text-sm outline-none flex-1 placeholder-slate-400"
+              />
+            </div>
+            <div className="text-sm text-slate-500">
+              {filtered.length} resultados
+            </div>
+          </div>
+
+          {vista === 'catalogo' ? (
+            <div className="p-4 grid grid-cols-3 gap-4">
               {filtered.map(prod => {
                 const m = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
+                const cantidadArticulos = (prod.receta || []).length;
                 return (
-                  <tr key={prod.id} className={`hover:bg-slate-50 transition-colors ${!prod.disponible ? 'opacity-60' : ''}`}>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center text-amber-700 font-bold text-sm flex-shrink-0">
-                          {prod.nombre[0]}
-                        </div>
-                        <div>
-                          <p className="font-medium text-slate-800 text-sm">{prod.nombre}</p>
-                          <p className="text-xs text-slate-400 truncate max-w-48">{prod.descripcion}</p>
-                        </div>
+                  <div
+                    key={prod.id}
+                    onClick={() => setDetalleCombo(prod)}
+                    className={`rounded-2xl border border-slate-200 p-4 hover:shadow-md hover:border-amber-300 cursor-pointer transition-all ${!prod.disponible ? 'opacity-60' : ''}`}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-700 font-bold text-lg flex-shrink-0">
+                        {prod.nombre[0]}
                       </div>
-                    </td>
-                    <td className="py-3 px-4">
+                      <button
+                        onClick={e => { e.stopPropagation(); openEdit(prod); }}
+                        className="p-2 rounded-xl text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                        title="Editar combo"
+                      >
+                        <MoreHorizontal size={16} />
+                      </button>
+                    </div>
+                    <p className="text-[11px] font-bold text-amber-600 mb-1">{prod.codigo || 'Sin código'}</p>
+                    <p className="font-bold text-slate-800">{prod.nombre}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {cantidadArticulos > 0
+                        ? `${cantidadArticulos} artículo${cantidadArticulos === 1 ? '' : 's'} · tocá para ver la receta`
+                        : 'Sin artículos cargados'}
+                    </p>
+                    <div className="flex items-center justify-between mt-4">
                       <span className="text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: prod.categoria?.color + '20', color: prod.categoria?.color }}>
                         {prod.categoria?.nombre}
                       </span>
-                    </td>
-                    <td className="py-3 px-4 text-right font-semibold text-slate-800">${prod.precio_venta.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-right text-slate-500 text-sm">${prod.costo_produccion.toLocaleString()}</td>
-                    <td className="py-3 px-4 text-right">
-                      <span className={`font-bold text-sm ${margenColor(m)}`}>{m}%</span>
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        {prod.agotado && (
-                          <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">Agotado</span>
-                        )}
-                        {!prod.agotado && prod.disponible && (
-                          <span className="text-xs bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full font-medium">Activo</span>
-                        )}
-                        {!prod.disponible && (
-                          <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">Inactivo</span>
-                        )}
+                      <span className={`text-xs font-bold ${margenColor(m)}`}>{m}% margen</span>
+                    </div>
+                    <div className="flex items-end justify-between mt-4 pt-4 border-t border-slate-100">
+                      <div>
+                        <p className="text-xs text-slate-400">Costo / Precio</p>
+                        <p className="text-sm font-semibold text-slate-600">${prod.costo_produccion.toLocaleString()}</p>
+                        <p className="text-xl font-bold text-slate-900">${prod.precio_venta.toLocaleString()}</p>
                       </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-center gap-1">
+                      <div className="flex items-center gap-1">
                         <button
-                          onClick={() => toggleAgotado(prod.id)}
-                          className={`p-1.5 rounded-lg text-xs transition-colors ${prod.agotado ? 'bg-red-50 text-red-500' : 'hover:bg-slate-100 text-slate-400 hover:text-amber-600'}`}
+                          onClick={e => { e.stopPropagation(); toggleAgotado(prod.id); }}
+                          className={`p-2 rounded-xl transition-colors ${prod.agotado ? 'bg-red-50 text-red-500' : 'bg-slate-50 text-slate-400 hover:text-amber-600'}`}
                           title={prod.agotado ? 'Marcar disponible' : 'Marcar agotado'}
                         >
-                          <AlertTriangle size={14} />
+                          <AlertTriangle size={15} />
                         </button>
                         <button
-                          onClick={() => toggleDisponible(prod.id)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                          onClick={e => { e.stopPropagation(); toggleDisponible(prod.id); }}
+                          className="p-2 rounded-xl bg-slate-50 text-slate-400 hover:text-slate-600 transition-colors"
                           title={prod.disponible ? 'Deshabilitar' : 'Habilitar'}
                         >
-                          {prod.disponible ? <Eye size={14} /> : <EyeOff size={14} />}
+                          {prod.disponible ? <Eye size={15} /> : <EyeOff size={15} />}
                         </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="col-span-3 py-12 text-center text-sm text-slate-400">
+                  No hay combos con ese filtro.
+                </div>
+              )}
+            </div>
+          ) : vista === 'planilla' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1100px]">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/50">
+                    <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Código Combo</th>
+                    <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Descripción Combo</th>
+                    <th className="text-right py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo Total</th>
+                    <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Código Artículo</th>
+                    <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Descripción Artículo</th>
+                    <th className="text-right py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo Unitario</th>
+                    <th className="text-right py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Cantidad</th>
+                    <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Unidad</th>
+                    <th className="text-right py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Incidencia</th>
+                    <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Editar</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {filasPlanilla.map(fila => (
+                    <tr key={fila.key} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-2.5 px-3 text-sm font-semibold text-amber-700 whitespace-nowrap">{fila.codigoCombo}</td>
+                      <td className="py-2.5 px-3 text-sm font-medium text-slate-800">{fila.descripcionCombo}</td>
+                      <td className="py-2.5 px-3 text-right text-sm text-slate-700">${fila.costoTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                      <td className="py-2.5 px-3 text-sm text-slate-600 whitespace-nowrap">{fila.codigoArticulo || '-'}</td>
+                      <td className="py-2.5 px-3 text-sm text-slate-700">{fila.descripcionArticulo}</td>
+                      <td className="py-2.5 px-3 text-right text-sm text-slate-600">${fila.costoUnitario.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                      <td className="py-2.5 px-3 text-right text-sm text-slate-700">{fila.cantidad}</td>
+                      <td className="py-2.5 px-3 text-center text-sm text-slate-500">{fila.unidad || '-'}</td>
+                      <td className="py-2.5 px-3 text-right text-sm font-semibold text-slate-800">${fila.incidencia.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                      <td className="py-2.5 px-3 text-center">
                         <button
-                          onClick={() => openEdit(prod)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                          onClick={() => openEdit(fila.producto)}
+                          className="p-2 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                          title="Editar combo"
                         >
                           <Edit2 size={14} />
                         </button>
-                      </div>
-                    </td>
+                      </td>
+                    </tr>
+                  ))}
+                  {filasPlanilla.length === 0 && (
+                    <tr>
+                      <td colSpan={10} className="py-12 text-center text-sm text-slate-400">
+                        No hay filas de receta. Importá una planilla como coffee2.xlsx para ver combos con artículos, costos e incidencia.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/50">
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Combo</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Categoría</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio lista</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen %</th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estado</th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Acciones</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {filtered.map(prod => {
+                    const m = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
+                    return (
+                      <tr key={prod.id} className={`hover:bg-slate-50 transition-colors ${!prod.disponible ? 'opacity-60' : ''}`}>
+                        <td className="py-3 px-4">
+                          <p className="font-medium text-slate-800 text-sm">{prod.nombre}</p>
+                          <p className="text-[11px] font-semibold text-amber-600">{prod.codigo || 'Sin código'}</p>
+                          <p className="text-xs text-slate-400 truncate max-w-64">{prod.descripcion}</p>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: prod.categoria?.color + '20', color: prod.categoria?.color }}>
+                            {prod.categoria?.nombre}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-bold text-slate-800">${prod.precio_venta.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right text-slate-500 text-sm">${prod.costo_produccion.toLocaleString()}</td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center justify-end gap-2">
+                            <input
+                              key={`${prod.id}-${prod.precio_venta}`}
+                              type="number"
+                              defaultValue={m.toFixed(1)}
+                              onBlur={e => actualizarMargenProducto(prod.id, parseFloat(e.target.value))}
+                              className="w-20 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-right font-semibold outline-none focus:border-amber-400"
+                              min="1"
+                              max="99"
+                              step="0.1"
+                            />
+                            <span className={`text-xs font-bold ${margenColor(m)}`}>%</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {prod.agotado ? (
+                            <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">Agotado</span>
+                          ) : prod.disponible ? (
+                            <span className="text-xs bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full font-medium">Activo</span>
+                          ) : (
+                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">Inactivo</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => toggleAgotado(prod.id)}
+                              className={`p-1.5 rounded-lg text-xs transition-colors ${prod.agotado ? 'bg-red-50 text-red-500' : 'hover:bg-slate-100 text-slate-400 hover:text-amber-600'}`}
+                              title={prod.agotado ? 'Marcar disponible' : 'Marcar agotado'}
+                            >
+                              <AlertTriangle size={14} />
+                            </button>
+                            <button
+                              onClick={() => toggleDisponible(prod.id)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                              title={prod.disponible ? 'Deshabilitar' : 'Habilitar'}
+                            >
+                              {prod.disponible ? <Eye size={14} /> : <EyeOff size={14} />}
+                            </button>
+                            <button
+                              onClick={() => openEdit(prod)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                              title="Editar combo"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </div>
+
+      {showImport && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-800 text-lg">Importar combos desde planilla</h3>
+                <p className="text-sm text-slate-500">Compatible con el formato coffee: una fila por artículo del combo.</p>
+              </div>
+              <button onClick={() => setShowImport(false)}><X size={18} className="text-slate-400" /></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <label className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:border-amber-300 hover:bg-amber-50/30 cursor-pointer transition-colors">
+                  <Upload size={26} className="mx-auto text-amber-500 mb-2" />
+                  <p className="text-sm font-semibold text-slate-700">Subir Excel o CSV</p>
+                  <p className="text-xs text-slate-400 mt-1">Ej: coffee2.xlsx con Código Combo + Descripción Artículo</p>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) void procesarPlanillaCombos(file);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                  <h4 className="text-sm font-bold text-slate-800 mb-2">Columnas del Excel</h4>
+                  <div className="text-xs text-slate-500 space-y-1">
+                    <p><span className="font-semibold">Código Combo</span> · B0014</p>
+                    <p><span className="font-semibold">Descripción Combo</span> · AMERICANO</p>
+                    <p><span className="font-semibold">Costo Total</span> · costo del combo</p>
+                    <p><span className="font-semibold">Código Artículo</span> · A3</p>
+                    <p><span className="font-semibold">Descripción Artículo</span> · STOCK CAFE</p>
+                    <p><span className="font-semibold">Costo Unitario / Cantidad / Unidad / Incidencia</span></p>
+                  </div>
+                </div>
+              </div>
+
+              {importError && (
+                <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-sm text-red-700">
+                  {importError}
+                </div>
+              )}
+
+              {importDrafts.length > 0 && (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">Vista previa</h4>
+                      <p className="text-xs text-slate-500">{importDrafts.length} combos detectados</p>
+                    </div>
+                    <button
+                      onClick={confirmarImportacionCombos}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2"
+                    >
+                      <Check size={15} />
+                      Confirmar carga
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Combo</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Código</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Categoría</th>
+                          <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Componentes</th>
+                          <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Costo</th>
+                          <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Precio</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {importDrafts.map(draft => {
+                          const costo = draft.costo_total && draft.costo_total > 0
+                            ? draft.costo_total
+                            : calcularCostoReceta(draft.receta, [...insumosCatalogo, ...importInsumos]);
+                          const categoria = mockCategorias.find(cat => cat.id === draft.categoria_id);
+                          return (
+                            <tr key={draft.key}>
+                              <td className="py-3 px-3">
+                                <p className="text-sm font-semibold text-slate-800">{draft.nombre}</p>
+                                <p className="text-xs text-slate-400">{draft.receta.slice(0, 2).map(r => getRecetaItemData(r, [...insumosCatalogo, ...importInsumos]).nombre).join(', ') || 'Sin artículos'}{draft.receta.length > 2 ? '…' : ''}</p>
+                              </td>
+                              <td className="py-3 px-3 text-sm font-semibold text-amber-700">{draft.codigo || '-'}</td>
+                              <td className="py-3 px-3 text-sm text-slate-600">{categoria?.nombre || 'Combos'}</td>
+                              <td className="py-3 px-3 text-right text-sm text-slate-600">{draft.receta.length}</td>
+                              <td className="py-3 px-3 text-right text-sm font-semibold text-slate-800">${costo.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="py-3 px-3 text-right text-sm font-bold text-amber-700">${(draft.precio_venta || 0).toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={() => setShowImport(false)}
+                className="px-4 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 text-lg">
-                {selectedProducto ? 'Editar Producto' : 'Nuevo Producto'}
+                {selectedProducto ? 'Editar Combo' : 'Nuevo Combo'}
               </h3>
               <button onClick={() => setShowForm(false)}><X size={18} className="text-slate-400" /></button>
             </div>
             <div className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Código de combo</label>
+                  <input
+                    value={editForm.codigo || ''}
+                    onChange={e => setEditForm(f => ({ ...f, codigo: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 font-semibold"
+                    placeholder="Ej: COMBO-001"
+                  />
+                </div>
+                <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Nombre *</label>
                   <input
                     value={editForm.nombre || ''}
                     onChange={e => setEditForm(f => ({ ...f, nombre: e.target.value }))}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                    placeholder="Nombre del producto"
+                    placeholder="Nombre del combo"
                   />
                 </div>
                 <div className="col-span-2">
@@ -220,7 +1310,7 @@ export default function Productos() {
                     onChange={e => setEditForm(f => ({ ...f, descripcion: e.target.value }))}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 resize-none"
                     rows={2}
-                    placeholder="Descripción breve del producto"
+                    placeholder="Descripción breve del combo"
                   />
                 </div>
                 <div>
@@ -258,22 +1348,153 @@ export default function Productos() {
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Costo de Producción $</label>
                   <input
                     type="number"
-                    value={editForm.costo_produccion || ''}
+                    value={costoProduccionActual || ''}
                     onChange={e => setEditForm(f => ({ ...f, costo_produccion: parseFloat(e.target.value) || 0 }))}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                    readOnly={(editForm.receta?.length || 0) > 0}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 read-only:bg-slate-50"
                     min="0"
                   />
+                  {(editForm.receta?.length || 0) > 0 && (
+                    <p className="text-[11px] text-slate-400 mt-1">Calculado por los insumos de la receta.</p>
+                  )}
+                </div>
+                <div className="col-span-2 border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-3 border-b border-slate-100">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">Receta / stock que consume</h4>
+                      <p className="text-xs text-slate-500">Definí si descuenta insumos de stock o producciones preparadas.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addRecetaItem}
+                      className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium px-3 py-2 rounded-xl text-xs transition-colors"
+                    >
+                      <Plus size={14} />
+                      Agregar componente
+                    </button>
+                  </div>
+
+                  {(editForm.receta?.length || 0) > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[860px]">
+                        <thead>
+                          <tr className="border-b border-slate-100">
+                            <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Origen</th>
+                            <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Componente</th>
+                            <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Cantidad</th>
+                            <th className="text-center py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Unidad</th>
+                            <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Costo unit.</th>
+                            <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Costo línea</th>
+                            <th className="py-2.5 px-3"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {(editForm.receta || []).map(item => {
+                            const tipo = getRecetaItemTipo(item);
+                            const data = getRecetaItemData(item, insumosCatalogo);
+                            const costoUnitario = data.costoUnitario;
+                            const costoLinea = item.cantidad * costoUnitario;
+                            const sinStock = item.cantidad > data.stockActual;
+
+                            return (
+                              <tr key={item.id}>
+                                <td className="py-2.5 px-3">
+                                  <select
+                                    value={tipo}
+                                    onChange={e => updateRecetaItem(item.id, { tipo: e.target.value as TipoComponenteReceta })}
+                                    className="w-32 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
+                                  >
+                                    <option value="stock">Stock</option>
+                                    <option value="produccion">Producción</option>
+                                  </select>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <select
+                                    value={tipo === 'produccion' ? item.produccion_id || loadDemoProducciones()[0]?.id : item.ingrediente_id || insumosCatalogo[0]?.id}
+                                    onChange={e => (
+                                      tipo === 'produccion'
+                                        ? updateRecetaItem(item.id, { produccion_id: e.target.value })
+                                        : updateRecetaItem(item.id, { ingrediente_id: e.target.value })
+                                    )}
+                                    className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
+                                  >
+                                    {tipo === 'produccion'
+                                      ? loadDemoProducciones().map(prod => (
+                                          <option key={prod.id} value={prod.id}>{prod.nombre}</option>
+                                        ))
+                                      : insumosCatalogo.map(ing => (
+                                          <option key={ing.id} value={ing.id}>{ing.codigo ? `${ing.codigo} · ` : ''}{ing.nombre}</option>
+                                        ))}
+                                  </select>
+                                  <p className={`text-[11px] mt-1 ${sinStock ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
+                                    {data.stockLabel}: {data.stockActual.toLocaleString()} {data.unidad}
+                                    {sinStock ? ' · insuficiente' : ''}
+                                  </p>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <input
+                                    type="number"
+                                    value={item.cantidad || ''}
+                                    onChange={e => updateRecetaItem(item.id, { cantidad: parseFloat(e.target.value) || 0 })}
+                                    className="w-28 border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400"
+                                    min="0"
+                                    step="0.001"
+                                  />
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <select
+                                    value={item.unidad_medida}
+                                    onChange={e => updateRecetaItem(item.id, { unidad_medida: e.target.value as UnidadMedida })}
+                                    className="w-32 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
+                                  >
+                                    {unidades.map(u => <option key={u} value={u}>{u}</option>)}
+                                  </select>
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-sm text-slate-600">
+                                  ${costoUnitario.toLocaleString()}
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-sm font-bold text-slate-800">
+                                  ${costoLinea.toLocaleString()}
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => removeRecetaItem(item.id)}
+                                    className="p-2 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                                    title="Quitar insumo"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <div className="flex justify-end border-t border-slate-100 bg-slate-50 px-4 py-3">
+                        <div className="text-right">
+                          <p className="text-xs text-slate-500">Costo total por receta</p>
+                          <p className="text-lg font-bold text-slate-800">${costoRecetaActual.toLocaleString()}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-5 text-center">
+                      <p className="text-sm text-slate-500">Todavía no hay componentes cargados para este combo.</p>
+                      <p className="text-xs text-slate-400 mt-1">Agregá insumos de stock o producciones preparadas como milanesas, medallones o salsas.</p>
+                    </div>
+                  )}
                 </div>
               </div>
-              {editForm.precio_venta && editForm.costo_produccion && (
+              {editForm.precio_venta && costoProduccionActual > 0 && (
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
                   <div className="flex justify-between text-sm">
                     <span className="text-amber-700">Ganancia por unidad:</span>
-                    <span className="font-bold text-amber-800">${(editForm.precio_venta - editForm.costo_produccion).toLocaleString()}</span>
+                    <span className="font-bold text-amber-800">${(editForm.precio_venta - costoProduccionActual).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-sm mt-1">
                     <span className="text-amber-700">Margen:</span>
-                    <span className="font-bold text-amber-800">{margen(editForm.precio_venta, editForm.costo_produccion)}%</span>
+                    <span className="font-bold text-amber-800">{margen(editForm.precio_venta, costoProduccionActual)}%</span>
                   </div>
                 </div>
               )}
@@ -283,6 +1504,103 @@ export default function Productos() {
               <button onClick={saveProducto} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400 transition-colors flex items-center justify-center gap-2">
                 <Check size={16} />
                 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {detalleCombo && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDetalleCombo(null)}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-slate-100">
+              <div>
+                <p className="text-xs font-bold text-amber-600">{detalleCombo.codigo || 'Sin código'}</p>
+                <h3 className="font-bold text-slate-800 text-lg">{detalleCombo.nombre}</h3>
+                <p className="text-sm text-slate-500">Todo lo que lleva este combo para prepararlo.</p>
+              </div>
+              <button onClick={() => setDetalleCombo(null)}><X size={18} className="text-slate-400" /></button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">Artículos</p>
+                  <p className="text-lg font-bold text-slate-800">{(detalleCombo.receta || []).length}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">Costo total</p>
+                  <p className="text-lg font-bold text-slate-800">
+                    ${detalleCombo.costo_produccion.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
+                  <p className="text-xs text-amber-700">Precio venta</p>
+                  <p className="text-lg font-bold text-amber-800">${detalleCombo.precio_venta.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {(detalleCombo.receta || []).length > 0 ? (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100">
+                        <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Código</th>
+                        <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Artículo</th>
+                        <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Cantidad</th>
+                        <th className="text-center py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Unidad</th>
+                        <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Costo unit.</th>
+                        <th className="text-right py-2.5 px-3 text-xs font-semibold text-slate-500 uppercase">Incidencia</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(detalleCombo.receta || []).map(item => {
+                        const data = getRecetaItemData(item, insumosCatalogo);
+                        const esProduccion = getRecetaItemTipo(item) === 'produccion';
+                        return (
+                          <tr key={item.id}>
+                            <td className="py-2.5 px-3 text-sm text-slate-500 whitespace-nowrap">{data.codigo || '-'}</td>
+                            <td className="py-2.5 px-3">
+                              <p className="text-sm font-medium text-slate-800">{data.nombre}</p>
+                              <p className="text-[11px] text-slate-400">{esProduccion ? 'Producción propia' : 'Stock'}</p>
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-sm font-semibold text-slate-700">{item.cantidad}</td>
+                            <td className="py-2.5 px-3 text-center text-sm text-slate-500">{data.unidad}</td>
+                            <td className="py-2.5 px-3 text-right text-sm text-slate-600">
+                              ${data.costoUnitario.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-sm font-bold text-slate-800">
+                              ${(item.cantidad * data.costoUnitario).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center">
+                  <p className="text-sm text-slate-500">Este combo todavía no tiene artículos cargados.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={() => setDetalleCombo(null)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium"
+              >
+                Cerrar
+              </button>
+              <button
+                onClick={() => { const prod = detalleCombo; setDetalleCombo(null); openEdit(prod); }}
+                className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400 transition-colors flex items-center justify-center gap-2"
+              >
+                <Edit2 size={15} />
+                Editar receta
               </button>
             </div>
           </div>

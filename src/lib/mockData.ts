@@ -1,6 +1,6 @@
 import type {
   Profile, Mesa, CategoriaProducto, Ingrediente, Producto,
-  Pedido, PedidoItem, Pago, Proveedor, RecetaItem
+  Pedido, PedidoItem, ProduccionPreparada, Proveedor, RecetaItem
 } from './types';
 
 export const mockProfile: Profile = {
@@ -32,10 +32,10 @@ export const mockCategorias: CategoriaProducto[] = [
 ];
 
 export const mockProveedores: Proveedor[] = [
-  { id: 'prov-1', nombre: 'Carnes del Norte', contacto: 'Juan Pérez', telefono: '011-4444-5555', email: 'carnesdelnorte@mail.com', activo: true, created_at: '' },
-  { id: 'prov-2', nombre: 'Lácteos San Luis', contacto: 'Roberto Sosa', telefono: '011-3333-4444', email: 'lacteossanluis@mail.com', activo: true, created_at: '' },
-  { id: 'prov-3', nombre: 'Verduras Frescas', contacto: 'Elena Mora', telefono: '011-2222-3333', email: 'verdfrescas@mail.com', activo: true, created_at: '' },
-  { id: 'prov-4', nombre: 'Distribuidora Bebidas', contacto: 'Carlos Ruiz', telefono: '011-1111-2222', email: 'distr.bebidas@mail.com', activo: true, created_at: '' },
+  { id: 'prov-1', nombre: 'Carnes del Norte', contacto: 'Juan Pérez', telefono: '011-4444-5555', email: 'carnesdelnorte@mail.com', cuit: '30-12345678-9', direccion: 'Av. Norte 1234', codigo_fiscal: 'CF-001', activo: true, created_at: '' },
+  { id: 'prov-2', nombre: 'Lácteos San Luis', contacto: 'Roberto Sosa', telefono: '011-3333-4444', email: 'lacteossanluis@mail.com', cuit: '30-23456789-0', direccion: 'San Luis 450', codigo_fiscal: 'CF-002', activo: true, created_at: '' },
+  { id: 'prov-3', nombre: 'Verduras Frescas', contacto: 'Elena Mora', telefono: '011-2222-3333', email: 'verdfrescas@mail.com', cuit: '30-34567890-1', direccion: 'Mercado Central Local 12', codigo_fiscal: 'CF-003', activo: true, created_at: '' },
+  { id: 'prov-4', nombre: 'Distribuidora Bebidas', contacto: 'Carlos Ruiz', telefono: '011-1111-2222', email: 'distr.bebidas@mail.com', cuit: '30-45678901-2', direccion: 'Ruta 8 Km 22', codigo_fiscal: 'CF-004', activo: true, created_at: '' },
 ];
 
 export const mockIngredientes: Ingrediente[] = [
@@ -62,9 +62,61 @@ export const mockRecetaHamburguesaClasica: RecetaItem[] = [
   { id: 'rec-6', producto_id: 'prod-1', ingrediente_id: 'ing-9', cantidad: 1, unidad_medida: 'porcion', costo_calculado: 15, created_at: '', ingrediente: mockIngredientes[8] },
 ];
 
+export const mockProducciones: ProduccionPreparada[] = [
+  {
+    id: 'prep-1',
+    nombre: 'Milanesa preparada',
+    descripcion: 'Milanesa lista para cocinar, producida con carne, huevo, pan rallado y perejil',
+    unidad_medida: 'unidad',
+    cantidad_producida: 24,
+    stock_actual: 18,
+    costo_unitario: 620,
+    receta: [
+      { id: 'prep-1-rec-1', producto_id: 'prep-1', tipo: 'stock', ingrediente_id: 'ing-1', cantidad: 2400, unidad_medida: 'gramos', costo_calculado: 34.56, created_at: '', ingrediente: mockIngredientes[0] },
+      { id: 'prep-1-rec-2', producto_id: 'prep-1', tipo: 'stock', ingrediente_id: 'ing-11', cantidad: 8, unidad_medida: 'unidad', costo_calculado: 280, created_at: '', ingrediente: mockIngredientes[10] },
+      { id: 'prep-1-rec-3', producto_id: 'prep-1', tipo: 'stock', ingrediente_id: 'ing-12', cantidad: 120, unidad_medida: 'gramos', costo_calculado: 0.36, created_at: '', ingrediente: mockIngredientes[11] },
+    ],
+    activo: true,
+    created_at: '',
+    updated_at: '',
+  },
+  {
+    id: 'prep-2',
+    nombre: 'Medallón de carne 180g',
+    descripcion: 'Medallón formado en producción para hamburguesas',
+    unidad_medida: 'unidad',
+    cantidad_producida: 40,
+    stock_actual: 32,
+    costo_unitario: 520,
+    receta: [
+      { id: 'prep-2-rec-1', producto_id: 'prep-2', tipo: 'stock', ingrediente_id: 'ing-1', cantidad: 7200, unidad_medida: 'gramos', costo_calculado: 103.68, created_at: '', ingrediente: mockIngredientes[0] },
+      { id: 'prep-2-rec-2', producto_id: 'prep-2', tipo: 'stock', ingrediente_id: 'ing-12', cantidad: 300, unidad_medida: 'gramos', costo_calculado: 0.9, created_at: '', ingrediente: mockIngredientes[11] },
+    ],
+    activo: true,
+    created_at: '',
+    updated_at: '',
+  },
+  {
+    id: 'prep-3',
+    nombre: 'Salsa casera producida',
+    descripcion: 'Salsa elaborada previamente en cocina',
+    unidad_medida: 'porcion',
+    cantidad_producida: 80,
+    stock_actual: 55,
+    costo_unitario: 35,
+    receta: [
+      { id: 'prep-3-rec-1', producto_id: 'prep-3', tipo: 'stock', ingrediente_id: 'ing-9', cantidad: 80, unidad_medida: 'porcion', costo_calculado: 1200, created_at: '', ingrediente: mockIngredientes[8] },
+    ],
+    activo: true,
+    created_at: '',
+    updated_at: '',
+  },
+];
+
 export const mockProductos: Producto[] = [
   {
     id: 'prod-1',
+    codigo: 'HAMB-001',
     nombre: 'Hamburguesa Clásica',
     descripcion: 'Carne 180g, cheddar doble, lechuga, tomate, salsa especial en pan brioche',
     categoria_id: 'cat-1',
@@ -162,6 +214,7 @@ export const mockProductos: Producto[] = [
   },
   {
     id: 'prod-9',
+    codigo: 'COMBO-001',
     nombre: 'Combo Clásico',
     descripcion: 'Hamburguesa Clásica + Papas Medianas + Bebida 500ml',
     categoria_id: 'cat-5',
@@ -174,6 +227,7 @@ export const mockProductos: Producto[] = [
   },
   {
     id: 'prod-10',
+    codigo: 'COMBO-002',
     nombre: 'Combo Bacon Premium',
     descripcion: 'Hamburguesa Bacon + Papas Grandes + Bebida 500ml',
     categoria_id: 'cat-5',
@@ -183,6 +237,26 @@ export const mockProductos: Producto[] = [
     disponible: true, agotado: false, tiempo_preparacion: 18, activo: true,
     created_at: '', updated_at: '',
     categoria: mockCategorias[4],
+  },
+  {
+    id: 'prod-13',
+    codigo: 'COMBO-003',
+    nombre: 'Combo Milanesa',
+    descripcion: 'Sándwich de milanesa preparada + papas + bebida',
+    categoria_id: 'cat-5',
+    precio_venta: 6100,
+    costo_produccion: 2140,
+    margen_ganancia: 64.9,
+    disponible: true, agotado: false, tiempo_preparacion: 14, activo: true,
+    created_at: '', updated_at: '',
+    categoria: mockCategorias[4],
+    receta: [
+      { id: 'rec-mila-1', producto_id: 'prod-13', tipo: 'produccion', produccion_id: 'prep-1', cantidad: 1, unidad_medida: 'unidad', costo_calculado: 620, created_at: '', produccion: mockProducciones[0] },
+      { id: 'rec-mila-2', producto_id: 'prod-13', tipo: 'stock', ingrediente_id: 'ing-2', cantidad: 1, unidad_medida: 'unidad', costo_calculado: 85, created_at: '', ingrediente: mockIngredientes[1] },
+      { id: 'rec-mila-3', producto_id: 'prod-13', tipo: 'stock', ingrediente_id: 'ing-5', cantidad: 40, unidad_medida: 'gramos', costo_calculado: 0.24, created_at: '', ingrediente: mockIngredientes[4] },
+      { id: 'rec-mila-4', producto_id: 'prod-13', tipo: 'stock', ingrediente_id: 'ing-6', cantidad: 1, unidad_medida: 'porcion', costo_calculado: 210, created_at: '', ingrediente: mockIngredientes[5] },
+      { id: 'rec-mila-5', producto_id: 'prod-13', tipo: 'stock', ingrediente_id: 'ing-7', cantidad: 1, unidad_medida: 'unidad', costo_calculado: 280, created_at: '', ingrediente: mockIngredientes[6] },
+    ],
   },
   {
     id: 'prod-11',

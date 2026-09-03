@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Clock, Check, ChefHat, Bell, AlertCircle } from 'lucide-react';
 import type { Pedido, EstadoItem } from '../lib/types';
-import { mockPedidos } from '../lib/mockData';
+import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
 
 const estadoConfig: Record<string, { label: string; color: string; bg: string; action: string; next: EstadoItem }> = {
   pendiente: { label: 'Nuevo', color: 'text-yellow-700', bg: 'bg-yellow-100', action: 'Iniciar', next: 'en_preparacion' },
@@ -12,7 +12,7 @@ const estadoConfig: Record<string, { label: string; color: string; bg: string; a
 
 export default function Cocina() {
   const [pedidos, setPedidos] = useState<Pedido[]>(
-    mockPedidos.filter(p => p.estado === 'en_preparacion' || p.estado === 'abierto' || p.estado === 'listo')
+    () => loadDemoPedidos()
   );
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
@@ -21,6 +21,10 @@ export default function Cocina() {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    saveDemoPedidos(pedidos);
+  }, [pedidos]);
 
   const getElapsed = (timestamp: string) => {
     const diff = Math.floor((currentTime.getTime() - new Date(timestamp).getTime()) / 1000);
@@ -86,7 +90,7 @@ export default function Cocina() {
           <Bell className="text-blue-600" size={20} />
           <div>
             <p className="text-xl font-bold text-blue-800">{activeOrders.length}</p>
-            <p className="text-xs text-blue-600">Pedidos activos</p>
+            <p className="text-xs text-blue-600">Comandas activas</p>
           </div>
         </div>
       </div>
@@ -109,7 +113,7 @@ export default function Cocina() {
         <div className="flex-1 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-400">
           <div className="text-center">
             <ChefHat size={48} className="mx-auto mb-3 opacity-20" />
-            <p className="text-lg font-medium">Sin pedidos pendientes</p>
+            <p className="text-lg font-medium">Sin comandas pendientes</p>
             <p className="text-sm">La cocina está al día</p>
           </div>
         </div>

@@ -1,21 +1,21 @@
 import { useState } from 'react';
-import { Plus, CreditCard as Edit2, X, Check, Shield, User } from 'lucide-react';
+import { Plus, CreditCard as Edit2, X, Check, Shield } from 'lucide-react';
 import type { Profile, Rol } from '../lib/types';
 import { mockEmpleados } from '../lib/mockData';
 
 const rolConfig: Record<Rol, { label: string; color: string; desc: string }> = {
   admin: { label: 'Administrador', color: 'bg-red-100 text-red-700', desc: 'Acceso completo al sistema' },
   encargado: { label: 'Encargado', color: 'bg-amber-100 text-amber-700', desc: 'Gestión del local y reportes' },
-  cajero: { label: 'Cajero', color: 'bg-blue-100 text-blue-700', desc: 'Caja, cobros y pedidos' },
-  moza: { label: 'Moza/Mozo', color: 'bg-emerald-100 text-emerald-700', desc: 'Mesas y pedidos' },
+  cajero: { label: 'Cajero', color: 'bg-blue-100 text-blue-700', desc: 'Caja, cobros y comandas' },
+  moza: { label: 'Moza/Mozo', color: 'bg-emerald-100 text-emerald-700', desc: 'Mesas y comandas' },
   cocina: { label: 'Cocina', color: 'bg-orange-100 text-orange-700', desc: 'Pantalla de cocina' },
 };
 
 const rolesPermissions: Record<Rol, string[]> = {
-  admin: ['Dashboard', 'Mesas', 'Pedidos', 'Cocina', 'Caja', 'Productos', 'Stock', 'Costos', 'Reportes', 'Usuarios', 'Configuración'],
-  encargado: ['Dashboard', 'Mesas', 'Pedidos', 'Cocina', 'Caja', 'Productos', 'Stock', 'Costos', 'Reportes'],
-  cajero: ['Mesas', 'Pedidos', 'Caja', 'Dashboard'],
-  moza: ['Mesas', 'Pedidos'],
+  admin: ['Dashboard', 'Mesas', 'Comandas', 'Cocina', 'Caja del día', 'Arqueos', 'Cobros', 'Productos', 'Stock', 'Costos', 'Reportes', 'Usuarios', 'Configuración'],
+  encargado: ['Dashboard', 'Mesas', 'Comandas', 'Cocina', 'Caja del día', 'Arqueos', 'Cobros', 'Productos', 'Stock', 'Costos', 'Reportes'],
+  cajero: ['Mesas', 'Comandas', 'Caja del día', 'Arqueos', 'Cobros', 'Dashboard'],
+  moza: ['Mesas', 'Comandas'],
   cocina: ['Cocina'],
 };
 

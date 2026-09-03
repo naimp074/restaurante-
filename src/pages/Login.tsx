@@ -3,7 +3,7 @@ import { UtensilsCrossed, Lock, Mail, Eye, EyeOff, AlertCircle } from 'lucide-re
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
-  const { signIn } = useAuth();
+  const { signIn, modoDemo } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -112,21 +112,23 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-white/10">
-            <p className="text-xs text-slate-500 mb-3 text-center">Acceso rápido (demo)</p>
-            <div className="grid grid-cols-2 gap-2">
-              {demoAccounts.map(acc => (
-                <button
-                  key={acc.label}
-                  onClick={() => quickLogin(acc.email, acc.pass)}
-                  disabled={loading}
-                  className={`px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${acc.color}`}
-                >
-                  {acc.label}
-                </button>
-              ))}
+          {modoDemo && (
+            <div className="mt-6 pt-6 border-t border-white/10">
+              <p className="text-xs text-slate-500 mb-3 text-center">Acceso rápido (demo)</p>
+              <div className="grid grid-cols-2 gap-2">
+                {demoAccounts.map(acc => (
+                  <button
+                    key={acc.label}
+                    onClick={() => quickLogin(acc.email, acc.pass)}
+                    disabled={loading}
+                    className={`px-3 py-2 border rounded-lg text-xs font-medium transition-colors ${acc.color}`}
+                  >
+                    {acc.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

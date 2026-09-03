@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Users, Clock, Plus, CreditCard as Edit2, ArrowRight, X, Check } from 'lucide-react';
-import type { Mesa, EstadoMesa, Profile } from '../lib/types';
+import { useEffect, useState } from 'react';
+import { Users, Clock, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
+import type { Mesa, EstadoMesa } from '../lib/types';
 import { mockMesas, mockEmpleados } from '../lib/mockData';
 
 const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: string; bg: string }> = {
@@ -13,24 +13,100 @@ const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: stri
   cerrada: { label: 'Cerrada', color: 'text-slate-600', dot: 'bg-slate-400', bg: 'bg-slate-50 border-slate-200' },
 };
 
-const sectores = ['todos', 'salon', 'terraza', 'barra', 'privado'] as const;
-const sectorLabels: Record<string, string> = { todos: 'Todos', salon: 'Salón', terraza: 'Terraza', barra: 'Barra', privado: 'Privado' };
+type SectorOption = {
+  id: string;
+  label: string;
+};
+
+const initialSectores: SectorOption[] = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'salon', label: 'Salón' },
+  { id: 'terraza', label: 'Terraza' },
+  { id: 'barra', label: 'Barra' },
+  { id: 'privado', label: 'Privado' },
+];
+
+const sectoresStorageKey = 'restaurant-sectores-mesas';
+const mesasStorageKey = 'restaurant-mesas';
+
+const createSectorId = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+const getSectorLabel = (sector: string, sectores: SectorOption[]) =>
+  sectores.find(s => s.id === sector)?.label ?? sector;
+
+const getMesaLabel = (mesa: Mesa) => mesa.nombre || `M${mesa.numero}`;
+
+const loadSectores = () => {
+  if (typeof window === 'undefined') return initialSectores;
+
+  try {
+    const saved = window.localStorage.getItem(sectoresStorageKey);
+    if (!saved) return initialSectores;
+
+    const parsed = JSON.parse(saved) as SectorOption[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return initialSectores;
+
+    return parsed;
+  } catch {
+    return initialSectores;
+  }
+};
+
+const loadMesas = () => {
+  if (typeof window === 'undefined') return mockMesas;
+
+  try {
+    const saved = window.localStorage.getItem(mesasStorageKey);
+    if (!saved) return mockMesas;
+
+    const parsed = JSON.parse(saved) as Mesa[];
+    if (!Array.isArray(parsed)) return mockMesas;
+
+    return parsed;
+  } catch {
+    return mockMesas;
+  }
+};
 
 export default function Mesas() {
-  const [mesas, setMesas] = useState<Mesa[]>(mockMesas);
+  const [mesas, setMesas] = useState<Mesa[]>(loadMesas);
   const [selectedMesa, setSelectedMesa] = useState<Mesa | null>(null);
   const [sectorFiltro, setSectorFiltro] = useState<string>('todos');
   const [showModal, setShowModal] = useState(false);
   const [modalMesa, setModalMesa] = useState<Mesa | null>(null);
+  const [editMesaName, setEditMesaName] = useState('');
+  const [editMesaCapacidad, setEditMesaCapacidad] = useState(1);
   const [editPersonas, setEditPersonas] = useState(1);
   const [editMoza, setEditMoza] = useState('');
   const [editEstado, setEditEstado] = useState<EstadoMesa>('libre');
+  const [sectores, setSectores] = useState<SectorOption[]>(loadSectores);
+  const [showAddSector, setShowAddSector] = useState(false);
+  const [newSectorName, setNewSectorName] = useState('');
+  const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
+  const [editingSectorName, setEditingSectorName] = useState('');
 
   const filteredMesas = mesas.filter(m => sectorFiltro === 'todos' || m.sector === sectorFiltro);
   const mozas = mockEmpleados.filter(e => e.rol === 'moza' || e.rol === 'encargado');
 
+  useEffect(() => {
+    window.localStorage.setItem(sectoresStorageKey, JSON.stringify(sectores));
+  }, [sectores]);
+
+  useEffect(() => {
+    window.localStorage.setItem(mesasStorageKey, JSON.stringify(mesas));
+  }, [mesas]);
+
   const openModal = (mesa: Mesa) => {
     setModalMesa(mesa);
+    setEditMesaName(getMesaLabel(mesa));
+    setEditMesaCapacidad(mesa.capacidad);
     setEditEstado(mesa.estado);
     setEditMoza(mesa.empleado_id || '');
     setEditPersonas(1);
@@ -40,11 +116,31 @@ export default function Mesas() {
   const handleSave = () => {
     if (!modalMesa) return;
     const empleado = mozas.find(m => m.id === editMoza);
+    const nombre = editMesaName.trim();
+    const capacidad = Math.max(1, editMesaCapacidad);
+
     setMesas(prev => prev.map(m =>
       m.id === modalMesa.id
-        ? { ...m, estado: editEstado, empleado_id: editMoza || undefined, empleado }
+        ? {
+            ...m,
+            nombre: nombre || undefined,
+            capacidad,
+            estado: editEstado,
+            empleado_id: editMoza || undefined,
+            empleado,
+          }
         : m
     ));
+    setShowModal(false);
+    setModalMesa(null);
+  };
+
+  const handleDeleteMesa = () => {
+    if (!modalMesa) return;
+    if (!window.confirm(`¿Querés borrar ${getMesaLabel(modalMesa)}?`)) return;
+
+    setMesas(prev => prev.filter(m => m.id !== modalMesa.id));
+    setSelectedMesa(prev => (prev?.id === modalMesa.id ? null : prev));
     setShowModal(false);
     setModalMesa(null);
   };
@@ -52,6 +148,57 @@ export default function Mesas() {
   const handleAbrirMesa = (mesa: Mesa) => {
     if (mesa.estado !== 'libre') return;
     openModal(mesa);
+  };
+
+  const handleAddSector = () => {
+    const label = newSectorName.trim();
+    if (!label) return;
+
+    const baseId = createSectorId(label) || `apartado-${Date.now()}`;
+    const id = sectores.some(s => s.id === baseId) ? `${baseId}-${Date.now()}` : baseId;
+
+    setSectores(prev => [...prev, { id, label }]);
+    setSectorFiltro(id);
+    setNewSectorName('');
+    setShowAddSector(false);
+  };
+
+  const startEditingSector = (sector: SectorOption) => {
+    setEditingSectorId(sector.id);
+    setEditingSectorName(sector.label);
+    setShowAddSector(false);
+    setNewSectorName('');
+  };
+
+  const handleUpdateSector = () => {
+    if (!editingSectorId) return;
+
+    const label = editingSectorName.trim();
+    if (!label) return;
+
+    setSectores(prev => prev.map(s => (
+      s.id === editingSectorId ? { ...s, label } : s
+    )));
+    setEditingSectorId(null);
+    setEditingSectorName('');
+  };
+
+  const handleDeleteSector = (sectorId: string) => {
+    if (sectorId === 'todos') return;
+
+    const sectorHasMesas = mesas.some(m => m.sector === sectorId);
+    if (sectorHasMesas && !window.confirm('Este apartado tiene mesas asignadas. ¿Querés borrarlo igual?')) {
+      return;
+    }
+
+    setSectores(prev => prev.filter(s => s.id !== sectorId));
+    if (sectorFiltro === sectorId) {
+      setSectorFiltro('todos');
+    }
+    if (editingSectorId === sectorId) {
+      setEditingSectorId(null);
+      setEditingSectorName('');
+    }
   };
 
   const stats = {
@@ -98,58 +245,169 @@ export default function Mesas() {
             <h2 className="font-semibold text-slate-800">Plano del Local</h2>
             <p className="text-sm text-slate-500">Seleccioná una mesa para gestionar</p>
           </div>
-          <div className="flex gap-1.5 bg-slate-100 rounded-xl p-1">
+          <div className="flex flex-wrap gap-1.5 bg-slate-100 rounded-xl p-1">
             {sectores.map(s => (
-              <button
-                key={s}
-                onClick={() => setSectorFiltro(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  sectorFiltro === s
-                    ? 'bg-white text-slate-800 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {sectorLabels[s]}
-              </button>
+              editingSectorId === s.id ? (
+                <div key={s.id} className="flex items-center gap-1 rounded-lg bg-white p-0.5 shadow-sm">
+                  <input
+                    autoFocus
+                    value={editingSectorName}
+                    onChange={e => setEditingSectorName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleUpdateSector();
+                      if (e.key === 'Escape') {
+                        setEditingSectorId(null);
+                        setEditingSectorName('');
+                      }
+                    }}
+                    className="w-28 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 outline-none focus:border-amber-400"
+                  />
+                  <button
+                    onClick={handleUpdateSector}
+                    className="w-6 h-6 rounded-md bg-amber-500 text-white flex items-center justify-center hover:bg-amber-400 transition-colors"
+                    aria-label="Guardar nombre del apartado"
+                  >
+                    <Check size={12} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingSectorId(null);
+                      setEditingSectorName('');
+                    }}
+                    className="w-6 h-6 rounded-md text-slate-500 flex items-center justify-center hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                    aria-label="Cancelar edición del apartado"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  key={s.id}
+                  className={`group flex items-center rounded-lg transition-all ${
+                    sectorFiltro === s.id
+                      ? 'bg-white text-slate-800 shadow-sm'
+                      : 'text-slate-500 hover:bg-white/70 hover:text-slate-700'
+                  }`}
+                >
+                  <button
+                    onClick={() => setSectorFiltro(s.id)}
+                    className="px-3 py-1.5 text-xs font-medium"
+                  >
+                    {s.label}
+                  </button>
+                  {s.id !== 'todos' && sectorFiltro === s.id && (
+                    <div className="flex items-center pr-1">
+                      <button
+                        onClick={() => startEditingSector(s)}
+                        className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-slate-100"
+                        aria-label={`Editar apartado ${s.label}`}
+                      >
+                        <Pencil size={11} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSector(s.id)}
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-red-500 hover:bg-red-50"
+                        aria-label={`Borrar apartado ${s.label}`}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
             ))}
+            {showAddSector ? (
+              <div className="flex items-center gap-1 pl-1">
+                <input
+                  autoFocus
+                  value={newSectorName}
+                  onChange={e => setNewSectorName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleAddSector();
+                    if (e.key === 'Escape') {
+                      setShowAddSector(false);
+                      setNewSectorName('');
+                    }
+                  }}
+                  placeholder="Nuevo apartado"
+                  className="w-32 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-amber-400"
+                />
+                <button
+                  onClick={handleAddSector}
+                  className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center hover:bg-amber-400 transition-colors"
+                  aria-label="Guardar apartado"
+                >
+                  <Check size={14} />
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddSector(false);
+                    setNewSectorName('');
+                  }}
+                  className="w-7 h-7 rounded-lg text-slate-500 flex items-center justify-center hover:bg-white hover:text-slate-700 transition-colors"
+                  aria-label="Cancelar apartado"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAddSector(true)}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-amber-700 hover:bg-white hover:shadow-sm transition-all flex items-center gap-1"
+              >
+                <Plus size={12} />
+                Agregar apartado
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4">
-          {filteredMesas.map(mesa => {
-            const cfg = estadoConfig[mesa.estado];
-            const isSelected = selectedMesa?.id === mesa.id;
-            return (
-              <button
-                key={mesa.id}
-                onClick={() => {
-                  setSelectedMesa(mesa);
-                  if (mesa.estado === 'libre') handleAbrirMesa(mesa);
-                  else openModal(mesa);
-                }}
-                className={`relative p-4 rounded-2xl border-2 transition-all duration-200 text-left hover:scale-105 hover:shadow-md ${cfg.bg} ${
-                  isSelected ? 'ring-2 ring-amber-500 ring-offset-2' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-lg font-bold text-slate-800">M{mesa.numero}</span>
-                  <div className={`w-2.5 h-2.5 rounded-full ${cfg.dot} animate-pulse`} />
-                </div>
-                <div className={`text-xs font-semibold mb-2 ${cfg.color}`}>{cfg.label}</div>
-                <div className="flex items-center gap-1 text-xs text-slate-500">
-                  <Users size={10} />
-                  <span>{mesa.capacidad} pers.</span>
-                </div>
-                {mesa.empleado && (
-                  <div className="mt-2 text-xs text-slate-600 truncate font-medium">
-                    {mesa.empleado.nombre}
+        {filteredMesas.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4">
+            {filteredMesas.map(mesa => {
+              const cfg = estadoConfig[mesa.estado];
+              const isSelected = selectedMesa?.id === mesa.id;
+              return (
+                <button
+                  key={mesa.id}
+                  onClick={() => {
+                    setSelectedMesa(mesa);
+                    if (mesa.estado === 'libre') handleAbrirMesa(mesa);
+                    else openModal(mesa);
+                  }}
+                  className={`relative p-4 rounded-2xl border-2 transition-all duration-200 text-left hover:scale-105 hover:shadow-md ${cfg.bg} ${
+                    isSelected ? 'ring-2 ring-amber-500 ring-offset-2' : ''
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-lg font-bold text-slate-800">{getMesaLabel(mesa)}</span>
+                    <div className={`w-2.5 h-2.5 rounded-full ${cfg.dot} animate-pulse`} />
                   </div>
-                )}
-                <div className="text-xs text-slate-400 capitalize mt-0.5">{mesa.sector}</div>
-              </button>
-            );
-          })}
-        </div>
+                  <div className={`text-xs font-semibold mb-2 ${cfg.color}`}>{cfg.label}</div>
+                  <div className="flex items-center gap-1 text-xs text-slate-500">
+                    <Users size={10} />
+                    <span>{mesa.capacidad} pers.</span>
+                  </div>
+                  {mesa.empleado && (
+                    <div className="mt-2 text-xs text-slate-600 truncate font-medium">
+                      {mesa.empleado.nombre}
+                    </div>
+                  )}
+                  <div className="text-xs text-slate-400 mt-0.5">{getSectorLabel(mesa.sector, sectores)}</div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center">
+            <p className="text-sm font-semibold text-slate-700">
+              El apartado {getSectorLabel(sectorFiltro, sectores)} ya está creado
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              Las mesas que se asignen a este sector van a aparecer acá.
+            </p>
+          </div>
+        )}
 
         <div className="mt-6 pt-6 border-t border-slate-100 flex flex-wrap gap-3">
           {Object.entries(estadoConfig).map(([estado, cfg]) => (
@@ -166,8 +424,8 @@ export default function Mesas() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
-                <h3 className="font-bold text-slate-800 text-lg">Mesa {modalMesa.numero}</h3>
-                <p className="text-sm text-slate-500 capitalize">{modalMesa.sector} · {modalMesa.capacidad} personas</p>
+                <h3 className="font-bold text-slate-800 text-lg">{getMesaLabel(modalMesa)}</h3>
+                <p className="text-sm text-slate-500">{getSectorLabel(modalMesa.sector, sectores)} · {modalMesa.capacidad} personas</p>
               </div>
               <button onClick={() => setShowModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">
                 <X size={16} />
@@ -175,6 +433,28 @@ export default function Mesas() {
             </div>
 
             <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Nombre de la mesa</label>
+                  <input
+                    value={editMesaName}
+                    onChange={e => setEditMesaName(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                    placeholder={`M${modalMesa.numero}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Capacidad</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={editMesaCapacidad}
+                    onChange={e => setEditMesaCapacidad(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Estado de la Mesa</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -218,7 +498,7 @@ export default function Mesas() {
                     >-</button>
                     <span className="text-xl font-bold text-slate-800 w-8 text-center">{editPersonas}</span>
                     <button
-                      onClick={() => setEditPersonas(p => Math.min(modalMesa.capacidad, p + 1))}
+                      onClick={() => setEditPersonas(p => Math.min(editMesaCapacidad, p + 1))}
                       className="w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50"
                     >+</button>
                   </div>
@@ -227,6 +507,13 @@ export default function Mesas() {
             </div>
 
             <div className="flex gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={handleDeleteMesa}
+                className="py-2.5 px-3 rounded-xl border border-red-100 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Trash2 size={15} />
+                Borrar
+              </button>
               <button
                 onClick={() => setShowModal(false)}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"

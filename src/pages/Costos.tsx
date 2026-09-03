@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Calculator, TrendingUp, DollarSign, Package, Plus, Trash2, ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
+import { Calculator, TrendingUp, DollarSign, Plus, Trash2, ChevronDown, AlertCircle } from 'lucide-react';
 import type { Producto, RecetaItem, Ingrediente } from '../lib/types';
 import { mockProductos, mockIngredientes, mockRecetaHamburguesaClasica } from '../lib/mockData';
 
