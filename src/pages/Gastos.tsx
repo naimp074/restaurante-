@@ -3,7 +3,7 @@ import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, X, Check } from 'lucid
 import type { AlcanceGasto, CajaDiaria, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, Proveedor, TipoCuentaDinero } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
 import { loadCuentasDinero, registrarEntradaCuenta, registrarSalidaCuenta, saveCuentasDinero } from '../lib/finance';
-import { mockProveedores } from '../lib/mockData';
+import { loadProveedores } from '../lib/proveedoresStore';
 
 const gastosStorageKey = 'restaurant-gastos';
 const cajaStorageKey = 'restaurant-cajas-diarias';
@@ -61,7 +61,7 @@ export default function Gastos() {
   const [gastos, setGastos] = useState<Gasto[]>(loadGastos);
   const [cajas] = useState<CajaDiaria[]>(loadCajas);
   const [cuentas, setCuentas] = useState<CuentaDinero[]>(loadCuentasDinero);
-  const [proveedores] = useState<Proveedor[]>(mockProveedores);
+  const [proveedores] = useState<Proveedor[]>(loadProveedores);
   const [showForm, setShowForm] = useState(false);
   const [concepto, setConcepto] = useState('');
   const [categoria, setCategoria] = useState<CategoriaGasto>('extra');

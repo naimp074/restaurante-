@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Calculator, TrendingUp, DollarSign, Plus, Trash2, ChevronDown, AlertCircle } from 'lucide-react';
 import type { Producto, RecetaItem, Ingrediente } from '../lib/types';
-import { mockProductos, mockIngredientes, mockRecetaHamburguesaClasica } from '../lib/mockData';
+import { useProductos } from '../lib/productosStore';
+import { loadDemoIngredientes } from '../lib/demoStore';
 
 interface RecetaCalc {
   receta: (RecetaItem & { ingrediente: Ingrediente })[];
@@ -13,12 +14,18 @@ interface RecetaCalc {
   precioIdeal: number;
 }
 
-function calcularReceta(receta: RecetaItem[], precio: number): RecetaCalc {
-  const items = receta.map(r => ({
-    ...r,
-    ingrediente: mockIngredientes.find(i => i.id === r.ingrediente_id) || r.ingrediente!,
-    costo_calculado: r.cantidad * (mockIngredientes.find(i => i.id === r.ingrediente_id)?.costo_por_unidad || 0),
-  }));
+function calcularReceta(receta: RecetaItem[], precio: number, insumos: Ingrediente[]): RecetaCalc {
+  const items = receta
+    .map(r => {
+      const ingrediente = insumos.find(i => i.id === r.ingrediente_id) || r.ingrediente;
+      if (!ingrediente) return null;
+      return {
+        ...r,
+        ingrediente,
+        costo_calculado: r.cantidad * ingrediente.costo_por_unidad,
+      };
+    })
+    .filter((item): item is RecetaItem & { ingrediente: Ingrediente } => item !== null);
   const costoTotal = items.reduce((s, i) => s + i.costo_calculado, 0);
   const ganancia = precio - costoTotal;
   const margenPct = precio > 0 ? (ganancia / precio) * 100 : 0;
@@ -34,15 +41,28 @@ function calcularReceta(receta: RecetaItem[], precio: number): RecetaCalc {
 }
 
 export default function Costos() {
-  const [selectedProducto, setSelectedProducto] = useState<Producto>(mockProductos[0]);
-  const [recetaItems, setRecetaItems] = useState<RecetaItem[]>(mockRecetaHamburguesaClasica);
-  const [precioVenta, setPrecioVenta] = useState(mockProductos[0].precio_venta);
+  const productos = useProductos();
+  const insumos = useMemo(() => loadDemoIngredientes(), []);
+  const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
+  const [recetaItems, setRecetaItems] = useState<RecetaItem[]>([]);
+  const [precioVenta, setPrecioVenta] = useState(0);
   const [addIngId, setAddIngId] = useState('');
   const [addCantidad, setAddCantidad] = useState('');
   const [showProductSelector, setShowProductSelector] = useState(false);
   const [margenObjetivo, setMargenObjetivo] = useState(50);
 
-  const calc = useMemo(() => calcularReceta(recetaItems, precioVenta), [recetaItems, precioVenta]);
+  const calc = useMemo(
+    () => calcularReceta(recetaItems, precioVenta, insumos),
+    [recetaItems, precioVenta, insumos]
+  );
+
+  useEffect(() => {
+    if (selectedProducto || productos.length === 0) return;
+    const primero = productos[0];
+    setSelectedProducto(primero);
+    setRecetaItems(primero.receta || []);
+    setPrecioVenta(primero.precio_venta);
+  }, [productos, selectedProducto]);
 
   const selectProducto = (prod: Producto) => {
     setSelectedProducto(prod);
@@ -52,8 +72,8 @@ export default function Costos() {
   };
 
   const addIngrediente = () => {
-    if (!addIngId || !addCantidad) return;
-    const ing = mockIngredientes.find(i => i.id === addIngId);
+    if (!addIngId || !addCantidad || !selectedProducto) return;
+    const ing = insumos.find(i => i.id === addIngId);
     if (!ing) return;
     const newItem: RecetaItem = {
       id: `rec-${Date.now()}`,
@@ -90,6 +110,19 @@ export default function Costos() {
     return 'bg-red-50 border-red-200';
   };
 
+  if (!selectedProducto) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+        <Calculator size={36} className="mx-auto text-slate-300 mb-3" />
+        <h3 className="font-semibold text-slate-800">Todavía no hay productos para analizar</h3>
+        <p className="text-sm text-slate-500 mt-1.5 max-w-md mx-auto">
+          Cargá tu carta desde la pantalla Productos y tus insumos desde Stock. Con eso vas a poder
+          calcular el costo de cada receta y el margen de ganancia.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -108,7 +141,7 @@ export default function Costos() {
 
             {showProductSelector && (
               <div className="grid grid-cols-2 gap-2 mb-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                {mockProductos.map(p => (
+                {productos.map(p => (
                   <button
                     key={p.id}
                     onClick={() => selectProducto(p)}
@@ -200,7 +233,7 @@ export default function Costos() {
                   className="w-full border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none focus:border-amber-400 bg-white"
                 >
                   <option value="">Seleccionar...</option>
-                  {mockIngredientes.map(i => (
+                  {insumos.map(i => (
                     <option key={i.id} value={i.id}>{i.nombre} (${i.costo_por_unidad}/{i.unidad_medida})</option>
                   ))}
                 </select>
@@ -364,7 +397,7 @@ export default function Costos() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {mockProductos.map(prod => {
+              {productos.map(prod => {
                 const m = prod.precio_venta > 0 ? ((prod.precio_venta - prod.costo_produccion) / prod.precio_venta) * 100 : 0;
                 const gan = prod.precio_venta - prod.costo_produccion;
                 return (

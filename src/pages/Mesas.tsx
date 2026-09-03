@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Users, Clock, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
 import type { Mesa, EstadoMesa } from '../lib/types';
-import { mockMesas, mockEmpleados } from '../lib/mockData';
+import { useMozas } from '../lib/usuariosStore';
+import {
+  loadMesas,
+  loadSectores,
+  saveMesas,
+  saveSectores,
+  type SectorOption,
+} from '../lib/mesasStore';
 
 const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: string; bg: string }> = {
   libre: { label: 'Libre', color: 'text-emerald-700', dot: 'bg-emerald-500', bg: 'bg-emerald-50 border-emerald-200' },
@@ -12,22 +19,6 @@ const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: stri
   pendiente_cobro: { label: 'Pendiente cobro', color: 'text-red-700', dot: 'bg-red-500', bg: 'bg-red-50 border-red-300' },
   cerrada: { label: 'Cerrada', color: 'text-slate-600', dot: 'bg-slate-400', bg: 'bg-slate-50 border-slate-200' },
 };
-
-type SectorOption = {
-  id: string;
-  label: string;
-};
-
-const initialSectores: SectorOption[] = [
-  { id: 'todos', label: 'Todos' },
-  { id: 'salon', label: 'Salón' },
-  { id: 'terraza', label: 'Terraza' },
-  { id: 'barra', label: 'Barra' },
-  { id: 'privado', label: 'Privado' },
-];
-
-const sectoresStorageKey = 'restaurant-sectores-mesas';
-const mesasStorageKey = 'restaurant-mesas';
 
 const createSectorId = (value: string) =>
   value
@@ -42,38 +33,6 @@ const getSectorLabel = (sector: string, sectores: SectorOption[]) =>
   sectores.find(s => s.id === sector)?.label ?? sector;
 
 const getMesaLabel = (mesa: Mesa) => mesa.nombre || `M${mesa.numero}`;
-
-const loadSectores = () => {
-  if (typeof window === 'undefined') return initialSectores;
-
-  try {
-    const saved = window.localStorage.getItem(sectoresStorageKey);
-    if (!saved) return initialSectores;
-
-    const parsed = JSON.parse(saved) as SectorOption[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return initialSectores;
-
-    return parsed;
-  } catch {
-    return initialSectores;
-  }
-};
-
-const loadMesas = () => {
-  if (typeof window === 'undefined') return mockMesas;
-
-  try {
-    const saved = window.localStorage.getItem(mesasStorageKey);
-    if (!saved) return mockMesas;
-
-    const parsed = JSON.parse(saved) as Mesa[];
-    if (!Array.isArray(parsed)) return mockMesas;
-
-    return parsed;
-  } catch {
-    return mockMesas;
-  }
-};
 
 export default function Mesas() {
   const [mesas, setMesas] = useState<Mesa[]>(loadMesas);
@@ -93,14 +52,14 @@ export default function Mesas() {
   const [editingSectorName, setEditingSectorName] = useState('');
 
   const filteredMesas = mesas.filter(m => sectorFiltro === 'todos' || m.sector === sectorFiltro);
-  const mozas = mockEmpleados.filter(e => e.rol === 'moza' || e.rol === 'encargado');
+  const mozas = useMozas();
 
   useEffect(() => {
-    window.localStorage.setItem(sectoresStorageKey, JSON.stringify(sectores));
+    saveSectores(sectores);
   }, [sectores]);
 
   useEffect(() => {
-    window.localStorage.setItem(mesasStorageKey, JSON.stringify(mesas));
+    saveMesas(mesas);
   }, [mesas]);
 
   const openModal = (mesa: Mesa) => {
@@ -400,12 +359,23 @@ export default function Mesas() {
           </div>
         ) : (
           <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center">
-            <p className="text-sm font-semibold text-slate-700">
-              El apartado {getSectorLabel(sectorFiltro, sectores)} ya está creado
-            </p>
-            <p className="text-xs text-slate-500 mt-1">
-              Las mesas que se asignen a este sector van a aparecer acá.
-            </p>
+            {mesas.length === 0 ? (
+              <>
+                <p className="text-sm font-semibold text-slate-700">Todavía no hay mesas cargadas</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Usá el botón "Nueva mesa" para armar el salón como está en tu local.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-semibold text-slate-700">
+                  No hay mesas en {getSectorLabel(sectorFiltro, sectores)}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Las mesas que se asignen a este sector van a aparecer acá.
+                </p>
+              </>
+            )}
           </div>
         )}
 

@@ -22,28 +22,6 @@ const defaultCuentas: CuentaDinero[] = [
   { id: 'cuenta-mercado-pago', nombre: 'Mercado Pago', tipo: 'billetera_virtual', saldo: 0, activa: true, created_at: new Date().toISOString() },
 ];
 
-const facturasIniciales: FacturaProveedor[] = [
-  { id: 'fac-1', proveedor_id: 'prov-1', numero: 'F-00031', fecha: '2026-07-10', vencimiento: '2026-07-20', total: 185000, pagado: 85000, recargo_por_vencimiento: 12, estado: 'por_vencer', created_at: '2026-07-10T12:00:00.000Z' },
-  { id: 'fac-2', proveedor_id: 'prov-1', numero: 'F-00028', fecha: '2026-06-28', vencimiento: '2026-07-08', total: 92000, pagado: 92000, recargo_por_vencimiento: 10, estado: 'pagada', created_at: '2026-06-28T12:00:00.000Z' },
-  { id: 'fac-3', proveedor_id: 'prov-2', numero: 'B-01445', fecha: '2026-07-12', vencimiento: '2026-07-22', total: 76000, pagado: 25000, recargo_por_vencimiento: 8, estado: 'pendiente', created_at: '2026-07-12T12:00:00.000Z' },
-  { id: 'fac-4', proveedor_id: 'prov-3', numero: 'T-00871', fecha: '2026-07-08', vencimiento: '2026-07-15', total: 54000, pagado: 0, recargo_por_vencimiento: 15, estado: 'vencida', created_at: '2026-07-08T12:00:00.000Z' },
-  { id: 'fac-5', proveedor_id: 'prov-4', numero: 'A-00219', fecha: '2026-07-13', vencimiento: '2026-07-25', total: 138000, pagado: 38000, recargo_por_vencimiento: 7, estado: 'pendiente', created_at: '2026-07-13T12:00:00.000Z' },
-];
-
-const pagosIniciales: PagoProveedor[] = [
-  {
-    id: 'pago-prov-inicial-fac-2',
-    proveedor_id: 'prov-1',
-    factura_id: 'fac-2',
-    cuenta_origen_id: 'cuenta-banco',
-    fecha: '2026-07-08',
-    metodo_pago: 'transferencia',
-    monto: 92000,
-    observaciones: 'Pago total de factura F-00028',
-    created_at: '2026-07-08T15:00:00.000Z',
-  },
-];
-
 const readStorage = <T>(key: string, fallback: T): T => {
   try {
     const saved = window.localStorage.getItem(key);
@@ -82,22 +60,13 @@ export const saveMovimientosFinancieros = (movimientos: MovimientoFinanciero[]) 
 
 export const loadFacturasProveedor = () => {
   const saved = readStorage<FacturaProveedor[]>(facturasProveedorStorageKey, []);
-  const missingInitial = facturasIniciales.filter(initial => !saved.some(item => item.id === initial.id));
-  const facturas = [...saved, ...missingInitial].map(factura => ({ ...factura, estado: getFacturaEstado(factura) }));
-  writeStorage(facturasProveedorStorageKey, facturas);
-  return facturas;
+  return saved.map(factura => ({ ...factura, estado: getFacturaEstado(factura) }));
 };
 
 export const saveFacturasProveedor = (facturas: FacturaProveedor[]) =>
   writeStorage(facturasProveedorStorageKey, facturas.map(factura => ({ ...factura, estado: getFacturaEstado(factura) })));
 
-export const loadPagosProveedor = () => {
-  const saved = readStorage<PagoProveedor[]>(pagosProveedorStorageKey, []);
-  const missingInitial = pagosIniciales.filter(initial => !saved.some(item => item.id === initial.id));
-  const pagos = [...saved, ...missingInitial];
-  writeStorage(pagosProveedorStorageKey, pagos);
-  return pagos;
-};
+export const loadPagosProveedor = () => readStorage<PagoProveedor[]>(pagosProveedorStorageKey, []);
 export const savePagosProveedor = (pagos: PagoProveedor[]) => writeStorage(pagosProveedorStorageKey, pagos);
 
 export const crearFacturaProveedor = (data: {

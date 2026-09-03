@@ -20,7 +20,7 @@ import {
   Download,
 } from 'lucide-react';
 import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, RegistroProduccion, UnidadMedida } from '../lib/types';
-import { mockProveedores } from '../lib/mockData';
+import { loadProveedores } from '../lib/proveedoresStore';
 import { crearFacturaProveedor, loadCuentasDinero, registrarPagoProveedor } from '../lib/finance';
 import {
   loadDemoIngredientes,
@@ -48,7 +48,7 @@ const motivosConsumo = [
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
 const getProveedor = (proveedorId?: string) =>
-  mockProveedores.find(p => p.id === proveedorId);
+  loadProveedores().find(p => p.id === proveedorId);
 
 const getProveedorNombre = (ingrediente: Ingrediente | Partial<Ingrediente>) =>
   getProveedor(ingrediente.proveedor_id)?.nombre || 'Sin proveedor';
@@ -1700,7 +1700,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
                 >
                   <option value="">Sin proveedor</option>
-                  {mockProveedores.map(proveedor => (
+                  {loadProveedores().map(proveedor => (
                     <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>
                   ))}
                 </select>
@@ -1798,7 +1798,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
                 >
                     <option value="">Sin proveedor</option>
-                    {mockProveedores.map(proveedor => (
+                    {loadProveedores().map(proveedor => (
                       <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>
                     ))}
                 </select>
@@ -2003,7 +2003,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                             className="w-40 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
                           >
                             <option value="">Sin proveedor</option>
-                            {mockProveedores.map(proveedor => (
+                            {loadProveedores().map(proveedor => (
                               <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>
                             ))}
                           </select>

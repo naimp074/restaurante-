@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Plus, Minus, Trash2, Send, X, Search, Clock } from 'lucide-react';
 import type { Pedido, PedidoItem, Producto } from '../lib/types';
-import { mockPedidos, mockMesas, mockProductos, mockCategorias, mockEmpleados } from '../lib/mockData';
+import { categoriasIniciales } from '../lib/mockData';
 import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
+import { useProductos } from '../lib/productosStore';
+import { useMesas } from '../lib/mesasStore';
+import { useMozas } from '../lib/usuariosStore';
 
 const estadoItemColors: Record<string, string> = {
   pendiente: 'bg-yellow-100 text-yellow-700',
@@ -21,7 +24,7 @@ const estadoItemLabels: Record<string, string> = {
 
 export default function Pedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>(() => loadDemoPedidos());
-  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos()[0] || mockPedidos[0] || null);
+  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos()[0] || null);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
@@ -30,7 +33,11 @@ export default function Pedidos() {
   const [newPersonas, setNewPersonas] = useState(2);
   const [newMozaId, setNewMozaId] = useState('');
 
-  const filteredProductos = mockProductos.filter(p => {
+  const catalogoProductos = useProductos();
+  const mesasDisponibles = useMesas();
+  const mozas = useMozas();
+
+  const filteredProductos = catalogoProductos.filter(p => {
     const matchCat = categoriaFiltro === 'todos' || p.categoria_id === categoriaFiltro;
     const matchBusq = p.nombre.toLowerCase().includes(busqueda.toLowerCase());
     return matchCat && matchBusq && p.disponible && !p.agotado;
@@ -103,8 +110,8 @@ export default function Pedidos() {
   };
 
   const createOrder = () => {
-    const mesa = mockMesas.find(m => m.id === newMesaId);
-    const moza = mockEmpleados.find(e => e.id === newMozaId);
+    const mesa = mesasDisponibles.find(m => m.id === newMesaId);
+    const moza = mozas.find(e => e.id === newMozaId);
     if (!mesa) return;
     const newPedido: Pedido = {
       id: `ped-${Date.now()}`,
@@ -300,7 +307,7 @@ export default function Pedidos() {
                       onClick={() => setCategoriaFiltro('todos')}
                       className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${categoriaFiltro === 'todos' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                     >Todos</button>
-                    {mockCategorias.map(cat => (
+                    {categoriasIniciales.map(cat => (
                       <button
                         key={cat.id}
                         onClick={() => setCategoriaFiltro(cat.id)}
@@ -310,6 +317,18 @@ export default function Pedidos() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {filteredProductos.length === 0 && (
+                    <div className="text-center py-10 px-4">
+                      <p className="text-sm font-medium text-slate-600">
+                        {catalogoProductos.length === 0 ? 'Todavía no hay productos cargados' : 'Sin resultados'}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {catalogoProductos.length === 0
+                          ? 'Cargá tu carta desde la pantalla Productos, a mano o importando el Excel.'
+                          : 'Probá con otro nombre o categoría.'}
+                      </p>
+                    </div>
+                  )}
                   {filteredProductos.map(prod => (
                     <button
                       key={prod.id}
@@ -358,10 +377,15 @@ export default function Pedidos() {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
                 >
                   <option value="">Seleccionar mesa...</option>
-                  {mockMesas.filter(m => m.estado === 'libre').map(m => (
-                    <option key={m.id} value={m.id}>Mesa {m.numero} - {m.sector}</option>
+                  {mesasDisponibles.filter(m => m.estado === 'libre').map(m => (
+                    <option key={m.id} value={m.id}>{m.nombre || `Mesa ${m.numero}`} - {m.sector}</option>
                   ))}
                 </select>
+                {mesasDisponibles.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    Primero cargá las mesas de tu local desde la pantalla Mesas.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Moza</label>
@@ -371,10 +395,15 @@ export default function Pedidos() {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
                 >
                   <option value="">Seleccionar...</option>
-                  {mockEmpleados.filter(e => e.rol === 'moza').map(m => (
+                  {mozas.map(m => (
                     <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
                   ))}
                 </select>
+                {mozas.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    Cargá tu personal desde la pantalla Usuarios para poder asignarlo.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Personas</label>

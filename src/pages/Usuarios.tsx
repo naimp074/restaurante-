@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Plus, CreditCard as Edit2, X, Check, Shield } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, CreditCard as Edit2, X, Check, Shield, Users as UsersIcon } from 'lucide-react';
 import type { Profile, Rol } from '../lib/types';
-import { mockEmpleados } from '../lib/mockData';
+import { loadUsuarios, saveUsuarios } from '../lib/usuariosStore';
 
 const rolConfig: Record<Rol, { label: string; color: string; desc: string }> = {
   admin: { label: 'Administrador', color: 'bg-red-100 text-red-700', desc: 'Acceso completo al sistema' },
@@ -20,11 +20,15 @@ const rolesPermissions: Record<Rol, string[]> = {
 };
 
 export default function Usuarios() {
-  const [usuarios, setUsuarios] = useState<Profile[]>(mockEmpleados);
+  const [usuarios, setUsuarios] = useState<Profile[]>(loadUsuarios);
   const [showForm, setShowForm] = useState(false);
   const [editUser, setEditUser] = useState<Partial<Profile & { email?: string; password?: string }> | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [selectedRol, setSelectedRol] = useState<Rol | null>(null);
+
+  useEffect(() => {
+    saveUsuarios(usuarios);
+  }, [usuarios]);
 
   const openEdit = (u: Profile) => {
     setEditUser({ ...u });
@@ -105,6 +109,17 @@ export default function Usuarios() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
+                {usuarios.filter(u => !selectedRol || u.rol === selectedRol).length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-12 text-center">
+                      <UsersIcon size={28} className="mx-auto text-slate-300 mb-2" />
+                      <p className="text-sm font-medium text-slate-600">Todavía no cargaste personal</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Agregá a tus mozas, cajeros y cocina para poder asignarlos a mesas y comandas
+                      </p>
+                    </td>
+                  </tr>
+                )}
                 {usuarios
                   .filter(u => !selectedRol || u.rol === selectedRol)
                   .map(u => {

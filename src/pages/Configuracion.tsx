@@ -1,16 +1,50 @@
 import { useState } from 'react';
-import { Save, Store, Bell } from 'lucide-react';
+import { Save, Store, Bell, Trash2 } from 'lucide-react';
+import { limpiarDatosLocales } from '../lib/resetDatos';
+
+const configStorageKey = 'restaurant-config-local';
+
+type ConfigLocal = {
+  nombre: string;
+  direccion: string;
+  telefono: string;
+  iva: string;
+};
+
+const configPorDefecto: ConfigLocal = { nombre: '', direccion: '', telefono: '', iva: '21' };
+
+const loadConfig = (): ConfigLocal => {
+  if (typeof window === 'undefined') return configPorDefecto;
+  try {
+    const saved = window.localStorage.getItem(configStorageKey);
+    if (!saved) return configPorDefecto;
+    return { ...configPorDefecto, ...(JSON.parse(saved) as Partial<ConfigLocal>) };
+  } catch {
+    return configPorDefecto;
+  }
+};
 
 export default function Configuracion() {
-  const [localNombre, setLocalNombre] = useState('BurgerPOS');
-  const [localDireccion, setLocalDireccion] = useState('Av. Corrientes 1234, CABA');
-  const [localTelefono, setLocalTelefono] = useState('011-4444-5555');
-  const [iva, setIva] = useState('21');
+  const configInicial = loadConfig();
+  const [localNombre, setLocalNombre] = useState(configInicial.nombre);
+  const [localDireccion, setLocalDireccion] = useState(configInicial.direccion);
+  const [localTelefono, setLocalTelefono] = useState(configInicial.telefono);
+  const [iva, setIva] = useState(configInicial.iva);
   const [saved, setSaved] = useState(false);
+  const [confirmarReinicio, setConfirmarReinicio] = useState(false);
 
   const handleSave = () => {
+    window.localStorage.setItem(
+      configStorageKey,
+      JSON.stringify({ nombre: localNombre, direccion: localDireccion, telefono: localTelefono, iva })
+    );
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const reiniciarDatos = () => {
+    limpiarDatosLocales();
+    window.location.reload();
   };
 
   return (
@@ -28,6 +62,7 @@ export default function Configuracion() {
             <input
               value={localNombre}
               onChange={e => setLocalNombre(e.target.value)}
+              placeholder="Nombre de tu local"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
             />
           </div>
@@ -36,6 +71,7 @@ export default function Configuracion() {
             <input
               value={localDireccion}
               onChange={e => setLocalDireccion(e.target.value)}
+              placeholder="Calle, número y ciudad"
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
             />
           </div>
@@ -45,6 +81,7 @@ export default function Configuracion() {
               <input
                 value={localTelefono}
                 onChange={e => setLocalTelefono(e.target.value)}
+                placeholder="Teléfono de contacto"
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
               />
             </div>
@@ -83,6 +120,43 @@ export default function Configuracion() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-red-100 p-6">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center">
+            <Trash2 size={18} className="text-red-600" />
+          </div>
+          <h3 className="font-semibold text-slate-800">Empezar de cero</h3>
+        </div>
+        <p className="text-sm text-slate-500 mb-4">
+          Borra todo lo cargado en este dispositivo: productos, insumos, mesas, comandas, cajas,
+          gastos y personal. No se puede deshacer.
+        </p>
+        {confirmarReinicio ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-slate-700">¿Seguro que querés borrar todo?</span>
+            <button
+              onClick={reiniciarDatos}
+              className="bg-red-500 hover:bg-red-400 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+            >
+              Sí, borrar todo
+            </button>
+            <button
+              onClick={() => setConfirmarReinicio(false)}
+              className="border border-slate-200 text-slate-600 text-sm font-medium px-4 py-2 rounded-xl"
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmarReinicio(true)}
+            className="border border-red-200 text-red-600 hover:bg-red-50 text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+          >
+            Reiniciar todos los datos
+          </button>
+        )}
       </div>
 
       <button

@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Search, Truck, Phone, Mail, User, X, Check, Pencil, Power, Package, ReceiptText, DollarSign, CalendarDays, AlertTriangle } from 'lucide-react';
 import type { CuentaDinero, FacturaProveedor, Ingrediente, MetodoPago, PagoProveedor, Proveedor, UnidadMedida } from '../lib/types';
-import { mockProveedores } from '../lib/mockData';
+import { loadProveedores, saveProveedores } from '../lib/proveedoresStore';
 import {
   crearFacturaProveedor,
   loadCuentasDinero,
@@ -32,7 +32,7 @@ const formatMoney = (value: number) =>
   value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
 export default function Proveedores() {
-  const [proveedores, setProveedores] = useState<Proveedor[]>(mockProveedores);
+  const [proveedores, setProveedores] = useState<Proveedor[]>(loadProveedores);
   const [ingredientes, setIngredientes] = useState<Ingrediente[]>(loadDemoIngredientes);
   const [busqueda, setBusqueda] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -69,6 +69,10 @@ export default function Proveedores() {
   const [nuevoInsumoStock, setNuevoInsumoStock] = useState('');
   const [nuevoInsumoStockMinimo, setNuevoInsumoStockMinimo] = useState('');
   const [nuevoInsumoCosto, setNuevoInsumoCosto] = useState('');
+
+  useEffect(() => {
+    saveProveedores(proveedores);
+  }, [proveedores]);
 
   const proveedoresFiltrados = proveedores.filter(proveedor => {
     const text = `${proveedor.nombre} ${proveedor.contacto} ${proveedor.telefono} ${proveedor.email} ${proveedor.cuit} ${proveedor.direccion} ${proveedor.codigo_fiscal}`.toLowerCase();

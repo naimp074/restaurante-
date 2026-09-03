@@ -2,14 +2,16 @@ import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload } from 'lucide-react';
 import type { Ingrediente, Producto, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
-import { mockProductos, mockCategorias, mockIngredientes } from '../lib/mockData';
+import { categoriasIniciales } from '../lib/mockData';
+import { loadProductos, saveProductos } from '../lib/productosStore';
+import { loadDemoIngredientes, saveDemoIngredientes } from '../lib/demoStore';
 import { loadDemoProducciones } from '../lib/demoStore';
 
 const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
 
 const getRecetaItemTipo = (item: RecetaItem): TipoComponenteReceta => item.tipo || 'stock';
 
-const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = mockIngredientes) => {
+const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = []) => {
   if (getRecetaItemTipo(item) === 'produccion') {
     const produccion = item.produccion || loadDemoProducciones().find(p => p.id === item.produccion_id);
     return {
@@ -35,7 +37,7 @@ const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = mockIngre
   };
 };
 
-const calcularCostoReceta = (receta: RecetaItem[] = [], catalogo: Ingrediente[] = mockIngredientes) =>
+const calcularCostoReceta = (receta: RecetaItem[] = [], catalogo: Ingrediente[] = []) =>
   receta.reduce((sum, item) => {
     const data = getRecetaItemData(item, catalogo);
     return sum + item.cantidad * data.costoUnitario;
@@ -101,7 +103,7 @@ const getRowValue = (row: Record<string, unknown>, aliases: string[]) => {
 const findCategoriaByName = (value: unknown) => {
   const normalized = normalizeText(String(value ?? ''));
   if (!normalized) return undefined;
-  return mockCategorias.find(cat => normalizeText(cat.nombre) === normalized || normalizeText(cat.nombre).includes(normalized));
+  return categoriasIniciales.find(cat => normalizeText(cat.nombre) === normalized || normalizeText(cat.nombre).includes(normalized));
 };
 
 const findIngredienteEnCatalogo = (catalogo: Ingrediente[], codigo?: string, nombre?: string) => {
@@ -142,8 +144,8 @@ interface ProductosProps {
 }
 
 export default function Productos({ apartadoInicial }: ProductosProps) {
-  const [productos, setProductos] = useState<Producto[]>(mockProductos);
-  const [insumosCatalogo, setInsumosCatalogo] = useState<Ingrediente[]>(mockIngredientes);
+  const [productos, setProductos] = useState<Producto[]>(loadProductos);
+  const [insumosCatalogo, setInsumosCatalogo] = useState<Ingrediente[]>(loadDemoIngredientes);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
   const [vista, setVista] = useState<'catalogo' | 'precios' | 'planilla'>(apartadoInicial === 'precios' ? 'precios' : 'catalogo');
@@ -166,10 +168,10 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       producto_id: productoId,
       tipo: 'stock',
-      ingrediente_id: ingrediente.id,
+      ingrediente_id: ingrediente?.id,
       cantidad,
-      unidad_medida: ingrediente.unidad_medida,
-      costo_calculado: cantidad * ingrediente.costo_por_unidad,
+      unidad_medida: ingrediente?.unidad_medida || 'unidad',
+      costo_calculado: cantidad * (ingrediente?.costo_por_unidad || 0),
       created_at: new Date().toISOString(),
       ingrediente,
     };
@@ -218,7 +220,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     const margenGanancia = precioVenta > 0
       ? ((precioVenta - costoProduccion) / precioVenta) * 100
       : 0;
-    const categoria = mockCategorias.find(c => c.id === editForm.categoria_id);
+    const categoria = categoriasIniciales.find(c => c.id === editForm.categoria_id);
 
     if (selectedProducto) {
       setProductos(prev => prev.map(p => p.id === selectedProducto.id ? {
@@ -472,7 +474,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           ? costoIncidencias
           : (draft.costo_total && draft.costo_total > 0 ? draft.costo_total : 0);
         const precioVenta = draft.precio_venta || existing?.precio_venta || precioPorMargen(costoProduccion, 50) || 0;
-        const categoria = mockCategorias.find(cat => cat.id === draft.categoria_id);
+        const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
         const producto: Producto = {
           ...(existing || {}),
           id,
@@ -771,6 +773,14 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     setVista(apartadoInicial === 'precios' ? 'precios' : 'catalogo');
   }, [apartadoInicial]);
 
+  useEffect(() => {
+    saveProductos(productos);
+  }, [productos]);
+
+  useEffect(() => {
+    saveDemoIngredientes(insumosCatalogo);
+  }, [insumosCatalogo]);
+
   if (!apartado) {
     return (
       <div className="space-y-5">
@@ -918,7 +928,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             </button>
           </div>
           <div className="p-2 space-y-1">
-            {mockCategorias.map(cat => {
+            {categoriasIniciales.map(cat => {
               const count = productos.filter(p => p.categoria_id === cat.id).length;
               return (
                 <button
@@ -1240,7 +1250,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                           const costo = draft.costo_total && draft.costo_total > 0
                             ? draft.costo_total
                             : calcularCostoReceta(draft.receta, [...insumosCatalogo, ...importInsumos]);
-                          const categoria = mockCategorias.find(cat => cat.id === draft.categoria_id);
+                          const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
                           return (
                             <tr key={draft.key}>
                               <td className="py-3 px-3">
@@ -1321,7 +1331,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
                   >
                     <option value="">Sin categoría</option>
-                    {mockCategorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    {categoriasIniciales.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1481,7 +1491,13 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                   ) : (
                     <div className="p-5 text-center">
                       <p className="text-sm text-slate-500">Todavía no hay componentes cargados para este combo.</p>
-                      <p className="text-xs text-slate-400 mt-1">Agregá insumos de stock o producciones preparadas como milanesas, medallones o salsas.</p>
+                      {insumosCatalogo.length === 0 ? (
+                        <p className="text-xs text-amber-600 mt-1">
+                          Primero cargá tus insumos en la pantalla Stock para poder armar la receta.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-400 mt-1">Agregá insumos de stock o producciones preparadas como milanesas, medallones o salsas.</p>
+                      )}
                     </div>
                   )}
                 </div>
