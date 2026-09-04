@@ -2,8 +2,20 @@ import { useEffect, useState } from 'react';
 import { CreditCard, Check, X, Printer, Lock, Unlock, CalendarDays, Search, Plus, User, FileText, RefreshCw } from 'lucide-react';
 import type { CajaDiaria, Pedido, MetodoPago, Pago, TipoComprobante } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
-import { loadCuentasDinero, loadMovimientosFinancieros, registrarEntradaCuenta } from '../lib/finance';
+import {
+  cerrarCajaDia,
+  cuentaBancoId,
+  cuentaCajaDiaId,
+  cuentaCajaGrandeId,
+  loadCuentasDinero,
+  loadMovimientosFinancieros,
+  registrarEntradaCuenta,
+  registrarSalidaCuenta,
+  transferirEntreCuentas,
+} from '../lib/finance';
 import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
+import { descontarStockPorVenta, reponerStockPorVenta } from '../lib/ventasStock';
+import { dayKey } from '../lib/fechas';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -104,7 +116,7 @@ const getActiveItems = (pedido: Pedido) =>
 
 const cajaStorageKey = 'restaurant-cajas-diarias';
 const apartadosCajaStorageKey = 'restaurant-apartados-caja';
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = () => dayKey();
 
 const loadCajas = (): CajaDiaria[] => {
   try {
@@ -160,6 +172,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [clienteDraft, setClienteDraft] = useState<Omit<ClienteFrecuente, 'id'>>(emptyCliente);
   const [pagosRegistrados, setPagosRegistrados] = useState<Pago[]>([]);
   const [showTicket, setShowTicket] = useState(false);
+  const [ticketError, setTicketError] = useState('');
   const [lastPago, setLastPago] = useState<Pago | null>(null);
   const [cajas, setCajas] = useState<CajaDiaria[]>(loadCajas);
   const [apartadosCaja, setApartadosCaja] = useState<ApartadoCaja[]>(loadApartadosCaja);
@@ -238,17 +251,18 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       {
         id: `apartado-${Date.now()}`,
         fecha: nuevaCaja.fecha,
-        nombre: 'Caja grande',
+        nombre: 'Caja del día',
         monto: inicial,
         observaciones: 'Efectivo inicial del día',
       },
       ...prev.filter(apartado => apartado.fecha !== nuevaCaja.fecha),
     ]);
-    registrarEntradaCuenta({
-      cuenta_id: 'cuenta-caja-grande',
+    // El fondo de cambio sale de la caja grande y pasa al mostrador.
+    transferirEntreCuentas({
+      cuenta_origen_id: cuentaCajaGrandeId,
+      cuenta_destino_id: cuentaCajaDiaId,
       monto: inicial,
-      descripcion: 'Apertura de caja del dia',
-      origen: 'apertura_caja',
+      descripcion: 'Apertura de caja: fondo inicial del día',
       fecha: nuevaCaja.fecha,
     });
     setCuentasDinero(loadCuentasDinero());
@@ -271,6 +285,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           }
         : caja
     )));
+    cerrarCajaDia(`Cierre de caja del ${cajaAbierta.fecha}: efectivo del día a caja grande`);
+    setCuentasDinero(loadCuentasDinero());
+    setMovimientosFinancieros(loadMovimientosFinancieros());
     setMontoCierreEfectivo('');
     setShowCierreCaja(false);
   };
@@ -379,8 +396,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     )));
   };
 
-  const printTicket = (pago: Pago) => {
-    if (!pago.pedido) return;
+  const printTicket = (pago: Pago): boolean => {
+    if (!pago.pedido) return false;
 
     const items = getActiveItems(pago.pedido);
     const fecha = new Date(pago.created_at);
@@ -447,11 +464,44 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     `;
 
     const printWindow = window.open('', '_blank', 'width=380,height=650');
-    if (!printWindow) return;
+    if (!printWindow) return false;
 
     printWindow.document.open();
     printWindow.document.write(ticketHtml);
     printWindow.document.close();
+    return true;
+  };
+
+  /** Manda lo cobrado a sus cuentas: el efectivo al mostrador y lo electrónico al banco. */
+  const registrarCobroEnCuentas = (
+    pago: Pago,
+    breakdown: ReturnType<typeof getPagoBreakdown>,
+    signo: 1 | -1
+  ) => {
+    const referencia = getMesaLabel(pago.pedido);
+    const partes: Array<{ cuenta_id: string; monto: number; detalle: string }> = [
+      { cuenta_id: cuentaCajaDiaId, monto: breakdown.efectivo, detalle: 'efectivo' },
+      { cuenta_id: cuentaBancoId, monto: breakdown.transferencia, detalle: 'transferencia' },
+      { cuenta_id: cuentaBancoId, monto: breakdown.tarjeta, detalle: 'tarjeta' },
+    ];
+
+    partes
+      .filter(parte => parte.monto > 0)
+      .forEach(parte => {
+        const datos = {
+          cuenta_id: parte.cuenta_id,
+          monto: parte.monto,
+          fecha: todayKey(),
+        };
+        if (signo === 1) {
+          registrarEntradaCuenta({ ...datos, origen: 'venta', descripcion: `Venta ${referencia} - ${parte.detalle}` });
+        } else {
+          registrarSalidaCuenta({ ...datos, origen: 'ajuste', descripcion: `Anulación de venta ${referencia} - ${parte.detalle}` });
+        }
+      });
+
+    setCuentasDinero(loadCuentasDinero());
+    setMovimientosFinancieros(loadMovimientosFinancieros());
   };
 
   const procesarPago = () => {
@@ -502,6 +552,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     };
     setPedidos(prev => prev.filter(pedido => pedido.id !== pedidoCerrado.id));
     saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoCerrado.id ? pedidoCerrado : pedido));
+    descontarStockPorVenta(pedidoCerrado);
     setCajas(prev => prev.map(caja => (
       caja.id === cajaAbierta.id
         ? {
@@ -514,7 +565,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           }
         : caja
     )));
+    registrarCobroEnCuentas(pago, breakdown, 1);
     setLastPago(pago);
+    setTicketError('');
     setShowTicket(true);
     setSelectedPedido(null);
     setDescuento(0);
@@ -530,10 +583,31 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setClienteBusqueda('');
   };
 
+  /** Cierra la venta: el cobro ya quedó registrado y el stock descontado. */
+  const finalizarVenta = () => {
+    setLastPago(null);
+    setShowTicket(false);
+    setTicketError('');
+  };
+
+  const imprimirYFinalizar = () => {
+    if (!lastPago) return;
+    if (!printTicket(lastPago)) {
+      setTicketError('No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.');
+      return;
+    }
+    finalizarVenta();
+  };
+
   const cancelarComprobante = () => {
     if (lastPago?.pedido) {
       const breakdown = getPagoBreakdown(lastPago);
-      setSelectedPedido(lastPago.pedido);
+      registrarCobroEnCuentas(lastPago, breakdown, -1);
+      const pedidoRestaurado: Pedido = { ...lastPago.pedido, hora_cierre: undefined, updated_at: new Date().toISOString() };
+      reponerStockPorVenta(pedidoRestaurado);
+      saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoRestaurado.id ? pedidoRestaurado : pedido));
+      setPedidos(prev => prev.some(pedido => pedido.id === pedidoRestaurado.id) ? prev : [pedidoRestaurado, ...prev]);
+      setSelectedPedido(pedidoRestaurado);
       setPagosRegistrados(prev => prev.filter(pago => pago.id !== lastPago.id));
       setCajas(prev => prev.map(caja => (
         caja.id === cajaAbierta?.id
@@ -575,12 +649,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       </div>
 
       <div className="p-4 space-y-3">
-        <div className="grid grid-cols-[1fr_140px_auto] gap-2">
+        <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_140px_auto] gap-2">
           <input
             value={nuevoApartadoNombre}
             onChange={e => setNuevoApartadoNombre(e.target.value)}
             className="border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-            placeholder="Ej: Caja grande, caja chica, sobre oficina"
+            placeholder="Ej: sobre oficina, vuelto, pago a proveedor"
           />
           <input
             type="number"
@@ -602,7 +676,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
         <div className="space-y-2">
           {apartadosHoy.map(apartado => (
-            <div key={apartado.id} className="grid grid-cols-[1fr_140px_1fr_auto] gap-2 items-center bg-slate-50 border border-slate-100 rounded-xl p-3">
+            <div key={apartado.id} className="grid grid-cols-1 sm:grid-cols-[1fr_140px_1fr_auto] gap-2 items-center bg-slate-50 border border-slate-100 rounded-xl p-3">
               <div>
                 <p className="text-sm font-semibold text-slate-800">{apartado.nombre}</p>
                 <p className="text-xs text-slate-400">Apartado del día</p>
@@ -636,7 +710,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
             <p className="text-xs text-slate-500">Efectivo esperado</p>
             <p className="text-lg font-bold text-slate-800">{formatMoney(efectivoEsperadoApartados)}</p>
@@ -669,16 +743,25 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100">
             <h3 className="font-semibold text-slate-800">Saldos por cuenta</h3>
-            <p className="text-sm text-slate-500">Caja, bancos y billeteras que usan los pagos a proveedores.</p>
+            <p className="text-sm text-slate-500">La caja del día es el efectivo del mostrador de hoy; la caja grande es el acumulado.</p>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4">
             {cuentasDinero.filter(cuenta => cuenta.activa).map(cuenta => (
-              <div key={cuenta.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">{cuenta.nombre}</p>
+              <div
+                key={cuenta.id}
+                className={`rounded-xl border p-3 ${cuenta.id === cuentaCajaDiaId ? 'border-emerald-200 bg-emerald-50' : 'border-slate-100 bg-slate-50'}`}
+              >
+                <p className={`text-xs ${cuenta.id === cuentaCajaDiaId ? 'text-emerald-700' : 'text-slate-500'}`}>{cuenta.nombre}</p>
                 <p className={`text-lg font-bold ${cuenta.saldo < 0 ? 'text-red-600' : 'text-slate-800'}`}>
                   {formatMoney(cuenta.saldo)}
                 </p>
-                <p className="text-[11px] text-slate-400 capitalize">{cuenta.tipo.replace('_', ' ')}</p>
+                <p className="text-[11px] text-slate-400">
+                  {cuenta.id === cuentaCajaDiaId
+                    ? 'Solo hoy'
+                    : cuenta.id === cuentaCajaGrandeId
+                      ? 'Acumulado'
+                      : cuenta.tipo.replace('_', ' ')}
+                </p>
               </div>
             ))}
           </div>
@@ -811,8 +894,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   }
 
   return (
-    <div className={vista === 'caja' ? 'space-y-6' : 'flex gap-6 h-full'}>
-      <div className={vista === 'caja' ? 'space-y-4' : 'w-72 flex-shrink-0 space-y-4'}>
+    <div className={vista === 'caja' ? 'space-y-6' : 'flex flex-col xl:flex-row gap-4 xl:gap-6 h-full'}>
+      <div className={vista === 'caja' ? 'space-y-4' : 'w-full xl:w-72 flex-shrink-0 space-y-4'}>
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <p className="text-xs text-slate-500 mb-1">Caja inicial</p>
@@ -1138,7 +1221,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       )}
 
       {showCierreCaja && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -1216,7 +1299,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       )}
 
       {showClienteForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -1229,7 +1312,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tipo doc.</label>
                   <select
@@ -1343,7 +1426,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       )}
 
       {showTicket && lastPago && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="p-6 text-center border-b border-slate-100">
               <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -1402,19 +1485,30 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               </div>
             </div>
 
-            <div className="p-6 flex gap-3">
-              <button
-                onClick={() => printTicket(lastPago)}
-                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium flex items-center justify-center gap-1.5 hover:bg-slate-50"
-              >
-                <Printer size={14} />
-                Imprimir {comprobantesConfig[lastPago.tipo_comprobante || 'ticket'].label}
-              </button>
+            <div className="p-6 space-y-3">
+              {ticketError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{ticketError}</p>
+              )}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={imprimirYFinalizar}
+                  className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-colors"
+                >
+                  <Printer size={14} />
+                  Imprimir y finalizar
+                </button>
+                <button
+                  onClick={finalizarVenta}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                >
+                  Finalizar sin imprimir
+                </button>
+              </div>
               <button
                 onClick={cancelarComprobante}
-                className="flex-1 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 transition-colors"
+                className="w-full py-2 text-xs font-medium text-red-600 hover:text-red-700 hover:underline"
               >
-                Cancelar
+                Anular cobro y devolver el stock
               </button>
             </div>
           </div>

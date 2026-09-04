@@ -1,4 +1,4 @@
-import { Bell, Search, Clock } from 'lucide-react';
+import { Bell, Search, Clock, Menu } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -30,9 +30,10 @@ const pageTitles: Record<PageId, string> = {
 
 interface HeaderProps {
   currentPage: PageId;
+  onMenuClick: () => void;
 }
 
-export default function Header({ currentPage }: HeaderProps) {
+export default function Header({ currentPage, onMenuClick }: HeaderProps) {
   const { user } = useAuth();
   const [time, setTime] = useState(new Date());
 
@@ -50,13 +51,23 @@ export default function Header({ currentPage }: HeaderProps) {
   };
 
   return (
-    <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between sticky top-0 z-20">
-      <div>
-        <h1 className="text-lg font-bold text-slate-800">{pageTitles[currentPage]}</h1>
-        <p className="text-xs text-slate-500 capitalize">{formatDate(time)}</p>
+    <header className="bg-white border-b border-slate-200 px-3 sm:px-6 py-3 flex items-center justify-between gap-2 sticky top-0 z-20 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <div className="flex items-center gap-2 min-w-0">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="lg:hidden w-10 h-10 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-700 flex-shrink-0"
+          aria-label="Abrir menú"
+        >
+          <Menu size={20} />
+        </button>
+        <div className="min-w-0">
+          <h1 className="text-base sm:text-lg font-bold text-slate-800 truncate">{pageTitles[currentPage]}</h1>
+          <p className="text-xs text-slate-500 capitalize hidden sm:block truncate">{formatDate(time)}</p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
         <div className="hidden md:flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-600">
           <Search size={14} className="text-slate-400" />
           <input
@@ -71,7 +82,7 @@ export default function Header({ currentPage }: HeaderProps) {
           <span className="font-mono font-semibold">{formatTime(time)}</span>
         </div>
 
-        <button className="relative w-9 h-9 flex items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100 transition-colors">
+        <button className="hidden sm:flex relative w-9 h-9 items-center justify-center rounded-lg bg-slate-50 border border-slate-200 text-slate-500 hover:bg-slate-100 transition-colors">
           <Bell size={16} />
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
         </button>

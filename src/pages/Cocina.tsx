@@ -64,7 +64,7 @@ export default function Cocina() {
 
   return (
     <div className="h-full flex flex-col space-y-4">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center gap-3">
           <AlertCircle className="text-yellow-600" size={20} />
           <div>
@@ -95,7 +95,7 @@ export default function Cocina() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h2 className="font-semibold text-slate-800">Comandas Activas</h2>
         <div className="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
           <button

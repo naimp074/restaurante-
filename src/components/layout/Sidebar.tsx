@@ -3,7 +3,7 @@ import {
   LayoutDashboard, UtensilsCrossed, ClipboardList, ChefHat,
   CreditCard, Package, Boxes, Calculator, BarChart3, Users,
   Settings, LogOut, Truck, PanelLeftClose, PanelLeftOpen, ReceiptText,
-  ChevronDown, Grid3X3, Tags
+  ChevronDown, Grid3X3, Tags, X
 } from 'lucide-react';
 import type { PageId, Rol } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -33,15 +33,18 @@ interface SidebarProps {
   onNavigate: (page: PageId) => void;
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen: boolean;
+  onClose: () => void;
 }
 
-export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, mobileOpen, onClose }: SidebarProps) {
   const { user, signOut, hasRole } = useAuth();
   const [showVentasMenu, setShowVentasMenu] = useState(false);
   const [showCajaMenu, setShowCajaMenu] = useState(false);
   const [showProductosMenu, setShowProductosMenu] = useState(false);
   const [showStockMenu, setShowStockMenu] = useState(false);
 
+  const compact = collapsed && !mobileOpen;
   const visibleItems = navItems.filter(item => hasRole(...item.roles));
   const ventasActive = currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cocina' || currentPage === 'pedidos';
   const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios';
@@ -49,37 +52,47 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
 
   return (
     <aside
-      className={`flex flex-col bg-slate-900 text-white h-screen sticky top-0 transition-all duration-300 ${
-        collapsed ? 'w-20' : 'w-64'
-      }`}
+      className={`flex flex-col bg-slate-900 text-white h-dvh flex-shrink-0 lg:sticky lg:top-0 transition-all duration-300 pb-[env(safe-area-inset-bottom)] max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40 max-lg:w-72 max-lg:shadow-2xl ${
+        mobileOpen ? 'max-lg:translate-x-0 max-lg:pointer-events-auto' : 'max-lg:-translate-x-full max-lg:pointer-events-none max-lg:invisible'
+      } ${compact ? 'lg:w-20' : 'lg:w-64'}`}
     >
-      <div className={`flex items-center border-b border-slate-700/50 py-4 ${collapsed ? 'px-3 justify-center' : 'px-5'}`}>
-        <div className={`flex items-center gap-2 min-w-0 ${collapsed ? 'justify-center' : 'flex-1'}`}>
+      <div className={`flex items-center border-b border-slate-700/50 py-4 ${compact ? 'px-3 justify-center' : 'px-5'}`}>
+        <div className={`flex items-center gap-2 min-w-0 ${compact ? 'justify-center' : 'flex-1'}`}>
           <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center flex-shrink-0">
             <UtensilsCrossed size={16} className="text-white" />
           </div>
-          {!collapsed && (
+          {!compact && (
           <div className="min-w-0">
             <p className="font-bold text-white text-sm leading-tight truncate">BurgerPOS</p>
             <p className="text-slate-400 text-xs truncate">Sistema de Gestión</p>
           </div>
           )}
         </div>
-        {!collapsed && (
-          <button
-            onClick={onToggle}
-            className="w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white flex items-center justify-center transition-colors"
-            title="Reducir menú"
-          >
-            <PanelLeftClose size={16} />
-          </button>
+        {!compact && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onToggle}
+              className="hidden lg:flex w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white items-center justify-center transition-colors"
+              title="Reducir menú"
+            >
+              <PanelLeftClose size={16} />
+            </button>
+            <button
+              onClick={onClose}
+              className="lg:hidden w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white flex items-center justify-center transition-colors"
+              title="Cerrar menú"
+              aria-label="Cerrar menú"
+            >
+              <X size={16} />
+            </button>
+          </div>
         )}
       </div>
 
-      {collapsed && (
+      {compact && (
         <button
           onClick={onToggle}
-          className="mx-auto mt-3 w-9 h-9 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white flex items-center justify-center transition-colors"
+          className="hidden lg:flex mx-auto mt-3 w-9 h-9 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white items-center justify-center transition-colors"
           title="Expandir menú"
         >
           <PanelLeftOpen size={17} />
@@ -99,24 +112,24 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
               <div key={item.id}>
                 <button
                   onClick={() => {
-                    if (collapsed) {
+                    if (compact) {
                       onNavigate('ventas');
                       return;
                     }
                     setShowVentasMenu(prev => !prev);
                   }}
                   className={`w-full flex items-center gap-3 rounded-lg transition-all duration-150 group relative py-2.5 ${
-                    collapsed ? 'justify-center px-2' : 'px-3'
+                    compact ? 'justify-center px-2' : 'px-3'
                   } ${
                     isActive
                       ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                       : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                   }`}
-                  title={collapsed ? item.label : undefined}
+                  title={compact ? item.label : undefined}
                 >
                   <Icon size={18} className="flex-shrink-0" />
-                  {!collapsed && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
-                  {!collapsed && (
+                  {!compact && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
+                  {!compact && (
                     <ChevronDown
                       size={14}
                       className={`transition-transform ${showVentasMenu ? 'rotate-180' : ''}`}
@@ -124,7 +137,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
                   )}
                 </button>
 
-                {!collapsed && showVentasMenu && (
+                {!compact && showVentasMenu && (
                   <div className="ml-6 mt-1 space-y-0.5 rounded-xl bg-slate-800/60 p-1">
                     {hasRole('admin', 'encargado', 'moza', 'cajero') && (
                       <button
@@ -217,24 +230,24 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
               <div key={item.id}>
                 <button
                   onClick={() => {
-                    if (collapsed) {
+                    if (compact) {
                       onNavigate('combos');
                       return;
                     }
                     setShowProductosMenu(prev => !prev);
                   }}
                   className={`w-full flex items-center gap-3 rounded-lg transition-all duration-150 group relative py-2.5 ${
-                    collapsed ? 'justify-center px-2' : 'px-3'
+                    compact ? 'justify-center px-2' : 'px-3'
                   } ${
                     isActive
                       ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                       : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                   }`}
-                  title={collapsed ? item.label : undefined}
+                  title={compact ? item.label : undefined}
                 >
                   <Icon size={18} className="flex-shrink-0" />
-                  {!collapsed && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
-                  {!collapsed && (
+                  {!compact && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
+                  {!compact && (
                     <ChevronDown
                       size={14}
                       className={`transition-transform ${showProductosMenu ? 'rotate-180' : ''}`}
@@ -242,7 +255,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
                   )}
                 </button>
 
-                {!collapsed && showProductosMenu && (
+                {!compact && showProductosMenu && (
                   <div className="ml-6 mt-1 space-y-0.5 rounded-xl bg-slate-800/60 p-1">
                     <button
                       onClick={() => onNavigate('combos')}
@@ -273,24 +286,24 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
               <div key={item.id}>
                 <button
                   onClick={() => {
-                    if (collapsed) {
+                    if (compact) {
                       onNavigate('stock_insumos');
                       return;
                     }
                     setShowStockMenu(prev => !prev);
                   }}
                   className={`w-full flex items-center gap-3 rounded-lg transition-all duration-150 group relative py-2.5 ${
-                    collapsed ? 'justify-center px-2' : 'px-3'
+                    compact ? 'justify-center px-2' : 'px-3'
                   } ${
                     isActive
                       ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                       : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                   }`}
-                  title={collapsed ? item.label : undefined}
+                  title={compact ? item.label : undefined}
                 >
                   <Icon size={18} className="flex-shrink-0" />
-                  {!collapsed && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
-                  {!collapsed && (
+                  {!compact && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
+                  {!compact && (
                     <ChevronDown
                       size={14}
                       className={`transition-transform ${showStockMenu ? 'rotate-180' : ''}`}
@@ -298,7 +311,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
                   )}
                 </button>
 
-                {!collapsed && showStockMenu && (
+                {!compact && showStockMenu && (
                   <div className="ml-6 mt-1 space-y-0.5 rounded-xl bg-slate-800/60 p-1">
                     <button
                       onClick={() => onNavigate('stock_insumos')}
@@ -338,17 +351,17 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
               key={item.id}
               onClick={() => onNavigate(item.id)}
               className={`w-full flex items-center gap-3 rounded-lg transition-all duration-150 group relative py-2.5 ${
-                collapsed ? 'justify-center px-2' : 'px-3'
+                compact ? 'justify-center px-2' : 'px-3'
               } ${
                 isActive
                   ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-white'
               }`}
-              title={collapsed ? item.label : undefined}
+              title={compact ? item.label : undefined}
             >
               <Icon size={18} className="flex-shrink-0" />
-              {!collapsed && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
-              {!collapsed && item.badge !== undefined && item.badge > 0 && (
+              {!compact && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
+              {!compact && item.badge !== undefined && item.badge > 0 && (
                 <span className="ml-auto bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
                   {item.badge}
                 </span>
@@ -362,16 +375,16 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle }
         <button
           onClick={() => onNavigate('configuracion')}
           className={`w-full flex items-center gap-3 rounded-lg py-2.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors ${
-            collapsed ? 'justify-center px-2' : 'px-3'
+            compact ? 'justify-center px-2' : 'px-3'
           }`}
-          title={collapsed ? 'Configuración' : undefined}
+          title={compact ? 'Configuración' : undefined}
         >
           <Settings size={18} className="flex-shrink-0" />
-          {!collapsed && <span className="text-sm font-medium">Configuración</span>}
+          {!compact && <span className="text-sm font-medium">Configuración</span>}
         </button>
 
-        <div className={`flex items-center gap-3 py-2 rounded-lg ${collapsed ? 'justify-center px-2' : 'px-3'}`}>
-          {!collapsed && (
+        <div className={`flex items-center gap-3 py-2 rounded-lg ${compact ? 'justify-center px-2' : 'px-3'}`}>
+          {!compact && (
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-white truncate">{user?.nombre} {user?.apellido}</p>
             <p className="text-xs text-slate-400 capitalize truncate">{user?.rol}</p>

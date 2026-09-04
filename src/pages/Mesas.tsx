@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Users, Clock, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
-import type { Mesa, EstadoMesa } from '../lib/types';
+import type { Mesa, EstadoMesa, Sector } from '../lib/types';
 import { useMozas } from '../lib/usuariosStore';
 import {
   loadMesas,
@@ -109,6 +109,32 @@ export default function Mesas() {
     openModal(mesa);
   };
 
+  const handleAddMesa = () => {
+    const sectorDestino = (
+      sectorFiltro !== 'todos'
+        ? sectorFiltro
+        : sectores.find(s => s.id !== 'todos')?.id ?? 'salon'
+    ) as Sector;
+
+    const ahora = new Date().toISOString();
+    const nuevaMesa: Mesa = {
+      id: `mesa-${Date.now()}`,
+      numero: mesas.reduce((mayor, m) => Math.max(mayor, m.numero), 0) + 1,
+      capacidad: 4,
+      estado: 'libre',
+      sector: sectorDestino,
+      posicion_x: 0,
+      posicion_y: 0,
+      activa: true,
+      created_at: ahora,
+      updated_at: ahora,
+    };
+
+    setMesas(prev => [...prev, nuevaMesa]);
+    setSelectedMesa(nuevaMesa);
+    openModal(nuevaMesa);
+  };
+
   const handleAddSector = () => {
     const label = newSectorName.trim();
     if (!label) return;
@@ -168,7 +194,7 @@ export default function Mesas() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
           <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
             <div className="w-3 h-3 bg-emerald-500 rounded-full" />
@@ -199,7 +225,7 @@ export default function Mesas() {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
           <div>
             <h2 className="font-semibold text-slate-800">Plano del Local</h2>
             <p className="text-sm text-slate-500">Seleccioná una mesa para gestionar</p>
@@ -319,6 +345,14 @@ export default function Mesas() {
               </button>
             )}
           </div>
+
+          <button
+            onClick={handleAddMesa}
+            className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-400"
+          >
+            <Plus size={16} />
+            Nueva mesa
+          </button>
         </div>
 
         {filteredMesas.length > 0 ? (
@@ -390,7 +424,7 @@ export default function Mesas() {
       </div>
 
       {showModal && modalMesa && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>

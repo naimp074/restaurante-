@@ -6,6 +6,7 @@ import { categoriasIniciales } from '../lib/mockData';
 import { loadProductos, saveProductos } from '../lib/productosStore';
 import { loadDemoIngredientes, saveDemoIngredientes } from '../lib/demoStore';
 import { loadDemoProducciones } from '../lib/demoStore';
+import { dayKey } from '../lib/fechas';
 
 const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
 
@@ -569,7 +570,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `lista-precios-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `lista-precios-${dayKey()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -648,7 +649,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Recetas de combos');
-    XLSX.writeFile(workbook, `recetas-combos-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(workbook, `recetas-combos-${dayKey()}.xlsx`);
   };
   const updateRecetaItem = (itemId: string, changes: Partial<RecetaItem>) => {
     setEditForm(form => {
@@ -791,7 +792,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
           <button
             onClick={() => {
               setApartado('combos');
@@ -828,7 +829,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
 
   return (
     <div className="space-y-5">
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-800">{apartado === 'precios' ? 'Lista de precio' : 'Combos'}</h2>
           <p className="text-sm text-slate-500">
@@ -840,7 +841,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </p>
         </div>
         {apartado === 'combos' && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button
                 onClick={() => setVista('catalogo')}
@@ -883,7 +884,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </div>
         )}
         {apartado === 'precios' && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <span className="text-xs font-semibold text-slate-500">Margen general %</span>
               <input
@@ -913,8 +914,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         )}
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
-        <aside className="col-span-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <aside className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Categorías</p>
             <button
@@ -946,8 +947,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </div>
         </aside>
 
-        <section className="col-span-9 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-4">
+        <section className="lg:col-span-9 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex-1 max-w-md">
               <Search size={14} className="text-slate-400" />
               <input
@@ -963,7 +964,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </div>
 
           {vista === 'catalogo' ? (
-            <div className="p-4 grid grid-cols-3 gap-4">
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {filtered.map(prod => {
                 const m = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
                 const cantidadArticulos = (prod.receta || []).length;
@@ -1171,7 +1172,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       </div>
 
       {showImport && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -1285,7 +1286,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       )}
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 text-lg">
@@ -1527,7 +1528,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       )}
 
       {detalleCombo && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDetalleCombo(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto" onClick={() => setDetalleCombo(null)}>
           <div
             className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
@@ -1542,7 +1543,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
                   <p className="text-xs text-slate-500">Artículos</p>
                   <p className="text-lg font-bold text-slate-800">{(detalleCombo.receta || []).length}</p>

@@ -10,6 +10,7 @@ import {
   registrarPagoProveedor,
 } from '../lib/finance';
 import { loadDemoIngredientes, saveDemoIngredientes } from '../lib/demoStore';
+import { dayKey } from '../lib/fechas';
 
 const emptyProveedor: Partial<Proveedor> = {
   nombre: '',
@@ -48,15 +49,15 @@ export default function Proveedores() {
   const [pagoCuentaId, setPagoCuentaId] = useState('cuenta-caja-grande');
   const [pagoMetodo, setPagoMetodo] = useState<MetodoPago>('efectivo');
   const [pagoMonto, setPagoMonto] = useState('');
-  const [pagoFecha, setPagoFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [pagoFecha, setPagoFecha] = useState(dayKey());
   const [pagoObservaciones, setPagoObservaciones] = useState('');
   const [showHistorialPagos, setShowHistorialPagos] = useState(true);
   const [historialFacturaId, setHistorialFacturaId] = useState('');
   const [facturaPagoDetalle, setFacturaPagoDetalle] = useState<FacturaProveedor | null>(null);
   const [showFacturaForm, setShowFacturaForm] = useState(false);
   const [facturaNumero, setFacturaNumero] = useState('');
-  const [facturaFecha, setFacturaFecha] = useState(new Date().toISOString().slice(0, 10));
-  const [facturaVencimiento, setFacturaVencimiento] = useState(new Date().toISOString().slice(0, 10));
+  const [facturaFecha, setFacturaFecha] = useState(dayKey());
+  const [facturaVencimiento, setFacturaVencimiento] = useState(dayKey());
   const [facturaTotal, setFacturaTotal] = useState('');
   const [facturaPagado, setFacturaPagado] = useState('');
   const [facturaObservaciones, setFacturaObservaciones] = useState('');
@@ -184,7 +185,7 @@ export default function Proveedores() {
     setPagoMonto(targetFactura ? String(Math.max(targetFactura.total - targetFactura.pagado, 0)) : '');
     setPagoCuentaId(cuentasDinero.find(cuenta => cuenta.activa)?.id || 'cuenta-caja-grande');
     setPagoMetodo('efectivo');
-    setPagoFecha(new Date().toISOString().slice(0, 10));
+    setPagoFecha(dayKey());
     setPagoObservaciones('');
     setShowPagoForm(true);
   };
@@ -200,8 +201,8 @@ export default function Proveedores() {
 
   const openFacturaForm = () => {
     setFacturaNumero('');
-    setFacturaFecha(new Date().toISOString().slice(0, 10));
-    setFacturaVencimiento(new Date().toISOString().slice(0, 10));
+    setFacturaFecha(dayKey());
+    setFacturaVencimiento(dayKey());
     setFacturaTotal('');
     setFacturaPagado('');
     setFacturaObservaciones('');
@@ -299,7 +300,7 @@ export default function Proveedores() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
           <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
             <Truck size={18} className="text-blue-600" />
@@ -319,7 +320,7 @@ export default function Proveedores() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold text-slate-800">Proveedores</h2>
           <p className="text-sm text-slate-500">Administrá contactos para compras y stock</p>
@@ -428,7 +429,7 @@ export default function Proveedores() {
       </div>
 
       {selectedProveedor && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-start justify-between p-6 border-b border-slate-100">
               <div>
@@ -456,7 +457,7 @@ export default function Proveedores() {
               </button>
             </div>
 
-            <div className="grid grid-cols-4 gap-3 p-6 border-b border-slate-100">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4 sm:p-6 border-b border-slate-100">
               <div className="bg-red-50 border border-red-100 rounded-xl p-4">
                 <p className="text-xs text-red-600 mb-1">Total adeudado</p>
                 <p className="text-xl font-bold text-red-700">{formatMoney(totalAdeudado)}</p>
@@ -760,7 +761,7 @@ export default function Proveedores() {
           : null;
 
         return (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
+          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[70] p-0 sm:p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden">
               <div className="flex items-start justify-between p-6 border-b border-slate-100">
                 <div>
@@ -848,7 +849,7 @@ export default function Proveedores() {
       })()}
 
       {showVincularForm && selectedProveedor && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -1036,7 +1037,7 @@ export default function Proveedores() {
       )}
 
       {showFacturaForm && selectedProveedor && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -1135,7 +1136,7 @@ export default function Proveedores() {
       )}
 
       {showPagoForm && selectedProveedor && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -1264,7 +1265,7 @@ export default function Proveedores() {
       )}
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <h3 className="font-bold text-slate-800">{editId ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h3>

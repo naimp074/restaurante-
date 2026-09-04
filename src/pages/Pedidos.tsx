@@ -138,8 +138,8 @@ export default function Pedidos() {
   };
 
   return (
-    <div className="flex gap-6 h-full">
-      <div className="w-64 flex-shrink-0 space-y-3">
+    <div className="flex flex-col xl:flex-row gap-4 xl:gap-6 h-full">
+      <div className="w-full xl:w-64 flex-shrink-0 space-y-3">
         <button
           onClick={() => setShowNewOrder(true)}
           className="w-full bg-amber-500 hover:bg-amber-400 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm transition-colors"
@@ -152,7 +152,7 @@ export default function Pedidos() {
           <div className="p-3 border-b border-slate-100">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Comandas Activas</p>
           </div>
-          <div className="divide-y divide-slate-50 max-h-[calc(100vh-240px)] overflow-y-auto">
+          <div className="divide-y divide-slate-50 max-h-[40vh] xl:max-h-[calc(100vh-240px)] overflow-y-auto">
             {pedidos.filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado').map(pedido => (
               <button
                 key={pedido.id}
@@ -183,12 +183,12 @@ export default function Pedidos() {
         </div>
       </div>
 
-      <div className="flex-1 flex gap-6 min-w-0">
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 lg:gap-6 min-w-0">
         {selectedPedido ? (
           <>
             <div className="flex-1 bg-white rounded-2xl border border-slate-200 flex flex-col">
               <div className="p-5 border-b border-slate-100">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="font-bold text-slate-800">Mesa {selectedPedido.mesa?.numero}</h3>
                     <p className="text-sm text-slate-500">
@@ -285,7 +285,7 @@ export default function Pedidos() {
             </div>
 
             {showAddProduct && (
-              <div className="w-96 flex-shrink-0 bg-white rounded-2xl border border-slate-200 flex flex-col">
+              <div className="w-full lg:w-96 flex-shrink-0 bg-white rounded-2xl border border-slate-200 flex flex-col max-h-[70vh] lg:max-h-none">
                 <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   <h4 className="font-semibold text-slate-800">Agregar Productos</h4>
                   <button onClick={() => setShowAddProduct(false)}>
@@ -362,7 +362,7 @@ export default function Pedidos() {
       </div>
 
       {showNewOrder && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <h3 className="font-bold text-slate-800">Nueva Comanda</h3>

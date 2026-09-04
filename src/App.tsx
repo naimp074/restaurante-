@@ -17,9 +17,10 @@ import Reportes from './pages/Reportes';
 import Usuarios from './pages/Usuarios';
 import Configuracion from './pages/Configuracion';
 import type { PageId } from './lib/types';
+import { dayKey } from './lib/fechas';
 
 const cajaStorageKey = 'restaurant-cajas-diarias';
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = () => dayKey();
 
 const hasOpenCajaToday = () => {
   try {

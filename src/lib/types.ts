@@ -319,6 +319,8 @@ export interface CuentaDinero {
   saldo: number;
   activa: boolean;
   created_at: string;
+  /** Día al que corresponde el saldo. Solo lo usa la caja del día, que arranca en cero cada jornada. */
+  saldo_fecha?: string;
 }
 
 export interface MovimientoFinanciero {

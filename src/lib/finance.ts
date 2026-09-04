@@ -6,19 +6,39 @@ import type {
   MovimientoFinanciero,
   PagoProveedor,
 } from './types';
+import { dayKey } from './fechas';
 
 export const cuentasDineroStorageKey = 'restaurant-cuentas-dinero';
 export const movimientosFinancierosStorageKey = 'restaurant-movimientos-financieros';
 export const facturasProveedorStorageKey = 'restaurant-facturas-proveedor';
 export const pagosProveedorStorageKey = 'restaurant-pagos-proveedor';
 
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = () => dayKey();
 const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+/** Tesoreria acumulada. Conserva el id historico para no romper los movimientos ya guardados. */
+export const cuentaCajaGrandeId = 'cuenta-caja-grande';
+/** Efectivo del mostrador. Arranca en cero cada jornada y al cerrar la caja pasa a la caja grande. */
+export const cuentaCajaDiaId = 'cuenta-caja-dia';
+export const cuentaBancoId = 'cuenta-banco';
+const cuentaCajaChicaId = 'cuenta-caja-chica';
+const nombreCajaGrande = 'Caja grande';
+const nombreCajaDia = 'Caja del día';
+
+const nuevaCuentaCajaDia = (fecha: string): CuentaDinero => ({
+  id: cuentaCajaDiaId,
+  nombre: nombreCajaDia,
+  tipo: 'efectivo',
+  saldo: 0,
+  activa: true,
+  created_at: new Date().toISOString(),
+  saldo_fecha: fecha,
+});
+
 const defaultCuentas: CuentaDinero[] = [
-  { id: 'cuenta-caja-grande', nombre: 'Caja grande', tipo: 'efectivo', saldo: 0, activa: true, created_at: new Date().toISOString() },
-  { id: 'cuenta-caja-chica', nombre: 'Caja chica', tipo: 'efectivo', saldo: 0, activa: true, created_at: new Date().toISOString() },
-  { id: 'cuenta-banco', nombre: 'Banco', tipo: 'banco', saldo: 0, activa: true, created_at: new Date().toISOString() },
+  nuevaCuentaCajaDia(dayKey()),
+  { id: cuentaCajaGrandeId, nombre: nombreCajaGrande, tipo: 'efectivo', saldo: 0, activa: true, created_at: new Date().toISOString() },
+  { id: cuentaBancoId, nombre: 'Banco', tipo: 'banco', saldo: 0, activa: true, created_at: new Date().toISOString() },
   { id: 'cuenta-mercado-pago', nombre: 'Mercado Pago', tipo: 'billetera_virtual', saldo: 0, activa: true, created_at: new Date().toISOString() },
 ];
 
@@ -44,18 +64,147 @@ const getFacturaEstado = (factura: Pick<FacturaProveedor, 'total' | 'pagado' | '
   return 'pendiente';
 };
 
+const esCajaChica = (cuenta: CuentaDinero) =>
+  cuenta.id === cuentaCajaChicaId || cuenta.nombre.trim().toLowerCase() === 'caja chica';
+
+/**
+ * Deja el esquema en dos cajas de efectivo separadas: la caja grande acumula la tesoreria
+ * (absorbiendo el saldo historico y el de la vieja caja chica) y la caja del dia arranca en cero.
+ */
+const separarCajas = (cuentas: CuentaDinero[], hoy: string): CuentaDinero[] => {
+  const yaMigrado = cuentas.some(cuenta => cuenta.id === cuentaCajaDiaId) && !cuentas.some(esCajaChica);
+  if (yaMigrado) return cuentas;
+
+  const acumulado = cuentas
+    .filter(cuenta => esCajaChica(cuenta) || cuenta.id === cuentaCajaGrandeId)
+    .reduce((sum, cuenta) => sum + cuenta.saldo, 0);
+  const grandeExistente = cuentas.find(cuenta => cuenta.id === cuentaCajaGrandeId);
+
+  const cajaGrande: CuentaDinero = {
+    ...(grandeExistente || { tipo: 'efectivo', activa: true, created_at: new Date().toISOString() } as CuentaDinero),
+    id: cuentaCajaGrandeId,
+    nombre: nombreCajaGrande,
+    tipo: 'efectivo',
+    saldo: acumulado,
+    activa: true,
+  };
+
+  const cajaDia = cuentas.find(cuenta => cuenta.id === cuentaCajaDiaId) || nuevaCuentaCajaDia(hoy);
+  const resto = cuentas.filter(cuenta => !esCajaChica(cuenta) && cuenta.id !== cuentaCajaGrandeId && cuenta.id !== cuentaCajaDiaId);
+
+  return [cajaDia, cajaGrande, ...resto];
+};
+
+/** Si quedo saldo de una jornada anterior sin cerrar, lo manda a la caja grande y deja el dia en cero. */
+const arrastrarCajaDia = (cuentas: CuentaDinero[], hoy: string): CuentaDinero[] => {
+  const cajaDia = cuentas.find(cuenta => cuenta.id === cuentaCajaDiaId);
+  if (!cajaDia || cajaDia.saldo_fecha === hoy) return cuentas;
+
+  const arrastre = cajaDia.saldo;
+  const siguiente = cuentas.map(cuenta => {
+    if (cuenta.id === cuentaCajaDiaId) return { ...cuenta, saldo: 0, saldo_fecha: hoy };
+    if (cuenta.id === cuentaCajaGrandeId) return { ...cuenta, saldo: cuenta.saldo + arrastre };
+    return cuenta;
+  });
+
+  if (arrastre !== 0) {
+    const movimiento: MovimientoFinanciero = {
+      id: createId('mov-fin'),
+      fecha: hoy,
+      tipo: 'transferencia',
+      origen: 'transferencia_interna',
+      cuenta_id: cuentaCajaDiaId,
+      cuenta_destino_id: cuentaCajaGrandeId,
+      monto: arrastre,
+      descripcion: `Cierre automatico: efectivo del ${cajaDia.saldo_fecha || 'dia anterior'} a caja grande`,
+      created_at: new Date().toISOString(),
+    };
+    saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
+  }
+
+  return siguiente;
+};
+
 export const loadCuentasDinero = () => {
+  const hoy = todayKey();
   const saved = readStorage<CuentaDinero[]>(cuentasDineroStorageKey, []);
   if (!Array.isArray(saved) || saved.length === 0) {
     writeStorage(cuentasDineroStorageKey, defaultCuentas);
     return defaultCuentas;
   }
-  return saved;
+
+  const separadas = separarCajas(saved, hoy);
+  const alDia = arrastrarCajaDia(separadas, hoy);
+  if (alDia !== saved) writeStorage(cuentasDineroStorageKey, alDia);
+  return alDia;
+};
+
+export const transferirEntreCuentas = (data: {
+  cuenta_origen_id: string;
+  cuenta_destino_id: string;
+  monto: number;
+  descripcion: string;
+  fecha?: string;
+}) => {
+  if (data.monto <= 0) return;
+  const fecha = data.fecha || todayKey();
+
+  saveCuentasDinero(loadCuentasDinero().map(cuenta => {
+    if (cuenta.id === data.cuenta_origen_id) return { ...cuenta, saldo: cuenta.saldo - data.monto };
+    if (cuenta.id === data.cuenta_destino_id) return { ...cuenta, saldo: cuenta.saldo + data.monto, saldo_fecha: cuenta.saldo_fecha ? fecha : undefined };
+    return cuenta;
+  }));
+
+  const movimiento: MovimientoFinanciero = {
+    id: createId('mov-fin'),
+    fecha,
+    tipo: 'transferencia',
+    origen: 'transferencia_interna',
+    cuenta_id: data.cuenta_origen_id,
+    cuenta_destino_id: data.cuenta_destino_id,
+    monto: data.monto,
+    descripcion: data.descripcion,
+    created_at: new Date().toISOString(),
+  };
+  saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
+};
+
+/** Pasa el efectivo del mostrador a la caja grande y deja la caja del dia en cero. */
+export const cerrarCajaDia = (descripcion = 'Cierre de caja: efectivo del dia a caja grande') => {
+  const hoy = todayKey();
+  const cuentas = loadCuentasDinero();
+  const cajaDia = cuentas.find(cuenta => cuenta.id === cuentaCajaDiaId);
+  const transferido = cajaDia?.saldo || 0;
+
+  saveCuentasDinero(cuentas.map(cuenta => {
+    if (cuenta.id === cuentaCajaDiaId) return { ...cuenta, saldo: 0, saldo_fecha: hoy };
+    if (cuenta.id === cuentaCajaGrandeId) return { ...cuenta, saldo: cuenta.saldo + transferido };
+    return cuenta;
+  }));
+
+  if (transferido !== 0) {
+    const movimiento: MovimientoFinanciero = {
+      id: createId('mov-fin'),
+      fecha: hoy,
+      tipo: 'transferencia',
+      origen: 'transferencia_interna',
+      cuenta_id: cuentaCajaDiaId,
+      cuenta_destino_id: cuentaCajaGrandeId,
+      monto: transferido,
+      descripcion,
+      created_at: new Date().toISOString(),
+    };
+    saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
+  }
+
+  return transferido;
 };
 
 export const saveCuentasDinero = (cuentas: CuentaDinero[]) => writeStorage(cuentasDineroStorageKey, cuentas);
 
-export const loadMovimientosFinancieros = () => readStorage<MovimientoFinanciero[]>(movimientosFinancierosStorageKey, []);
+export const loadMovimientosFinancieros = () =>
+  readStorage<MovimientoFinanciero[]>(movimientosFinancierosStorageKey, [])
+    .map(movimiento => (movimiento.cuenta_id === cuentaCajaChicaId ? { ...movimiento, cuenta_id: cuentaCajaGrandeId } : movimiento));
 export const saveMovimientosFinancieros = (movimientos: MovimientoFinanciero[]) => writeStorage(movimientosFinancierosStorageKey, movimientos);
 
 export const loadFacturasProveedor = () => {

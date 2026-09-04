@@ -4,6 +4,7 @@ import type { AlcanceGasto, CajaDiaria, CategoriaGasto, CuentaDinero, Gasto, Met
 import { useAuth } from '../contexts/AuthContext';
 import { loadCuentasDinero, registrarEntradaCuenta, registrarSalidaCuenta, saveCuentasDinero } from '../lib/finance';
 import { loadProveedores } from '../lib/proveedoresStore';
+import { dayKey } from '../lib/fechas';
 
 const gastosStorageKey = 'restaurant-gastos';
 const cajaStorageKey = 'restaurant-cajas-diarias';
@@ -29,7 +30,7 @@ const metodosConfig: Record<MetodoPago, string> = {
   mixto: 'Mixto',
 };
 
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = () => dayKey();
 
 const formatMoney = (value: number) =>
   `$${value.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -248,7 +249,7 @@ export default function Gastos() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
           <p className="text-xs text-slate-500 mb-1">Caja disponible hoy</p>
           <p className={`text-xl font-bold ${disponibleCajaHoy < 0 ? 'text-red-600' : 'text-slate-800'}`}>
@@ -269,7 +270,7 @@ export default function Gastos() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {(Object.keys(categoriasConfig) as CategoriaGasto[]).map(key => (
           <div key={key} className="bg-white border border-slate-200 rounded-xl p-4">
             <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${categoriasConfig[key].color}`}>
@@ -411,7 +412,7 @@ export default function Gastos() {
       </div>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
@@ -511,12 +512,12 @@ export default function Gastos() {
               {metodoPago === 'mixto' && (
                 <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
                   <div><p className="text-sm font-semibold text-slate-800">Pago mixto</p><p className="text-xs text-slate-500">Indicá de qué cuenta sale cada parte. La suma debe coincidir con el monto total.</p></div>
-                  <div className="grid grid-cols-[130px_1fr_160px] gap-3 items-end">
+                  <div className="grid grid-cols-1 sm:grid-cols-[130px_1fr_160px] gap-3 items-end">
                     <div className="pb-2 text-sm font-semibold text-slate-700">Efectivo</div>
                     <div><label className="block text-xs font-semibold text-slate-500 mb-1">Cuenta</label><select value={cuentaEfectivoId} onChange={e => setCuentaEfectivoId(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">{cuentas.filter(cuenta => cuenta.activa && cuenta.tipo === 'efectivo').map(cuenta => <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre} - {formatMoney(cuenta.saldo)}</option>)}</select></div>
                     <div><label className="block text-xs font-semibold text-slate-500 mb-1">Importe</label><input type="number" min="0" value={montoEfectivo} onChange={e => { setMontoEfectivo(e.target.value); setGastoError(''); }} placeholder="$ 0" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400" /></div>
                   </div>
-                  <div className="grid grid-cols-[130px_1fr_160px] gap-3 items-end">
+                  <div className="grid grid-cols-1 sm:grid-cols-[130px_1fr_160px] gap-3 items-end">
                     <div className="pb-2 text-sm font-semibold text-slate-700">Transferencia</div>
                     <div><label className="block text-xs font-semibold text-slate-500 mb-1">Cuenta</label><select value={cuentaTransferenciaId} onChange={e => setCuentaTransferenciaId(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white">{cuentas.filter(cuenta => cuenta.activa && ['banco', 'billetera_virtual'].includes(cuenta.tipo)).map(cuenta => <option key={cuenta.id} value={cuenta.id}>{cuenta.nombre} - {formatMoney(cuenta.saldo)}</option>)}</select></div>
                     <div><label className="block text-xs font-semibold text-slate-500 mb-1">Importe</label><input type="number" min="0" value={montoTransferencia} onChange={e => { setMontoTransferencia(e.target.value); setGastoError(''); }} placeholder="$ 0" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400" /></div>
@@ -531,7 +532,7 @@ export default function Gastos() {
                     <div><p className="text-sm font-semibold text-slate-800">Nueva cuenta de dinero</p><p className="text-xs text-slate-500">Se guardará y quedará seleccionada en este gasto.</p></div>
                     <button onClick={() => setShowNuevaCuenta(false)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div><label className="block text-xs font-semibold text-slate-600 mb-1">Nombre *</label><input value={nuevaCuentaNombre} onChange={e => { setNuevaCuentaNombre(e.target.value); setNuevaCuentaError(''); }} placeholder="Ej: Banco Galicia" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400" /></div>
                     <div><label className="block text-xs font-semibold text-slate-600 mb-1">Tipo</label><select value={nuevaCuentaTipo} onChange={e => setNuevaCuentaTipo(e.target.value as TipoCuentaDinero)} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white"><option value="efectivo">Efectivo</option><option value="banco">Banco</option><option value="billetera_virtual">Billetera virtual</option><option value="tarjeta">Tarjeta</option><option value="otra">Otra</option></select></div>
                     <div><label className="block text-xs font-semibold text-slate-600 mb-1">Saldo inicial</label><input type="number" value={nuevaCuentaSaldo} onChange={e => setNuevaCuentaSaldo(e.target.value)} placeholder="0" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400" /></div>

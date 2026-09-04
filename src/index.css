@@ -1,3 +1,46 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+}
+
+@layer components {
+  .app-modal-overlay {
+    @apply fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4;
+  }
+
+  .app-modal-panel {
+    @apply w-full rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl;
+    max-height: min(92dvh, 100%);
+  }
+}
+
+@layer utilities {
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}

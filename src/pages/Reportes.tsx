@@ -231,7 +231,7 @@ export default function Reportes() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="font-bold text-slate-800">Reportes y Estadísticas</h2>
           <p className="text-sm text-slate-500">Análisis completo del negocio</p>
@@ -241,7 +241,7 @@ export default function Reportes() {
             <button
               key={p}
               onClick={() => setPeriodo(p)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${
+            className={`px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors capitalize ${
                 periodo === p ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >

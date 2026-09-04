@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, RegistroProduccion, UnidadMedida } from '../lib/types';
 import { loadProveedores } from '../lib/proveedoresStore';
+import { dayKey } from '../lib/fechas';
 import { crearFacturaProveedor, loadCuentasDinero, registrarPagoProveedor } from '../lib/finance';
 import {
   loadDemoIngredientes,
@@ -58,8 +59,8 @@ const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().to
 const emptyCompraDraft = (): CompraDraft => ({
   id: createId('compra'),
   origen: 'manual',
-  fecha: new Date().toISOString().slice(0, 10),
-  vencimiento: new Date().toISOString().slice(0, 10),
+  fecha: dayKey(),
+  vencimiento: dayKey(),
   total: 0,
   observaciones: '',
   items: [],
@@ -200,7 +201,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [consumoCantidad, setConsumoCantidad] = useState('');
   const [consumoMotivo, setConsumoMotivo] = useState(motivosConsumo[0]);
   const [consumoResponsable, setConsumoResponsable] = useState('');
-  const [consumoFecha, setConsumoFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [consumoFecha, setConsumoFecha] = useState(dayKey());
   const [consumoObservaciones, setConsumoObservaciones] = useState('');
   const [filtroConsumoMotivo, setFiltroConsumoMotivo] = useState('todos');
   const [filtroConsumoIngId, setFiltroConsumoIngId] = useState('todos');
@@ -219,7 +220,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [definicionError, setDefinicionError] = useState('');
   const [produccionId, setProduccionId] = useState('');
   const [produccionCantidad, setProduccionCantidad] = useState('');
-  const [produccionFecha, setProduccionFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [produccionFecha, setProduccionFecha] = useState(dayKey());
   const [produccionResponsable, setProduccionResponsable] = useState('');
   const [produccionObservaciones, setProduccionObservaciones] = useState('');
   const [cantidadesUsadas, setCantidadesUsadas] = useState<Record<string, string>>({});
@@ -329,7 +330,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Stock');
-    XLSX.writeFile(workbook, `stock-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(workbook, `stock-${dayKey()}.xlsx`);
   };
 
   const openEdit = (ing: Ingrediente) => {
@@ -686,7 +687,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     setConsumoCantidad('');
     setConsumoMotivo(motivosConsumo[0]);
     setConsumoResponsable('');
-    setConsumoFecha(new Date().toISOString().slice(0, 10));
+    setConsumoFecha(dayKey());
     setConsumoObservaciones('');
   };
 
@@ -727,7 +728,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const resetProduccionForm = () => {
     setProduccionId('');
     setProduccionCantidad('');
-    setProduccionFecha(new Date().toISOString().slice(0, 10));
+    setProduccionFecha(dayKey());
     setProduccionResponsable('');
     setProduccionObservaciones('');
     setCantidadesUsadas({});
@@ -736,7 +737,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const openProduccionForm = (produccion?: ProduccionPreparada) => {
     setProduccionId(produccion?.id || producciones.find(item => item.activo)?.id || '');
     setProduccionCantidad(produccion ? String(produccion.cantidad_producida) : '');
-    setProduccionFecha(new Date().toISOString().slice(0, 10));
+    setProduccionFecha(dayKey());
     setProduccionResponsable('');
     setProduccionObservaciones('');
     const base = produccion || producciones.find(item => item.activo);
@@ -907,7 +908,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
           </button>
         </div>
 
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <div className="bg-red-50 border border-red-100 rounded-xl p-4">
             <p className="text-xs text-red-600 mb-1">Consumos registrados</p>
             <p className="text-2xl font-bold text-red-700">{consumos.length}</p>
@@ -930,7 +931,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-3 bg-white rounded-2xl border border-slate-200 p-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 bg-white rounded-2xl border border-slate-200 p-4">
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Insumo</label>
             <select
@@ -1023,7 +1024,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
         </div>
 
         {showConsumoForm && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
               <div className="flex items-center justify-between p-6 border-b border-slate-100">
                 <div>
@@ -1064,7 +1065,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">Cantidad *</label>
                     <input
@@ -1099,7 +1100,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 </div>
 
                 {consumoIngrediente && (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
                       <p className="text-xs text-slate-500">Stock actual</p>
                       <p className="text-lg font-bold text-slate-800">{consumoIngrediente.stock_actual.toLocaleString()}</p>
@@ -1176,7 +1177,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
             <p className="text-xs text-blue-600 mb-1">Producciones activas</p>
             <p className="text-2xl font-bold text-blue-700">{producciones.filter(p => p.activo).length}</p>
@@ -1278,7 +1279,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
         </div>
 
         {showDefinicionProduccion && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col">
               <div className="flex items-center justify-between p-6 border-b border-slate-100">
                 <div>
@@ -1316,7 +1317,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
         )}
 
         {showProduccionForm && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col">
               <div className="flex items-center justify-between p-6 border-b border-slate-100">
                 <div>
@@ -1388,7 +1389,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 </div>
 
                 {selectedProduccion && (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
                       <p className="text-xs text-slate-500">Stock actual</p>
                       <p className="text-lg font-bold text-slate-800">
@@ -1490,7 +1491,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <button
           onClick={() => setShowStockCritico(true)}
           className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3 text-left hover:bg-red-100 transition-colors"
@@ -1634,7 +1635,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       </div>
 
       {showForm && editItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <h3 className="font-bold text-slate-800">{editId ? 'Editar Insumo' : 'Nuevo Insumo'}</h3>
@@ -1717,7 +1718,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       )}
 
       {showCompra && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col">
             <div className="flex items-start justify-between p-5 border-b border-slate-100">
               <div>
@@ -1730,7 +1731,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
             </div>
 
             <div className="p-5 space-y-5 overflow-y-auto">
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <button
                   onClick={() => {
                     setCompraDraft(prev => ({ ...prev, origen: 'manual' }));
@@ -1789,7 +1790,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 </label>
               </div>
 
-              <div className="grid grid-cols-4 gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 rounded-2xl border border-slate-100 bg-slate-50 p-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Proveedor de la compra</label>
                 <select
@@ -1829,7 +1830,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
                 <div>
                   <label className="block text-xs font-semibold text-emerald-700 mb-1.5">Estado del pago</label>
                   <select
@@ -2058,7 +2059,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       )}
 
       {selectedIngrediente && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
             <div className="flex items-start justify-between p-6 border-b border-slate-100">
               <div>
@@ -2073,7 +2074,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 p-6 border-b border-slate-100">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 sm:p-6 border-b border-slate-100">
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
                 <p className="text-xs text-emerald-600 mb-1">Ingresos</p>
                 <p className="text-lg font-bold text-emerald-700">
@@ -2138,7 +2139,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       )}
 
       {showStockBajo && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
             <div className="flex items-start justify-between p-6 border-b border-slate-100">
               <div>
@@ -2200,7 +2201,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       )}
 
       {showStockCritico && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
             <div className="flex items-start justify-between p-6 border-b border-slate-100">
               <div>
@@ -2262,7 +2263,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       )}
 
       {showCompraNecesaria && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl">
             <div className="flex items-start justify-between p-6 border-b border-slate-100">
               <div>
