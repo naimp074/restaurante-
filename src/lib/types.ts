@@ -9,9 +9,10 @@ export type EstadoMesa =
   | 'pendiente_cobro'
   | 'cerrada';
 
-export type EstadoPedido = 'abierto' | 'en_preparacion' | 'listo' | 'entregado' | 'cobrado' | 'cancelado';
+export type EstadoPedido = 'abierto' | 'en_preparacion' | 'listo' | 'entregado' | 'cobrado' | 'cuenta_corriente' | 'cancelado';
 export type EstadoItem = 'pendiente' | 'en_preparacion' | 'listo' | 'entregado' | 'cancelado';
-export type MetodoPago = 'efectivo' | 'transferencia' | 'debito' | 'credito' | 'mixto';
+export type MetodoPago = 'efectivo' | 'transferencia' | 'tarjeta' | 'debito' | 'credito' | 'mixto';
+export type MetodoListaPrecio = Exclude<MetodoPago, 'mixto'>;
 export type TipoComprobante = 'ticket' | 'factura_x' | 'factura_b' | 'factura_a';
 export type EstadoCajaDiaria = 'abierta' | 'cerrada';
 export type CategoriaGasto = 'sueldo' | 'fijo' | 'variable' | 'extra';
@@ -24,9 +25,10 @@ export type ModoCompraItem = 'existente' | 'nuevo';
 export type TipoComponenteReceta = 'stock' | 'produccion';
 export type TipoCuentaDinero = 'efectivo' | 'banco' | 'billetera_virtual' | 'tarjeta' | 'otra';
 export type TipoMovimientoFinanciero = 'entrada' | 'salida' | 'transferencia' | 'ajuste';
-export type OrigenMovimientoFinanciero = 'venta' | 'gasto' | 'pago_proveedor' | 'compra' | 'apertura_caja' | 'retiro' | 'transferencia_interna' | 'ajuste';
+export type OrigenMovimientoFinanciero = 'venta' | 'cobro_cuenta_corriente' | 'gasto' | 'pago_proveedor' | 'compra' | 'apertura_caja' | 'retiro' | 'transferencia_interna' | 'ajuste';
 export type EstadoFacturaProveedor = 'pendiente' | 'por_vencer' | 'vencida' | 'pagada';
 export type CondicionPagoCompra = 'pendiente' | 'pagada' | 'parcial';
+export type TipoComprobanteCompra = 'factura' | 'ticket' | 'otro';
 
 export interface Profile {
   id: string;
@@ -35,6 +37,7 @@ export interface Profile {
   rol: Rol;
   activo: boolean;
   avatar_url?: string;
+  local_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -101,6 +104,16 @@ export interface Producto {
   receta?: RecetaItem[];
 }
 
+export interface ListaPrecio {
+  id: string;
+  nombre: string;
+  metodo_pago: MetodoListaPrecio;
+  tipo_ajuste: 'descuento' | 'recargo';
+  descuento_general: number;
+  descuentos_productos: Record<string, number>;
+  updated_at: string;
+}
+
 export interface ProduccionPreparada {
   id: string;
   nombre: string;
@@ -148,6 +161,7 @@ export interface RecetaItem {
 
 export interface Pedido {
   id: string;
+  cliente_id?: string;
   mesa_id: string;
   empleado_id?: string;
   cantidad_personas: number;
@@ -190,9 +204,12 @@ export interface Pago {
   monto: number;
   monto_efectivo: number;
   monto_transferencia: number;
+  monto_tarjeta?: number;
   monto_debito: number;
   monto_credito: number;
   descuento_aplicado: number;
+  lista_precio_id?: string;
+  lista_precio_nombre?: string;
   recargo_aplicado: number;
   total_cobrado: number;
   vuelto: number;
@@ -211,6 +228,8 @@ export interface CajaDiaria {
   tarjeta: number;
   transferencia: number;
   total_ventas: number;
+  ventas_cuenta_corriente?: number;
+  cobros_cuenta_corriente?: number;
   monto_esperado_efectivo: number;
   monto_cierre_efectivo?: number;
   diferencia_efectivo?: number;
@@ -287,6 +306,7 @@ export interface CompraDraft {
   origen: OrigenCompra;
   proveedor_id?: string;
   fecha: string;
+  comprobante_tipo?: TipoComprobanteCompra;
   comprobante_nombre?: string;
   total: number;
   observaciones: string;
@@ -370,6 +390,7 @@ export interface PagoProveedor {
 }
 
 export type PageId =
+  | 'cuenta_corriente'
   | 'dashboard'
   | 'mesas'
   | 'pedidos'
@@ -382,6 +403,7 @@ export type PageId =
   | 'productos'
   | 'combos'
   | 'lista_precios'
+  | 'diferentes_listas'
   | 'stock'
   | 'stock_insumos'
   | 'stock_consumos'

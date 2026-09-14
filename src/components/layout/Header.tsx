@@ -2,6 +2,7 @@ import { Bell, Search, Clock, Menu } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
+import { useEstadoSync } from '../../lib/sync/useEstadoSync';
 
 const pageTitles: Record<PageId, string> = {
   dashboard: 'Dashboard',
@@ -12,10 +13,12 @@ const pageTitles: Record<PageId, string> = {
   caja_dia: 'Caja del Día',
   caja_arqueos: 'Arqueos',
   cobros: 'Cobros',
+  cuenta_corriente: 'Cuenta corriente',
   ventas: 'Comandas',
   productos: 'Productos',
   combos: 'Combos',
   lista_precios: 'Lista de Precio',
+  diferentes_listas: 'Diferentes Listas',
   stock: 'Stock e Insumos',
   stock_insumos: 'Stock',
   stock_consumos: 'Consumos Internos',
@@ -34,7 +37,8 @@ interface HeaderProps {
 }
 
 export default function Header({ currentPage, onMenuClick }: HeaderProps) {
-  const { user } = useAuth();
+  const { user, modoDemo } = useAuth();
+  const sync = useEstadoSync();
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -66,6 +70,17 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
           <p className="text-xs text-slate-500 capitalize hidden sm:block truncate">{formatDate(time)}</p>
         </div>
       </div>
+
+      {!modoDemo && !sync.online && (
+        <p className="hidden sm:block text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 max-w-[220px]">
+          Sin conexión, se guarda acá hasta sincronizar
+        </p>
+      )}
+      {!modoDemo && sync.online && sync.pendiente > 0 && (
+        <p className="hidden sm:block text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+          Sincronizando cambios…
+        </p>
+      )}
 
       <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
         <div className="hidden md:flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-600">

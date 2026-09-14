@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { Save, Store, Bell, Trash2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import { limpiarDatosLocales } from '../lib/resetDatos';
+import { readStore, writeStore } from '../lib/storeSync';
 
-const configStorageKey = 'restaurant-config-local';
+export const configStorageKey = 'restaurant-config-local';
+export const configUpdatedEvent = 'restaurant-config-local-updated';
 
 type ConfigLocal = {
   nombre: string;
@@ -13,18 +16,13 @@ type ConfigLocal = {
 
 const configPorDefecto: ConfigLocal = { nombre: '', direccion: '', telefono: '', iva: '21' };
 
-const loadConfig = (): ConfigLocal => {
-  if (typeof window === 'undefined') return configPorDefecto;
-  try {
-    const saved = window.localStorage.getItem(configStorageKey);
-    if (!saved) return configPorDefecto;
-    return { ...configPorDefecto, ...(JSON.parse(saved) as Partial<ConfigLocal>) };
-  } catch {
-    return configPorDefecto;
-  }
-};
+const loadConfig = (): ConfigLocal => ({
+  ...configPorDefecto,
+  ...readStore<Partial<ConfigLocal>>(configStorageKey, {}),
+});
 
 export default function Configuracion() {
+  const { hasRole } = useAuth();
   const configInicial = loadConfig();
   const [localNombre, setLocalNombre] = useState(configInicial.nombre);
   const [localDireccion, setLocalDireccion] = useState(configInicial.direccion);
@@ -34,9 +32,10 @@ export default function Configuracion() {
   const [confirmarReinicio, setConfirmarReinicio] = useState(false);
 
   const handleSave = () => {
-    window.localStorage.setItem(
+    writeStore(
       configStorageKey,
-      JSON.stringify({ nombre: localNombre, direccion: localDireccion, telefono: localTelefono, iva })
+      { nombre: localNombre, direccion: localDireccion, telefono: localTelefono, iva },
+      configUpdatedEvent,
     );
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -122,7 +121,7 @@ export default function Configuracion() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-red-100 p-6">
+      {hasRole('admin') && <div className="bg-white rounded-2xl border border-red-100 p-6">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-9 h-9 bg-red-100 rounded-xl flex items-center justify-center">
             <Trash2 size={18} className="text-red-600" />
@@ -157,7 +156,7 @@ export default function Configuracion() {
             Reiniciar todos los datos
           </button>
         )}
-      </div>
+      </div>}
 
       <button
         onClick={handleSave}

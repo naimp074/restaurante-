@@ -1,18 +1,20 @@
 import { useMemo, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 import type { Pedido } from '../lib/types';
-import { loadDemoPedidos } from '../lib/demoStore';
-import { loadCajasDiarias } from '../lib/cajaStore';
+import { useIngredientes, usePedidos, useProducciones } from '../lib/demoStore';
+import { useCajas } from '../lib/cajaStore';
+import { calcularCostoProducto } from '../lib/costosReceta';
 import { categoriasIniciales } from '../lib/mockData';
 import { useProductos } from '../lib/productosStore';
 import { useUsuarios } from '../lib/usuariosStore';
+import { saldoCliente, useCuentaCorriente } from '../lib/cuentaCorrienteStore';
 
 type Periodo = 'dia' | 'semana' | 'mes';
 
 const nombresDias = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
 const colores = ['#f59e0b', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
 
-const esVenta = (pedido: Pedido) => pedido.estado !== 'cancelado';
+const esVenta = (pedido: Pedido) => pedido.estado === 'cobrado' || pedido.estado === 'cuenta_corriente';
 
 const inicioDelDia = (fecha: Date) => {
   const d = new Date(fecha);
@@ -24,15 +26,18 @@ export default function Reportes() {
   const [periodo, setPeriodo] = useState<Periodo>('semana');
   const productos = useProductos();
   const usuarios = useUsuarios();
-  const todosLosPedidos = useMemo(() => loadDemoPedidos().filter(esVenta), []);
-  const cajas = useMemo(() => loadCajasDiarias(), []);
+  const todosLosPedidos = usePedidos().filter(esVenta);
+  const cajas = useCajas();
+  const ingredientes = useIngredientes();
+  const producciones = useProducciones();
+  const cuentaCorriente = useCuentaCorriente();
 
   const diasDelPeriodo = periodo === 'dia' ? 1 : periodo === 'semana' ? 7 : 30;
 
   const pedidos = useMemo(() => {
     const desde = inicioDelDia(new Date());
     desde.setDate(desde.getDate() - (diasDelPeriodo - 1));
-    return todosLosPedidos.filter(p => new Date(p.created_at) >= desde);
+    return todosLosPedidos.filter(p => new Date(p.hora_cierre || p.created_at) >= desde);
   }, [todosLosPedidos, diasDelPeriodo]);
 
   const datosVentas = useMemo(() => {
@@ -49,7 +54,7 @@ export default function Reportes() {
       }));
 
       pedidos.forEach(pedido => {
-        const fecha = new Date(pedido.created_at);
+        const fecha = new Date(pedido.hora_cierre || pedido.created_at);
         const indice = semanas.reduce((acc, semana, i) => (fecha >= semana.desde ? i : acc), 0);
         semanas[indice].valor += pedido.total;
         semanas[indice].pedidos += 1;
@@ -70,7 +75,7 @@ export default function Reportes() {
     });
 
     pedidos.forEach(pedido => {
-      const fecha = inicioDelDia(new Date(pedido.created_at)).getTime();
+      const fecha = inicioDelDia(new Date(pedido.hora_cierre || pedido.created_at)).getTime();
       const dia = dias.find(d => d.fecha.getTime() === fecha);
       if (!dia) return;
       dia.valor += pedido.total;
@@ -83,6 +88,12 @@ export default function Reportes() {
   const maxVenta = Math.max(...datosVentas.map(d => d.valor), 1);
   const totalVentas = datosVentas.reduce((s, d) => s + d.valor, 0);
   const totalPedidos = datosVentas.reduce((s, d) => s + d.pedidos, 0);
+  const desdeCobros = inicioDelDia(new Date());
+  desdeCobros.setDate(desdeCobros.getDate() - (diasDelPeriodo - 1));
+  const cajasPeriodo = cajas.filter(c => new Date(`${c.fecha}T00:00:00`) >= desdeCobros);
+  const totalCobrado = cajasPeriodo.reduce((s, c) => s + c.efectivo + c.tarjeta + c.transferencia, 0);
+  const cobradoCuentas = cajasPeriodo.reduce((s, c) => s + (c.cobros_cuenta_corriente || 0), 0);
+  const pendienteCuentas = cuentaCorriente.clientes.reduce((s, c) => s + saldoCliente(c.id, cuentaCorriente.movimientos), 0);
   const ticketPromedio = totalPedidos > 0 ? Math.round(totalVentas / totalPedidos) : 0;
 
   const costoTotal = useMemo(() => {
@@ -91,11 +102,14 @@ export default function Reportes() {
         .filter(item => item.estado !== 'cancelado')
         .reduce((s, item) => {
           const producto = productos.find(p => p.id === item.producto_id) || item.producto;
-          return s + item.cantidad * (producto?.costo_produccion || 0);
+          const costo = producto
+            ? calcularCostoProducto(producto, id => ingredientes.find(i => i.id === id)?.costo_por_unidad || 0, producciones)
+            : 0;
+          return s + item.cantidad * costo;
         }, 0);
       return suma + costoPedido;
     }, 0);
-  }, [pedidos, productos]);
+  }, [pedidos, productos, ingredientes, producciones]);
 
   const gananciaBruta = totalVentas - costoTotal;
   const margenBruto = totalVentas > 0 ? ((gananciaBruta / totalVentas) * 100).toFixed(1) : '0.0';
@@ -167,7 +181,7 @@ export default function Reportes() {
     desde.setDate(desde.getDate() - (diasDelPeriodo - 1));
 
     const totales = cajas
-      .filter(caja => new Date(caja.fecha) >= desde)
+      .filter(caja => new Date(`${caja.fecha}T00:00:00`) >= desde)
       .reduce(
         (acc, caja) => ({
           efectivo: acc.efectivo + caja.efectivo,
@@ -252,10 +266,16 @@ export default function Reportes() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <MetricCard label="Ventas Totales" value={`$${totalVentas.toLocaleString('es-AR')}`} sub="ingresos" />
+        <MetricCard label="Ventas Totales" value={`$${totalVentas.toLocaleString('es-AR')}`} sub="incluye ventas a cuenta" />
         <MetricCard label="Comandas" value={String(totalPedidos)} sub="comandas" />
         <MetricCard label="Ticket Promedio" value={`$${ticketPromedio.toLocaleString('es-AR')}`} sub="por comanda" />
         <MetricCard label="Margen Bruto" value={`${margenBruto}%`} sub="rentabilidad" />
+      </div>
+
+      <div className="grid sm:grid-cols-3 gap-4">
+        <MetricCard label="Dinero cobrado" value={`$${totalCobrado.toLocaleString('es-AR')}`} sub="cobros del período por todos los medios" />
+        <MetricCard label="Cobros de cuenta corriente" value={`$${cobradoCuentas.toLocaleString('es-AR')}`} sub="incluidos en dinero cobrado; no suman otra venta" />
+        <MetricCard label="Deuda pendiente actual" value={`$${pendienteCuentas.toLocaleString('es-AR')}`} sub="saldo de todas las cuentas, sin filtro de período" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

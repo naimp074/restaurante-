@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Calculator, TrendingUp, DollarSign, Plus, Trash2, ChevronDown, AlertCircle } from 'lucide-react';
-import type { Producto, RecetaItem, Ingrediente } from '../lib/types';
-import { useProductos } from '../lib/productosStore';
-import { loadDemoIngredientes } from '../lib/demoStore';
+import type { Producto, RecetaItem, Ingrediente, ProduccionPreparada } from '../lib/types';
+import { saveProductos, useProductos } from '../lib/productosStore';
+import { useIngredientes, useProducciones } from '../lib/demoStore';
+import { calcularCostoProducto, costoUnitarioProduccion } from '../lib/costosReceta';
 
 interface RecetaCalc {
   receta: (RecetaItem & { ingrediente: Ingrediente })[];
@@ -14,9 +15,30 @@ interface RecetaCalc {
   precioIdeal: number;
 }
 
-function calcularReceta(receta: RecetaItem[], precio: number, insumos: Ingrediente[]): RecetaCalc {
+function calcularReceta(
+  receta: RecetaItem[],
+  precio: number,
+  insumos: Ingrediente[],
+  producciones: ProduccionPreparada[],
+): RecetaCalc {
+  const costoInsumo = (id: string) => insumos.find(i => i.id === id)?.costo_por_unidad || 0;
   const items = receta
     .map(r => {
+      if ((r.tipo || 'stock') === 'produccion') {
+        const produccion = producciones.find(p => p.id === r.produccion_id) || r.produccion;
+        if (!produccion) return null;
+        const costoUnidad = costoUnitarioProduccion(produccion, costoInsumo);
+        return {
+          ...r,
+          ingrediente: {
+            id: produccion.id,
+            nombre: produccion.nombre,
+            unidad_medida: produccion.unidad_medida,
+            costo_por_unidad: costoUnidad,
+          } as Ingrediente,
+          costo_calculado: r.cantidad * costoUnidad,
+        };
+      }
       const ingrediente = insumos.find(i => i.id === r.ingrediente_id) || r.ingrediente;
       if (!ingrediente) return null;
       return {
@@ -26,7 +48,7 @@ function calcularReceta(receta: RecetaItem[], precio: number, insumos: Ingredien
       };
     })
     .filter((item): item is RecetaItem & { ingrediente: Ingrediente } => item !== null);
-  const costoTotal = items.reduce((s, i) => s + i.costo_calculado, 0);
+  const costoTotal = calcularCostoProducto({ receta } as Producto, costoInsumo, producciones);
   const ganancia = precio - costoTotal;
   const margenPct = precio > 0 ? (ganancia / precio) * 100 : 0;
   return {
@@ -42,7 +64,8 @@ function calcularReceta(receta: RecetaItem[], precio: number, insumos: Ingredien
 
 export default function Costos() {
   const productos = useProductos();
-  const insumos = useMemo(() => loadDemoIngredientes(), []);
+  const insumos = useIngredientes();
+  const producciones = useProducciones();
   const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
   const [recetaItems, setRecetaItems] = useState<RecetaItem[]>([]);
   const [precioVenta, setPrecioVenta] = useState(0);
@@ -52,8 +75,8 @@ export default function Costos() {
   const [margenObjetivo, setMargenObjetivo] = useState(50);
 
   const calc = useMemo(
-    () => calcularReceta(recetaItems, precioVenta, insumos),
-    [recetaItems, precioVenta, insumos]
+    () => calcularReceta(recetaItems, precioVenta, insumos, producciones),
+    [recetaItems, precioVenta, insumos, producciones]
   );
 
   useEffect(() => {
@@ -85,12 +108,28 @@ export default function Costos() {
       created_at: new Date().toISOString(),
       ingrediente: ing,
     };
-    setRecetaItems(prev => [...prev, newItem]);
+    const receta = [...recetaItems, newItem];
+    setRecetaItems(receta);
+    persistirReceta(selectedProducto, receta);
     setAddIngId(''); setAddCantidad('');
   };
 
   const removeIngrediente = (id: string) => {
-    setRecetaItems(prev => prev.filter(r => r.id !== id));
+    if (!selectedProducto) return;
+    const receta = recetaItems.filter(r => r.id !== id);
+    setRecetaItems(receta);
+    persistirReceta(selectedProducto, receta);
+  };
+
+  const persistirReceta = (producto: Producto, receta: RecetaItem[]) => {
+    const actualizado = { ...producto, receta };
+    actualizado.costo_produccion = calcularCostoProducto(
+      actualizado,
+      id => insumos.find(i => i.id === id)?.costo_por_unidad || 0,
+      producciones,
+    );
+    saveProductos(productos.map(item => item.id === actualizado.id ? actualizado : item));
+    setSelectedProducto(actualizado);
   };
 
   const precioParaMargen = (margen: number) => {
@@ -398,13 +437,14 @@ export default function Costos() {
             </thead>
             <tbody className="divide-y divide-slate-50">
               {productos.map(prod => {
-                const m = prod.precio_venta > 0 ? ((prod.precio_venta - prod.costo_produccion) / prod.precio_venta) * 100 : 0;
-                const gan = prod.precio_venta - prod.costo_produccion;
+                const costo = calcularCostoProducto(prod, id => insumos.find(i => i.id === id)?.costo_por_unidad || 0, producciones);
+                const m = prod.precio_venta > 0 ? ((prod.precio_venta - costo) / prod.precio_venta) * 100 : 0;
+                const gan = prod.precio_venta - costo;
                 return (
                   <tr key={prod.id} className="hover:bg-slate-50">
                     <td className="py-2.5 px-3 font-medium text-slate-800">{prod.nombre}</td>
                     <td className="py-2.5 px-3 text-right text-slate-700">${prod.precio_venta.toLocaleString()}</td>
-                    <td className="py-2.5 px-3 text-right text-slate-500">${prod.costo_produccion.toLocaleString()}</td>
+                    <td className="py-2.5 px-3 text-right text-slate-500">${costo.toLocaleString()}</td>
                     <td className="py-2.5 px-3 text-right font-semibold text-emerald-600">${gan.toLocaleString()}</td>
                     <td className="py-2.5 px-3 text-right">
                       <span className={`font-bold ${margenColor(m)}`}>{m.toFixed(1)}%</span>

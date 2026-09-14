@@ -3,6 +3,7 @@ import type { User } from '@supabase/supabase-js';
 import type { Profile, Rol } from '../lib/types';
 import { mockProfile } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { asegurarUsuarioLocal } from '../lib/usuariosStore';
 
 interface AuthContextType {
   user: Profile | null;
@@ -55,7 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setUser(data as Profile);
+    const perfil = data as Profile;
+    asegurarUsuarioLocal(perfil);
+    setUser(perfil);
     setLoading(false);
   }, []);
 
@@ -64,7 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const stored = localStorage.getItem(demoStorageKey);
       if (stored) {
         try {
-          setUser(JSON.parse(stored));
+          const perfil = JSON.parse(stored) as Profile;
+          asegurarUsuarioLocal(perfil);
+          setUser(perfil);
         } catch {
           localStorage.removeItem(demoStorageKey);
         }
@@ -106,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!account || account.pass !== password) {
         return { error: 'Email o contraseña incorrectos' };
       }
+      asegurarUsuarioLocal(account.profile);
       setUser(account.profile);
       localStorage.setItem(demoStorageKey, JSON.stringify(account.profile));
       return {};

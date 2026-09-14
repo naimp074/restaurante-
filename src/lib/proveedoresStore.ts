@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import type { Proveedor } from './types';
+import { writeStore } from './storeSync';
 
 export const proveedoresStorageKey = 'restaurant-proveedores';
-const proveedoresUpdatedEvent = 'restaurant-proveedores-updated';
+export const proveedoresUpdatedEvent = 'restaurant-proveedores-updated';
 
 // Se consulta una vez por fila al listar insumos, así que evitamos releer y
 // parsear el storage en cada llamada.
 let cache: Proveedor[] | null = null;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener(proveedoresUpdatedEvent, () => { cache = null; });
+}
 
 const leerStorage = (): Proveedor[] => {
   if (typeof window === 'undefined') return [];
@@ -28,8 +33,7 @@ export const loadProveedores = (): Proveedor[] => {
 export const saveProveedores = (proveedores: Proveedor[]) => {
   if (typeof window === 'undefined') return;
   cache = proveedores;
-  window.localStorage.setItem(proveedoresStorageKey, JSON.stringify(proveedores));
-  window.dispatchEvent(new CustomEvent(proveedoresUpdatedEvent));
+  writeStore(proveedoresStorageKey, proveedores, proveedoresUpdatedEvent);
 };
 
 /** Mantiene los proveedores sincronizados entre pantallas abiertas al mismo tiempo. */

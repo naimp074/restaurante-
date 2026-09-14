@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, Truck, Phone, Mail, User, X, Check, Pencil, Power, Package, ReceiptText, DollarSign, CalendarDays, AlertTriangle } from 'lucide-react';
+import { Plus, Search, Truck, Phone, Mail, User, X, Check, Pencil, Power, Package, ReceiptText, DollarSign, CalendarDays, AlertTriangle, ChevronRight } from 'lucide-react';
 import type { CuentaDinero, FacturaProveedor, Ingrediente, MetodoPago, PagoProveedor, Proveedor, UnidadMedida } from '../lib/types';
 import { loadProveedores, saveProveedores } from '../lib/proveedoresStore';
 import {
@@ -23,6 +23,14 @@ const emptyProveedor: Partial<Proveedor> = {
   activo: true,
 };
 
+const condicionesFiscales = [
+  'Consumidor Final',
+  'Monotributista',
+  'Responsable Inscripto',
+  'IVA Exento',
+  'Sujeto no categorizado',
+];
+
 const getDiasRestantes = (fecha: string) => {
   const hoy = new Date();
   const vencimiento = new Date(`${fecha}T00:00:00`);
@@ -39,8 +47,10 @@ export default function Proveedores() {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editProveedor, setEditProveedor] = useState<Partial<Proveedor>>(emptyProveedor);
+  const [condicionFiscalOtra, setCondicionFiscalOtra] = useState(false);
   const [selectedProveedor, setSelectedProveedor] = useState<Proveedor | null>(null);
   const [detalleTab, setDetalleTab] = useState<'productos' | 'cuenta'>('productos');
+  const [showDeudas, setShowDeudas] = useState(false);
   const [facturas, setFacturas] = useState<FacturaProveedor[]>(loadFacturasProveedor);
   const [pagosProveedor, setPagosProveedor] = useState<PagoProveedor[]>(loadPagosProveedor);
   const [cuentasDinero, setCuentasDinero] = useState<CuentaDinero[]>(loadCuentasDinero);
@@ -82,6 +92,22 @@ export default function Proveedores() {
 
   const activos = proveedores.filter(p => p.activo).length;
   const inactivos = proveedores.length - activos;
+  const deudaPorProveedor = proveedores
+    .map(proveedor => {
+      const facturasDelProveedor = facturas.filter(factura => factura.proveedor_id === proveedor.id);
+      const pendientes = facturasDelProveedor.filter(factura => factura.estado !== 'pagada');
+      return {
+        proveedor,
+        deuda: facturasDelProveedor.reduce((sum, factura) => sum + Math.max(factura.total - factura.pagado, 0), 0),
+        pendientes: pendientes.length,
+        vencidas: pendientes.filter(factura => getDiasRestantes(factura.vencimiento) < 0).length,
+        proximo: [...pendientes].sort((a, b) => a.vencimiento.localeCompare(b.vencimiento))[0],
+      };
+    })
+    .filter(item => item.deuda > 0)
+    .sort((a, b) => b.deuda - a.deuda);
+  const deudaTotalProveedores = deudaPorProveedor.reduce((sum, item) => sum + item.deuda, 0);
+  const facturasPendientesTotal = deudaPorProveedor.reduce((sum, item) => sum + item.pendientes, 0);
   const productosProveedor = selectedProveedor
     ? ingredientes.filter(ingrediente => ingrediente.proveedor_id === selectedProveedor.id)
     : [];
@@ -117,18 +143,26 @@ export default function Proveedores() {
   const openNew = () => {
     setEditId(null);
     setEditProveedor(emptyProveedor);
+    setCondicionFiscalOtra(false);
     setShowForm(true);
   };
 
   const openEdit = (proveedor: Proveedor) => {
     setEditId(proveedor.id);
     setEditProveedor({ ...proveedor });
+    setCondicionFiscalOtra(Boolean(proveedor.codigo_fiscal && !condicionesFiscales.includes(proveedor.codigo_fiscal)));
     setShowForm(true);
   };
 
   const openDetalle = (proveedor: Proveedor) => {
     setSelectedProveedor(proveedor);
     setDetalleTab('productos');
+  };
+
+  const openCuentaProveedor = (proveedor: Proveedor) => {
+    setShowDeudas(false);
+    setSelectedProveedor(proveedor);
+    setDetalleTab('cuenta');
   };
 
   const saveProveedor = () => {
@@ -300,7 +334,7 @@ export default function Proveedores() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
           <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
             <Truck size={18} className="text-blue-600" />
@@ -318,6 +352,20 @@ export default function Proveedores() {
           <p className="text-2xl font-bold text-slate-700">{inactivos}</p>
           <p className="text-xs text-slate-500">Inactivos</p>
         </div>
+        <button
+          onClick={() => setShowDeudas(true)}
+          className="bg-red-50 border border-red-200 rounded-xl p-4 text-left hover:bg-red-100/70 hover:border-red-300 transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xl font-bold text-red-700 truncate">{formatMoney(deudaTotalProveedores)}</p>
+              <p className="text-xs text-red-600">
+                Deudas · {deudaPorProveedor.length} {deudaPorProveedor.length === 1 ? 'proveedor' : 'proveedores'}
+              </p>
+            </div>
+            <ChevronRight size={16} className="text-red-400 shrink-0" />
+          </div>
+        </button>
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -427,6 +475,72 @@ export default function Proveedores() {
           </table>
         </div>
       </div>
+
+      {showDeudas && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-slate-100">
+              <div>
+                <p className="text-xs font-semibold text-red-600 uppercase tracking-wide">Deudas con proveedores</p>
+                <h3 className="font-bold text-2xl text-slate-800 mt-1">{formatMoney(deudaTotalProveedores)}</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  {deudaPorProveedor.length} {deudaPorProveedor.length === 1 ? 'proveedor' : 'proveedores'} con saldo · {facturasPendientesTotal} {facturasPendientesTotal === 1 ? 'factura pendiente' : 'facturas pendientes'}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDeudas(false)}
+                aria-label="Cerrar deudas"
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="divide-y divide-slate-100">
+              {deudaPorProveedor.map(({ proveedor, deuda, pendientes, vencidas, proximo }) => (
+                <button
+                  key={proveedor.id}
+                  onClick={() => openCuentaProveedor(proveedor)}
+                  className="w-full flex items-center gap-3 px-4 sm:px-6 py-4 text-left hover:bg-slate-50 transition-colors"
+                >
+                  <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center shrink-0">
+                    <Truck size={15} className="text-blue-600" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{proveedor.nombre}</p>
+                    <p className="text-xs text-slate-500">
+                      {pendientes} {pendientes === 1 ? 'factura pendiente' : 'facturas pendientes'}
+                      {proximo && ` · vence ${new Date(`${proximo.vencimiento}T00:00:00`).toLocaleDateString('es-AR')}`}
+                    </p>
+                    {vencidas > 0 && (
+                      <p className="flex items-center gap-1 text-xs font-semibold text-red-600 mt-0.5">
+                        <AlertTriangle size={12} />
+                        {vencidas} {vencidas === 1 ? 'factura vencida' : 'facturas vencidas'}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-base font-bold text-red-600">{formatMoney(deuda)}</p>
+                    <p className="text-xs text-slate-400">Ver cuenta</p>
+                  </div>
+                  <ChevronRight size={16} className="text-slate-300 shrink-0" />
+                </button>
+              ))}
+              {deudaPorProveedor.length === 0 && (
+                <div className="px-6 py-12 text-center">
+                  <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                    <Check size={20} className="text-emerald-600" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700">No le debés plata a ningún proveedor</p>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Las deudas aparecen acá cuando cargás facturas desde el estado de cuenta de un proveedor.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedProveedor && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
@@ -1335,12 +1449,30 @@ export default function Proveedores() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Condición fiscal</label>
-                  <input
-                    value={editProveedor.codigo_fiscal || ''}
-                    onChange={e => setEditProveedor(prev => ({ ...prev, codigo_fiscal: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                    placeholder="Condición fiscal"
-                  />
+                  <select
+                    value={condicionFiscalOtra ? 'otra' : (condicionesFiscales.includes(editProveedor.codigo_fiscal || '') ? editProveedor.codigo_fiscal : '')}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setCondicionFiscalOtra(value === 'otra');
+                      setEditProveedor(prev => ({ ...prev, codigo_fiscal: value === 'otra' ? '' : value }));
+                    }}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
+                  >
+                    <option value="">Sin especificar</option>
+                    {condicionesFiscales.map(condicion => (
+                      <option key={condicion} value={condicion}>{condicion}</option>
+                    ))}
+                    <option value="otra">Otra</option>
+                  </select>
+                  {condicionFiscalOtra && (
+                    <input
+                      value={editProveedor.codigo_fiscal || ''}
+                      onChange={e => setEditProveedor(prev => ({ ...prev, codigo_fiscal: e.target.value }))}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 mt-2"
+                      placeholder="Escribí la condición"
+                      autoFocus
+                    />
+                  )}
                 </div>
               </div>
               <div>

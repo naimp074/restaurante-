@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload } from 'lucide-react';
-import type { Ingrediente, Producto, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
+import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload, BadgePercent } from 'lucide-react';
+import type { Ingrediente, ListaPrecio, MetodoListaPrecio, Producto, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
 import { categoriasIniciales } from '../lib/mockData';
 import { loadProductos, saveProductos } from '../lib/productosStore';
-import { loadDemoIngredientes, saveDemoIngredientes } from '../lib/demoStore';
-import { loadDemoProducciones } from '../lib/demoStore';
+import { calcularCostoProducto, costoUnitarioProduccion, productosSinDescuento, sugerirInsumoPara } from '../lib/costosReceta';
+import BuscadorInsumo from '../components/BuscadorInsumo';
+import { loadDemoProducciones, saveDemoIngredientes, useIngredientes, useProducciones } from '../lib/demoStore';
 import { dayKey } from '../lib/fechas';
+import { getDescuentoProducto, loadListasPrecios, metodosListasPrecio, saveListasPrecios } from '../lib/listasPreciosStore';
 
 const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
 
@@ -19,7 +21,9 @@ const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = []) => {
       codigo: produccion?.id || '',
       nombre: produccion?.nombre || 'Producción',
       unidad: produccion?.unidad_medida || item.unidad_medida,
-      costoUnitario: produccion?.costo_unitario || 0,
+      costoUnitario: produccion
+        ? costoUnitarioProduccion(produccion, id => catalogo.find(i => i.id === id)?.costo_por_unidad || 0)
+        : 0,
       stockActual: produccion?.stock_actual || 0,
       stockLabel: 'Stock producido',
       produccion,
@@ -39,10 +43,11 @@ const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = []) => {
 };
 
 const calcularCostoReceta = (receta: RecetaItem[] = [], catalogo: Ingrediente[] = []) =>
-  receta.reduce((sum, item) => {
-    const data = getRecetaItemData(item, catalogo);
-    return sum + item.cantidad * data.costoUnitario;
-  }, 0);
+  calcularCostoProducto(
+    { receta } as Producto,
+    id => catalogo.find(i => i.id === id)?.costo_por_unidad || 0,
+    loadDemoProducciones(),
+  );
 
 interface ComboImportDraft {
   key: string;
@@ -141,25 +146,33 @@ const pickBestSheet = (workbook: XLSX.WorkBook) => {
 };
 
 interface ProductosProps {
-  apartadoInicial?: 'combos' | 'precios';
+  apartadoInicial?: 'combos' | 'precios' | 'listas';
 }
 
 export default function Productos({ apartadoInicial }: ProductosProps) {
   const [productos, setProductos] = useState<Producto[]>(loadProductos);
-  const [insumosCatalogo, setInsumosCatalogo] = useState<Ingrediente[]>(loadDemoIngredientes);
+  const insumosCatalogo = useIngredientes();
+  useProducciones();
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
-  const [vista, setVista] = useState<'catalogo' | 'precios' | 'planilla'>(apartadoInicial === 'precios' ? 'precios' : 'catalogo');
-  const [apartado, setApartado] = useState<'combos' | 'precios' | null>(apartadoInicial || null);
+  const [vista, setVista] = useState<'catalogo' | 'precios' | 'listas' | 'planilla'>(
+    apartadoInicial === 'precios' ? 'precios' : apartadoInicial === 'listas' ? 'listas' : 'catalogo'
+  );
+  const [apartado, setApartado] = useState<'combos' | 'precios' | 'listas' | null>(apartadoInicial || null);
   const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editForm, setEditForm] = useState<Partial<Producto>>({});
+  const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>(loadListasPrecios);
+  const [metodoLista, setMetodoLista] = useState<MetodoListaPrecio>('efectivo');
   const [margenMasivo, setMargenMasivo] = useState('');
+  const [productosPrecioSeleccionados, setProductosPrecioSeleccionados] = useState<string[]>([]);
   const [showImport, setShowImport] = useState(false);
   const [importDrafts, setImportDrafts] = useState<ComboImportDraft[]>([]);
   const [importError, setImportError] = useState('');
   const [importInsumos, setImportInsumos] = useState<Ingrediente[]>([]);
   const [detalleCombo, setDetalleCombo] = useState<Producto | null>(null);
+  const [showVinculacionStock, setShowVinculacionStock] = useState(false);
+  const [vinculos, setVinculos] = useState<Record<string, { ingredienteId?: string; cantidad: string }>>({});
 
   const createRecetaItem = (productoId: string, ingredienteId?: string): RecetaItem => {
     const ingrediente = insumosCatalogo.find(i => i.id === ingredienteId) || insumosCatalogo[0];
@@ -178,11 +191,16 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     };
   };
 
+  const sinDescuento = productosSinDescuento(productos);
+
   const filtered = productos.filter(p => {
     const matchCat = categoriaFiltro === 'todos' || p.categoria_id === categoriaFiltro;
     const matchSearch = `${p.codigo || ''} ${p.nombre}`.toLowerCase().includes(busqueda.toLowerCase());
     return matchCat && matchSearch;
   });
+  const listaActual = listasPrecios.find(lista => lista.metodo_pago === metodoLista) || listasPrecios[0];
+  const todosPreciosVisiblesSeleccionados = filtered.length > 0
+    && filtered.every(producto => productosPrecioSeleccionados.includes(producto.id));
 
   const toggleDisponible = (id: string) => {
     setProductos(prev => prev.map(p =>
@@ -200,6 +218,46 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     setEditForm(producto);
     setSelectedProducto(producto);
     setShowForm(true);
+  };
+
+  const abrirVinculacionStock = () => {
+    setVinculos(Object.fromEntries(sinDescuento.map(producto => [
+      producto.id,
+      { ingredienteId: sugerirInsumoPara(producto, insumosCatalogo)?.id, cantidad: '1' },
+    ])));
+    setShowVinculacionStock(true);
+  };
+
+  /** Deja el producto con una receta de un solo insumo: al vender 1, se descuenta esa cantidad. */
+  const vincularConInsumo = (producto: Producto) => {
+    const vinculo = vinculos[producto.id];
+    const ingrediente = insumosCatalogo.find(item => item.id === vinculo?.ingredienteId);
+    const cantidad = parseFloat(vinculo?.cantidad || '') || 0;
+    if (!ingrediente || cantidad <= 0) return;
+
+    const ahora = new Date().toISOString();
+    const costo = cantidad * ingrediente.costo_por_unidad;
+    const receta: RecetaItem[] = [{
+      id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      producto_id: producto.id,
+      tipo: 'stock',
+      ingrediente_id: ingrediente.id,
+      cantidad,
+      unidad_medida: ingrediente.unidad_medida,
+      costo_calculado: costo,
+      created_at: ahora,
+      ingrediente,
+    }];
+
+    setProductos(prev => prev.map(item => item.id === producto.id
+      ? {
+          ...item,
+          receta,
+          costo_produccion: costo,
+          margen_ganancia: item.precio_venta > 0 ? ((item.precio_venta - costo) / item.precio_venta) * 100 : 0,
+          updated_at: ahora,
+        }
+      : item));
   };
 
   const openNew = () => {
@@ -453,11 +511,9 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     if (!importDrafts.length) return;
 
     if (importInsumos.length) {
-      setInsumosCatalogo(prev => {
-        const map = new Map(prev.map(item => [item.id, item]));
-        importInsumos.forEach(item => map.set(item.id, item));
-        return Array.from(map.values());
-      });
+      const map = new Map(insumosCatalogo.map(item => [item.id, item]));
+      importInsumos.forEach(item => map.set(item.id, item));
+      saveDemoIngredientes(Array.from(map.values()));
     }
 
     setProductos(prev => {
@@ -514,9 +570,6 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
 
   const margen = (precio: number, costo: number) => precio > 0 ? ((precio - costo) / precio * 100).toFixed(1) : '0';
   const margenColor = (m: number) => m >= 50 ? 'text-emerald-600' : m >= 35 ? 'text-amber-600' : 'text-red-600';
-  const precioPromedio = productos.length
-    ? productos.reduce((sum, p) => sum + p.precio_venta, 0) / productos.length
-    : 0;
   const redondearPrecio = (precio: number) => Math.ceil(precio / 100) * 100;
   const precioPorMargen = (costo: number, margenDeseado: number) => {
     if (costo <= 0 || margenDeseado <= 0 || margenDeseado >= 100) return 0;
@@ -524,13 +577,11 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   };
   const aplicarMargenMasivo = () => {
     const margenDeseado = parseFloat(margenMasivo);
-    if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100) return;
-    const confirmar = window.confirm(`Esto actualizará el precio de ${filtered.length} combos con ${margenDeseado}% de margen. ¿Confirmar?`);
-    if (!confirmar) return;
+    if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100 || productosPrecioSeleccionados.length === 0) return;
+    if (!window.confirm(`Esto actualizará el precio de ${productosPrecioSeleccionados.length} productos seleccionados con ${margenDeseado}% de margen. ¿Confirmar?`)) return;
 
     setProductos(prev => prev.map(producto => {
-      const incluido = filtered.some(item => item.id === producto.id);
-      if (!incluido) return producto;
+      if (!productosPrecioSeleccionados.includes(producto.id)) return producto;
       const precioVenta = precioPorMargen(producto.costo_produccion, margenDeseado);
       return {
         ...producto,
@@ -539,6 +590,25 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         updated_at: new Date().toISOString(),
       };
     }));
+    setProductosPrecioSeleccionados([]);
+  };
+
+  const toggleProductoPrecio = (productoId: string) => {
+    setProductosPrecioSeleccionados(prev => (
+      prev.includes(productoId)
+        ? prev.filter(id => id !== productoId)
+        : [...prev, productoId]
+    ));
+  };
+
+  const toggleTodosPreciosVisibles = () => {
+    const idsVisibles = filtered.map(producto => producto.id);
+    setProductosPrecioSeleccionados(prev => {
+      if (todosPreciosVisiblesSeleccionados) {
+        return prev.filter(id => !idsVisibles.includes(id));
+      }
+      return Array.from(new Set([...prev, ...idsVisibles]));
+    });
   };
   const actualizarMargenProducto = (productoId: string, margenDeseado: number) => {
     if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100) return;
@@ -554,7 +624,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     }));
   };
   const exportarListaPrecios = () => {
-    const headers = ['Combo', 'Categoria', 'Costo', 'Margen %', 'Precio lista', 'Estado'];
+    const headers = ['Producto', 'Categoria', 'Costo', 'Margen %', 'Precio lista', 'Estado'];
     const rows = filtered.map(producto => [
       producto.nombre,
       producto.categoria?.nombre || '',
@@ -574,6 +644,73 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     link.click();
     URL.revokeObjectURL(url);
   };
+  const limitarDescuento = (valor: number) => Math.min(100, Math.max(0, Number.isFinite(valor) ? valor : 0));
+
+  const actualizarLista = (actualizar: (lista: ListaPrecio) => ListaPrecio) => {
+    setListasPrecios(prev => prev.map(lista => (
+      lista.metodo_pago === metodoLista
+        ? { ...actualizar(lista), updated_at: new Date().toISOString() }
+        : lista
+    )));
+  };
+
+  const actualizarDescuentoGeneral = (valor: number) => {
+    actualizarLista(lista => ({ ...lista, descuento_general: limitarDescuento(valor) }));
+  };
+
+  const actualizarTipoAjuste = (tipo_ajuste: ListaPrecio['tipo_ajuste']) => {
+    actualizarLista(lista => ({ ...lista, tipo_ajuste }));
+  };
+
+  const actualizarDescuentoProducto = (productoId: string, valor: number) => {
+    actualizarLista(lista => ({
+      ...lista,
+      descuentos_productos: {
+        ...lista.descuentos_productos,
+        [productoId]: limitarDescuento(valor),
+      },
+    }));
+  };
+
+  const usarDescuentoGeneral = (productoId?: string) => {
+    actualizarLista(lista => {
+      if (!productoId) return { ...lista, descuentos_productos: {} };
+      const descuentos = { ...lista.descuentos_productos };
+      delete descuentos[productoId];
+      return { ...lista, descuentos_productos: descuentos };
+    });
+  };
+
+  const exportarListaSeleccionada = () => {
+    if (!listaActual) return;
+    const headers = ['Producto', 'Categoria', 'Precio base', 'Tipo de ajuste', 'Porcentaje %', 'Precio final', 'Configuración'];
+    const rows = filtered.map(producto => {
+      const descuentoProducto = getDescuentoProducto(listaActual, producto.id);
+      const factor = listaActual.tipo_ajuste === 'descuento'
+        ? 1 - descuentoProducto / 100
+        : 1 + descuentoProducto / 100;
+      return [
+        producto.nombre,
+        producto.categoria?.nombre || '',
+        producto.precio_venta,
+        listaActual.tipo_ajuste === 'descuento' ? 'Descuento' : 'Interés / recargo',
+        descuentoProducto,
+        Number((producto.precio_venta * factor).toFixed(2)),
+        Object.prototype.hasOwnProperty.call(listaActual.descuentos_productos, producto.id) ? 'Personalizado' : 'General',
+      ];
+    });
+    const csv = [headers, ...rows]
+      .map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `lista-${listaActual.metodo_pago}-${dayKey()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportarRecetasCombos = () => {
     const headers = [
       'Código Combo',
@@ -771,7 +908,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   useEffect(() => {
     if (!apartadoInicial) return;
     setApartado(apartadoInicial);
-    setVista(apartadoInicial === 'precios' ? 'precios' : 'catalogo');
+    setVista(apartadoInicial === 'precios' ? 'precios' : apartadoInicial === 'listas' ? 'listas' : 'catalogo');
   }, [apartadoInicial]);
 
   useEffect(() => {
@@ -779,8 +916,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   }, [productos]);
 
   useEffect(() => {
-    saveDemoIngredientes(insumosCatalogo);
-  }, [insumosCatalogo]);
+    saveListasPrecios(listasPrecios);
+  }, [listasPrecios]);
 
   if (!apartado) {
     return (
@@ -792,7 +929,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
           <button
             onClick={() => {
               setApartado('combos');
@@ -819,8 +956,23 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
               <List size={22} />
             </div>
             <h3 className="text-lg font-bold text-slate-800">Lista de precio</h3>
-            <p className="text-sm text-slate-500 mt-1">Consultar precios, costos, margen y estado de cada combo.</p>
-            <p className="text-xs font-semibold text-blue-600 mt-4">Precio promedio ${Math.round(precioPromedio).toLocaleString()}</p>
+            <p className="text-sm text-slate-500 mt-1">Consultar precios, costos y márgenes de cada producto.</p>
+            <p className="text-xs font-semibold text-blue-600 mt-4">Editar precios base</p>
+          </button>
+
+          <button
+            onClick={() => {
+              setApartado('listas');
+              setVista('listas');
+            }}
+            className="bg-white border border-slate-200 rounded-2xl p-6 text-left hover:border-emerald-300 hover:shadow-lg transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4">
+              <BadgePercent size={22} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Diferentes listas</h3>
+            <p className="text-sm text-slate-500 mt-1">Configurar descuentos e intereses según el medio de pago.</p>
+            <p className="text-xs font-semibold text-emerald-600 mt-4">5 medios de pago configurables</p>
           </button>
         </div>
       </div>
@@ -831,10 +983,14 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     <div className="space-y-5">
       <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-800">{apartado === 'precios' ? 'Lista de precio' : 'Combos'}</h2>
+          <h2 className="text-lg font-bold text-slate-800">
+            {apartado === 'listas' ? 'Diferentes listas' : apartado === 'precios' ? 'Lista de precio' : 'Combos'}
+          </h2>
           <p className="text-sm text-slate-500">
-            {apartado === 'precios'
-              ? 'Precios, costos y márgenes de venta'
+            {apartado === 'listas'
+              ? 'Descuentos e intereses automáticos según el medio de pago'
+              : apartado === 'precios'
+                ? 'Precios base, costos y márgenes de venta'
               : vista === 'planilla'
                 ? 'Misma estructura que el Excel: combo, artículos, costos e incidencia'
                 : 'Catálogo y recetas de combos'}
@@ -885,8 +1041,24 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         )}
         {apartado === 'precios' && (
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={toggleTodosPreciosVisibles}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {todosPreciosVisiblesSeleccionados ? 'Quitar visibles' : 'Seleccionar visibles'}
+            </button>
+            {productosPrecioSeleccionados.length > 0 && (
+              <button
+                onClick={() => setProductosPrecioSeleccionados([])}
+                className="rounded-xl px-2 py-2 text-xs font-semibold text-slate-500 hover:text-slate-700"
+              >
+                Limpiar selección
+              </button>
+            )}
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <span className="text-xs font-semibold text-slate-500">Margen general %</span>
+              <span className="text-xs font-semibold text-slate-500">
+                Margen para {productosPrecioSeleccionados.length} seleccionado{productosPrecioSeleccionados.length === 1 ? '' : 's'} %
+              </span>
               <input
                 type="number"
                 value={margenMasivo}
@@ -898,7 +1070,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
               />
               <button
                 onClick={aplicarMargenMasivo}
-                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 transition-colors"
+                disabled={productosPrecioSeleccionados.length === 0 || !margenMasivo}
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-900 transition-colors"
               >
                 Aplicar
               </button>
@@ -912,7 +1085,94 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             </button>
           </div>
         )}
+        {apartado === 'listas' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-emerald-600 px-2">Los cambios se guardan automáticamente</span>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <select
+                value={listaActual?.tipo_ajuste || 'descuento'}
+                onChange={e => actualizarTipoAjuste(e.target.value as ListaPrecio['tipo_ajuste'])}
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold outline-none focus:border-amber-400"
+              >
+                <option value="descuento">Descuento</option>
+                <option value="recargo">Interés / recargo</option>
+              </select>
+              <span className="text-xs font-semibold text-slate-500">Porcentaje general</span>
+              <input
+                type="number"
+                value={listaActual?.descuento_general ?? 0}
+                onChange={e => actualizarDescuentoGeneral(parseFloat(e.target.value) || 0)}
+                className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm text-right outline-none focus:border-amber-400"
+                min="0"
+                max="100"
+                step="0.1"
+              />
+              <span className="text-sm font-semibold text-slate-500">%</span>
+              <button
+                onClick={() => usarDescuentoGeneral()}
+                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 transition-colors"
+              >
+                Aplicar a todos
+              </button>
+            </div>
+            <button
+              onClick={exportarListaSeleccionada}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <Download size={15} />
+              Exportar {listaActual?.nombre}
+            </button>
+          </div>
+        )}
       </div>
+
+      {apartado === 'listas' && (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          {metodosListasPrecio.map(config => {
+            const lista = listasPrecios.find(item => item.metodo_pago === config.metodo);
+            const seleccionada = metodoLista === config.metodo;
+            return (
+              <button
+                key={config.metodo}
+                onClick={() => setMetodoLista(config.metodo)}
+                className={`rounded-2xl border p-4 text-left transition-all ${
+                  seleccionada
+                    ? 'border-amber-400 bg-amber-50 shadow-sm'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <p className={`text-sm font-bold ${seleccionada ? 'text-amber-800' : 'text-slate-800'}`}>{config.nombre}</p>
+                <p className="text-xs text-slate-500 mt-1">{config.descripcion}</p>
+                <p className={`text-lg font-bold mt-3 ${seleccionada ? 'text-amber-600' : 'text-slate-600'}`}>
+                  {lista?.descuento_general || 0}% {lista?.tipo_ajuste === 'recargo' ? 'interés' : 'descuento'}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {apartado === 'combos' && sinDescuento.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800">
+              {sinDescuento.length === 1
+                ? '1 producto no descuenta stock al venderse'
+                : `${sinDescuento.length} productos no descuentan stock al venderse`}
+            </p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Sin insumos vinculados, al cobrarlos el stock queda igual. Vinculalos para que cada venta descuente lo que corresponde.
+            </p>
+          </div>
+          <button
+            onClick={abrirVinculacionStock}
+            className="shrink-0 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-400 transition-colors"
+          >
+            Revisar y vincular
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <aside className="lg:col-span-3 bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -1082,22 +1342,103 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
               </table>
             </div>
           ) : (
+            <>
+              {vista === 'precios' ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/50">
+                        <th className="py-3 px-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={todosPreciosVisiblesSeleccionados}
+                            onChange={toggleTodosPreciosVisibles}
+                            aria-label="Seleccionar todos los productos visibles"
+                            className="rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                          />
+                        </th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Producto</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Categoría</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio lista</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen %</th>
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estado</th>
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Editar</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {filtered.map(prod => {
+                        const margenActual = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
+                        return (
+                          <tr key={prod.id} className={`hover:bg-slate-50 transition-colors ${productosPrecioSeleccionados.includes(prod.id) ? 'bg-amber-50/60' : ''} ${!prod.disponible ? 'opacity-60' : ''}`}>
+                            <td className="py-3 px-4 text-center">
+                              <input
+                                type="checkbox"
+                                checked={productosPrecioSeleccionados.includes(prod.id)}
+                                onChange={() => toggleProductoPrecio(prod.id)}
+                                aria-label={`Seleccionar ${prod.nombre}`}
+                                className="rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                              />
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-medium text-slate-800 text-sm">{prod.nombre}</p>
+                              <p className="text-[11px] font-semibold text-amber-600">{prod.codigo || 'Sin código'}</p>
+                            </td>
+                            <td className="py-3 px-4 text-sm text-slate-500">{prod.categoria?.nombre || '-'}</td>
+                            <td className="py-3 px-4 text-right font-bold text-slate-800">${prod.precio_venta.toLocaleString()}</td>
+                            <td className="py-3 px-4 text-right text-sm text-slate-500">${prod.costo_produccion.toLocaleString()}</td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center justify-end gap-2">
+                                <input
+                                  key={`${prod.id}-${prod.precio_venta}`}
+                                  type="number"
+                                  defaultValue={margenActual.toFixed(1)}
+                                  onBlur={e => actualizarMargenProducto(prod.id, parseFloat(e.target.value))}
+                                  className="w-20 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-right font-semibold outline-none focus:border-amber-400"
+                                  min="1"
+                                  max="99"
+                                  step="0.1"
+                                />
+                                <span className={`text-xs font-bold ${margenColor(margenActual)}`}>%</span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <span className={`text-xs px-2 py-1 rounded-full font-medium ${prod.agotado ? 'bg-red-100 text-red-600' : prod.disponible ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {prod.agotado ? 'Agotado' : prod.disponible ? 'Activo' : 'Inactivo'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <button onClick={() => openEdit(prod)} className="p-2 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600" title="Editar producto">
+                                <Edit2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-slate-100 bg-slate-50/50">
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Combo</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Producto</th>
                     <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Categoría</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio lista</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen %</th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estado</th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Acciones</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio base</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Porcentaje</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                      Precio con {listaActual?.tipo_ajuste === 'recargo' ? 'interés' : 'descuento'}
+                    </th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Configuración</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {filtered.map(prod => {
-                    const m = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
+                    const descuentoProducto = listaActual ? getDescuentoProducto(listaActual, prod.id) : 0;
+                    const personalizado = !!listaActual && Object.prototype.hasOwnProperty.call(listaActual.descuentos_productos, prod.id);
+                    const esRecargo = listaActual?.tipo_ajuste === 'recargo';
+                    const precioFinal = prod.precio_venta * (esRecargo ? 1 + descuentoProducto / 100 : 1 - descuentoProducto / 100);
                     return (
                       <tr key={prod.id} className={`hover:bg-slate-50 transition-colors ${!prod.disponible ? 'opacity-60' : ''}`}>
                         <td className="py-3 px-4">
@@ -1111,55 +1452,40 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right font-bold text-slate-800">${prod.precio_venta.toLocaleString()}</td>
-                        <td className="py-3 px-4 text-right text-slate-500 text-sm">${prod.costo_produccion.toLocaleString()}</td>
                         <td className="py-3 px-4">
                           <div className="flex items-center justify-end gap-2">
                             <input
-                              key={`${prod.id}-${prod.precio_venta}`}
                               type="number"
-                              defaultValue={m.toFixed(1)}
-                              onBlur={e => actualizarMargenProducto(prod.id, parseFloat(e.target.value))}
-                              className="w-20 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-right font-semibold outline-none focus:border-amber-400"
-                              min="1"
-                              max="99"
+                              value={descuentoProducto}
+                              onChange={e => actualizarDescuentoProducto(prod.id, parseFloat(e.target.value) || 0)}
+                              className={`w-20 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-right font-semibold outline-none focus:border-amber-400 ${esRecargo ? 'text-orange-700' : 'text-emerald-700'}`}
+                              min="0"
+                              max="100"
                               step="0.1"
                             />
-                            <span className={`text-xs font-bold ${margenColor(m)}`}>%</span>
+                            <span className="text-xs font-bold text-slate-500">%</span>
                           </div>
                         </td>
-                        <td className="py-3 px-4 text-center">
-                          {prod.agotado ? (
-                            <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">Agotado</span>
-                          ) : prod.disponible ? (
-                            <span className="text-xs bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full font-medium">Activo</span>
-                          ) : (
-                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">Inactivo</span>
+                        <td className="py-3 px-4 text-right">
+                          <p className={`font-bold ${esRecargo ? 'text-orange-700' : 'text-emerald-700'}`}>${precioFinal.toLocaleString('es-AR', { maximumFractionDigits: 2 })}</p>
+                          {descuentoProducto > 0 && (
+                            <p className={`text-xs ${esRecargo ? 'text-orange-600' : 'text-emerald-600'}`}>
+                              {esRecargo ? 'Interés' : 'Ahorrás'} ${Math.abs(prod.precio_venta - precioFinal).toLocaleString('es-AR', { maximumFractionDigits: 2 })}
+                            </p>
                           )}
                         </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center justify-center gap-1">
+                        <td className="py-3 px-4 text-center">
+                          {personalizado ? (
                             <button
-                              onClick={() => toggleAgotado(prod.id)}
-                              className={`p-1.5 rounded-lg text-xs transition-colors ${prod.agotado ? 'bg-red-50 text-red-500' : 'hover:bg-slate-100 text-slate-400 hover:text-amber-600'}`}
-                              title={prod.agotado ? 'Marcar disponible' : 'Marcar agotado'}
+                              onClick={() => usarDescuentoGeneral(prod.id)}
+                              className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                              title={`Volver al ${listaActual?.descuento_general || 0}% general`}
                             >
-                              <AlertTriangle size={14} />
+                              Personalizado · usar general
                             </button>
-                            <button
-                              onClick={() => toggleDisponible(prod.id)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-                              title={prod.disponible ? 'Deshabilitar' : 'Habilitar'}
-                            >
-                              {prod.disponible ? <Eye size={14} /> : <EyeOff size={14} />}
-                            </button>
-                            <button
-                              onClick={() => openEdit(prod)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
-                              title="Editar combo"
-                            >
-                              <Edit2 size={14} />
-                            </button>
-                          </div>
+                          ) : (
+                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full font-medium">Porcentaje general</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1167,6 +1493,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                 </tbody>
               </table>
             </div>
+              )}
+            </>
           )}
         </section>
       </div>
@@ -1491,13 +1819,15 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     </div>
                   ) : (
                     <div className="p-5 text-center">
-                      <p className="text-sm text-slate-500">Todavía no hay componentes cargados para este combo.</p>
+                      <p className="text-sm font-semibold text-amber-700">Sin componentes, este producto no descuenta stock al venderse.</p>
                       {insumosCatalogo.length === 0 ? (
                         <p className="text-xs text-amber-600 mt-1">
                           Primero cargá tus insumos en la pantalla Stock para poder armar la receta.
                         </p>
                       ) : (
-                        <p className="text-xs text-slate-400 mt-1">Agregá insumos de stock o producciones preparadas como milanesas, medallones o salsas.</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Si se vende tal cual, agregá un solo componente con cantidad 1. Si es elaborado, sumá los insumos o las producciones que consume.
+                        </p>
                       )}
                     </div>
                   )}
@@ -1521,6 +1851,123 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
               <button onClick={saveProducto} className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400 transition-colors flex items-center justify-center gap-2">
                 <Check size={16} />
                 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVinculacionStock && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+            <div className="flex items-start gap-3 p-6 border-b border-slate-100">
+              <div className="w-11 h-11 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-amber-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-slate-800 text-lg">Productos que no descuentan stock</h3>
+                <p className="text-sm text-slate-500">
+                  Elegí de qué insumo sale cada producto y cuánto se gasta por unidad vendida. Si un producto se vende tal cual, dejá la cantidad en 1.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowVinculacionStock(false)}
+                aria-label="Cerrar vinculación de stock"
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto">
+              {insumosCatalogo.length === 0 ? (
+                <p className="py-8 text-center text-sm text-slate-500">
+                  Todavía no tenés insumos cargados. Cargalos en la pantalla Stock y volvé acá para vincularlos.
+                </p>
+              ) : (
+                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                  {sinDescuento.map(producto => {
+                    const vinculo = vinculos[producto.id] || { cantidad: '1' };
+                    const ingrediente = insumosCatalogo.find(item => item.id === vinculo.ingredienteId);
+                    const cantidad = parseFloat(vinculo.cantidad) || 0;
+                    const listo = Boolean(ingrediente) && cantidad > 0;
+
+                    return (
+                      <div key={producto.id} className="p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-slate-800 truncate">{producto.nombre}</p>
+                          <button
+                            onClick={() => { setShowVinculacionStock(false); openEdit(producto); }}
+                            className="shrink-0 text-xs font-semibold text-slate-500 hover:text-slate-700"
+                          >
+                            Receta detallada
+                          </button>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                          <BuscadorInsumo
+                            ingredientes={insumosCatalogo}
+                            ingredienteId={vinculo.ingredienteId}
+                            modoNuevo={false}
+                            nombreLeido={producto.nombre}
+                            onSeleccionar={item => setVinculos(prev => ({
+                              ...prev,
+                              [producto.id]: { ...prev[producto.id], ingredienteId: item.id },
+                            }))}
+                            onCrearNuevo={() => undefined}
+                            permitirCrear={false}
+                            className="flex-1 min-w-0"
+                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              value={vinculo.cantidad}
+                              onChange={e => setVinculos(prev => ({
+                                ...prev,
+                                [producto.id]: { ...prev[producto.id], cantidad: e.target.value },
+                              }))}
+                              min="0"
+                              step="0.001"
+                              aria-label={`Cantidad de insumo por cada ${producto.nombre}`}
+                              className="w-24 border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400"
+                            />
+                            <span className="text-xs text-slate-500 w-16 truncate">{ingrediente?.unidad_medida || 'unidad'}</span>
+                            <button
+                              onClick={() => vincularConInsumo(producto)}
+                              disabled={!listo}
+                              className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-emerald-500"
+                            >
+                              Vincular
+                            </button>
+                          </div>
+                        </div>
+
+                        {listo && (
+                          <p className="text-xs text-slate-500">
+                            Al vender 1 {producto.nombre} se van a descontar {cantidad.toLocaleString()} {ingrediente!.unidad_medida} de {ingrediente!.nombre}.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {sinDescuento.length === 0 && (
+                    <div className="px-4 py-10 text-center">
+                      <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                        <Check size={20} className="text-emerald-600" />
+                      </div>
+                      <p className="text-sm font-semibold text-slate-700">Listo, todos los productos descuentan stock</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end p-6 border-t border-slate-100">
+              <button
+                onClick={() => setShowVinculacionStock(false)}
+                className="px-4 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 transition-colors"
+              >
+                Cerrar
               </button>
             </div>
           </div>

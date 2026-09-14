@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
 import { DollarSign, UtensilsCrossed, ShoppingBag, Clock, AlertTriangle, ArrowUp, ArrowDown, LayoutDashboard } from 'lucide-react';
 import type { Pedido } from '../lib/types';
-import { loadDemoIngredientes, loadDemoPedidos } from '../lib/demoStore';
-import { useMesas } from '../lib/mesasStore';
+import { useIngredientes, usePedidos, useProducciones } from '../lib/demoStore';
+import { calcularCostoProducto } from '../lib/costosReceta';
+import { estadoOperativoMesa, useMesas } from '../lib/mesasStore';
+import { useProductos } from '../lib/productosStore';
 import { useUsuarios } from '../lib/usuariosStore';
 
 const estadoColors: Record<string, string> = {
@@ -36,21 +38,33 @@ const esMismoDia = (fecha: string, referencia: Date) => {
   );
 };
 
-const esVenta = (pedido: Pedido) => pedido.estado !== 'cancelado';
+const esVenta = (pedido: Pedido) => pedido.estado === 'cobrado' || pedido.estado === 'cuenta_corriente';
 
 export default function Dashboard() {
   const mesas = useMesas();
   const usuarios = useUsuarios();
-  const pedidos = useMemo(() => loadDemoPedidos(), []);
-  const ingredientes = useMemo(() => loadDemoIngredientes(), []);
+  const pedidos = usePedidos();
+  const ingredientes = useIngredientes();
+  const producciones = useProducciones();
+  const productos = useProductos();
 
   const hoy = new Date();
   const pedidosHoy = pedidos.filter(p => esMismoDia(p.created_at, hoy));
-  const ventasHoy = pedidosHoy.filter(esVenta).reduce((s, p) => s + p.total, 0);
-  const comandasEnCurso = pedidosHoy.filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado').length;
+  const ventasHoyPedidos = pedidos.filter(p => esVenta(p) && esMismoDia(p.hora_cierre || p.created_at, hoy));
+  const ventasHoy = ventasHoyPedidos.reduce((s, p) => s + p.total, 0);
+  const costoInsumo = (id: string) => ingredientes.find(i => i.id === id)?.costo_por_unidad || 0;
+  const costoHoy = ventasHoyPedidos.reduce((suma, pedido) => (
+    suma + (pedido.items || []).filter(item => item.estado !== 'cancelado').reduce((s, item) => {
+      const producto = productos.find(p => p.id === item.producto_id) || item.producto;
+      return s + item.cantidad * (producto ? calcularCostoProducto(producto, costoInsumo, producciones) : 0);
+    }, 0)
+  ), 0);
+  const margenHoy = ventasHoy > 0 ? ((ventasHoy - costoHoy) / ventasHoy) * 100 : 0;
+  const comandasEnCurso = pedidosHoy.filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado').length;
 
-  const mesasOcupadas = mesas.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length;
-  const mesasLibres = mesas.filter(m => m.estado === 'libre').length;
+  const mesasVista = mesas.map(mesa => ({ ...mesa, estado: estadoOperativoMesa(mesa, pedidos) }));
+  const mesasOcupadas = mesasVista.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length;
+  const mesasLibres = mesasVista.filter(m => m.estado === 'libre').length;
   const alertasStock = ingredientes.filter(i => i.stock_actual <= i.stock_minimo).length;
 
   const ventasSemana = useMemo(() => {
@@ -61,7 +75,7 @@ export default function Dashboard() {
     });
 
     pedidos.filter(esVenta).forEach(pedido => {
-      const dia = dias.find(d => esMismoDia(pedido.created_at, d.fecha));
+      const dia = dias.find(d => esMismoDia(pedido.hora_cierre || pedido.created_at, d.fecha));
       if (!dia) return;
       dia.ventas += pedido.total;
       dia.pedidos += 1;
@@ -137,7 +151,7 @@ export default function Dashboard() {
         <StatCard
           label="Ventas del Día"
           value={`$${ventasHoy.toLocaleString('es-AR')}`}
-          sub={`${pedidosHoy.length} comandas`}
+          sub={`${pedidosHoy.length} comandas · margen ${margenHoy.toFixed(0)}%`}
           icon={DollarSign}
           color="amber"
           trend="neutral"
@@ -206,7 +220,7 @@ export default function Dashboard() {
           {mesas.length > 0 ? (
             <div className="space-y-2">
               {Object.entries(estadoLabels).map(([estado, label]) => {
-                const count = mesas.filter(m => m.estado === estado).length;
+                const count = mesasVista.filter(m => m.estado === estado).length;
                 if (count === 0) return null;
                 return (
                   <div key={estado} className="flex items-center justify-between">

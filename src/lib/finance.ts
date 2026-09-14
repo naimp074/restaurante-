@@ -7,6 +7,7 @@ import type {
   PagoProveedor,
 } from './types';
 import { dayKey } from './fechas';
+import { writeStore } from './storeSync';
 
 export const cuentasDineroStorageKey = 'restaurant-cuentas-dinero';
 export const movimientosFinancierosStorageKey = 'restaurant-movimientos-financieros';
@@ -53,7 +54,7 @@ const readStorage = <T>(key: string, fallback: T): T => {
 };
 
 const writeStorage = <T>(key: string, value: T) => {
-  window.localStorage.setItem(key, JSON.stringify(value));
+  writeStore(key, value, `${key}-updated`);
 };
 
 const getFacturaEstado = (factura: Pick<FacturaProveedor, 'total' | 'pagado' | 'vencimiento'>): EstadoFacturaProveedor => {

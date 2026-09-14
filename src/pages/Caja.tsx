@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { guardarClienteCuenta, pasarPedidoACuenta, saldoCliente, useCuentaCorriente, mediosCobroCuenta } from '../lib/cuentaCorrienteStore';
+import type { ClienteCuenta, MedioCobroCuenta } from '../lib/cuentaCorrienteStore';
 import { CreditCard, Check, X, Printer, Lock, Unlock, CalendarDays, Search, Plus, User, FileText, RefreshCw } from 'lucide-react';
 import type { CajaDiaria, Pedido, MetodoPago, Pago, TipoComprobante } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,19 +18,18 @@ import {
 import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
 import { descontarStockPorVenta, reponerStockPorVenta } from '../lib/ventasStock';
 import { dayKey } from '../lib/fechas';
+import { writeStore } from '../lib/storeSync';
+import { calcularAjusteLista, useListasPrecios } from '../lib/listasPreciosStore';
+import { saveCajasDiarias, useCajas } from '../lib/cajaStore';
+import { savePagos, usePagos } from '../lib/pagosStore';
+import { useGastos } from '../lib/gastosStore';
+import { sincronizarEstadoMesa } from '../lib/mesasStore';
+import { descuentaStock } from '../lib/costosReceta';
+import { loadProductos } from '../lib/productosStore';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
-interface ClienteFrecuente {
-  id: string;
-  tipo_documento: TipoDocumentoCliente;
-  numero_documento: string;
-  nombre: string;
-  condicion_iva: string;
-  telefono: string;
-  domicilio: string;
-  nota: string;
-}
+type ClienteFrecuente = ClienteCuenta;
 
 interface ApartadoCaja {
   id: string;
@@ -37,39 +38,6 @@ interface ApartadoCaja {
   monto: number;
   observaciones: string;
 }
-
-const clientesFrecuentesMock: ClienteFrecuente[] = [
-  {
-    id: 'cli-1',
-    tipo_documento: 'DNI',
-    numero_documento: '34865724',
-    nombre: 'Consumidor Final',
-    condicion_iva: 'Consumidor final',
-    telefono: '11 5488-2400',
-    domicilio: 'Av. San Martin 1240',
-    nota: 'Cliente frecuente de mediodía',
-  },
-  {
-    id: 'cli-2',
-    tipo_documento: 'CUIT',
-    numero_documento: '30711222334',
-    nombre: 'Oficinas Centro SRL',
-    condicion_iva: 'Responsable inscripto',
-    telefono: '11 4321-9000',
-    domicilio: 'Reconquista 455, CABA',
-    nota: 'Solicita factura A',
-  },
-  {
-    id: 'cli-3',
-    tipo_documento: 'CUIL',
-    numero_documento: '20301234567',
-    nombre: 'Mariela Gómez',
-    condicion_iva: 'Monotributista',
-    telefono: '11 6150-7788',
-    domicilio: 'Belgrano 742',
-    nota: 'Prefiere contacto por WhatsApp',
-  },
-];
 
 const emptyCliente: Omit<ClienteFrecuente, 'id'> = {
   tipo_documento: 'DNI',
@@ -89,6 +57,7 @@ interface CajaProps {
 const metodosConfig: Record<MetodoPago, { label: string; color: string; icon: string }> = {
   efectivo: { label: 'Efectivo', color: 'bg-emerald-100 text-emerald-700 border-emerald-200', icon: '$' },
   transferencia: { label: 'Transferencia', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: '↔' },
+  tarjeta: { label: 'Tarjeta', color: 'bg-indigo-100 text-indigo-700 border-indigo-200', icon: '💳' },
   debito: { label: 'Débito', color: 'bg-purple-100 text-purple-700 border-purple-200', icon: '💳' },
   credito: { label: 'Crédito', color: 'bg-orange-100 text-orange-700 border-orange-200', icon: '💳' },
   mixto: { label: 'Pago Mixto', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: '+' },
@@ -114,20 +83,8 @@ const getCompradorName = (value: string) => value.trim() || 'Consumidor final';
 const getActiveItems = (pedido: Pedido) =>
   (pedido.items || []).filter(item => item.estado !== 'cancelado');
 
-const cajaStorageKey = 'restaurant-cajas-diarias';
 const apartadosCajaStorageKey = 'restaurant-apartados-caja';
 const todayKey = () => dayKey();
-
-const loadCajas = (): CajaDiaria[] => {
-  try {
-    const saved = window.localStorage.getItem(cajaStorageKey);
-    if (!saved) return [];
-    const parsed = JSON.parse(saved) as CajaDiaria[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
 
 const loadApartadosCaja = (): ApartadoCaja[] => {
   try {
@@ -141,7 +98,7 @@ const loadApartadosCaja = (): ApartadoCaja[] => {
 };
 
 const getPagoBreakdown = (pago: Pago) => {
-  const tarjeta = pago.monto_debito + pago.monto_credito;
+  const tarjeta = (pago.monto_tarjeta || 0) + pago.monto_debito + pago.monto_credito;
   return {
     efectivo: pago.monto_efectivo,
     transferencia: pago.monto_transferencia,
@@ -150,9 +107,10 @@ const getPagoBreakdown = (pago: Pago) => {
 };
 
 export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaProps) {
+  const gastos = useGastos();
   const { user } = useAuth();
   const [pedidos, setPedidos] = useState<Pedido[]>(
-    () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado')
+    () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
   );
   const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(null);
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('efectivo');
@@ -165,16 +123,25 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [montoMixtoCredito, setMontoMixtoCredito] = useState('');
   const [pagoError, setPagoError] = useState('');
   const [compradorNombre, setCompradorNombre] = useState('');
-  const [clientes, setClientes] = useState<ClienteFrecuente[]>(clientesFrecuentesMock);
+  const { clientes, movimientos: movimientosCuenta } = useCuentaCorriente();
+  const [aCuenta, setACuenta] = useState(false);
+  const [anticipoCuenta, setAnticipoCuenta] = useState('');
+  const [medioAnticipo, setMedioAnticipo] = useState<MedioCobroCuenta>('efectivo');
+  const [guardandoCuenta, setGuardandoCuenta] = useState(false);
+  const cuentaEnProceso = useRef(false);
+  const cobroEnProceso = useRef(false);
+  const [avisoCuenta, setAvisoCuenta] = useState('');
+  const [clienteError, setClienteError] = useState('');
   const [clienteBusqueda, setClienteBusqueda] = useState('');
   const [selectedCliente, setSelectedCliente] = useState<ClienteFrecuente | null>(null);
   const [showClienteForm, setShowClienteForm] = useState(false);
   const [clienteDraft, setClienteDraft] = useState<Omit<ClienteFrecuente, 'id'>>(emptyCliente);
-  const [pagosRegistrados, setPagosRegistrados] = useState<Pago[]>([]);
+  const pagosRegistrados = usePagos();
+  const [confirmarSinReceta, setConfirmarSinReceta] = useState(false);
   const [showTicket, setShowTicket] = useState(false);
   const [ticketError, setTicketError] = useState('');
   const [lastPago, setLastPago] = useState<Pago | null>(null);
-  const [cajas, setCajas] = useState<CajaDiaria[]>(loadCajas);
+  const cajas = useCajas();
   const [apartadosCaja, setApartadosCaja] = useState<ApartadoCaja[]>(loadApartadosCaja);
   const [montoInicial, setMontoInicial] = useState('');
   const [montoCierreEfectivo, setMontoCierreEfectivo] = useState('');
@@ -183,6 +150,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [nuevoApartadoMonto, setNuevoApartadoMonto] = useState('');
   const [cuentasDinero, setCuentasDinero] = useState(loadCuentasDinero);
   const [movimientosFinancieros, setMovimientosFinancieros] = useState(loadMovimientosFinancieros);
+  const listasPrecios = useListasPrecios();
 
   const cajaAbierta = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
   const cajaDelDia = cajaAbierta || cajas.find(caja => caja.fecha === todayKey()) || null;
@@ -192,22 +160,40 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const efectivoEsperadoApartados = cajaDelDia?.monto_esperado_efectivo ?? 0;
   const pagosProveedorHoy = movimientosFinancieros.filter(mov => mov.fecha === todayKey() && mov.origen === 'pago_proveedor');
   const totalPagosProveedorHoy = pagosProveedorHoy.reduce((sum, mov) => sum + mov.monto, 0);
-  const clientesFiltrados = clientes.filter(cliente => {
-    const text = `${cliente.nombre} ${cliente.numero_documento} ${cliente.telefono} ${cliente.condicion_iva}`.toLowerCase();
-    return text.includes(clienteBusqueda.toLowerCase());
-  });
+  const clientesFiltrados = clientes
+    .filter(cliente => {
+      const text = `${cliente.nombre} ${cliente.numero_documento} ${cliente.telefono} ${cliente.condicion_iva}`.toLowerCase();
+      return text.includes(clienteBusqueda.toLowerCase());
+    })
+    .sort((a, b) => {
+      const deuda = saldoCliente(b.id, movimientosCuenta) - saldoCliente(a.id, movimientosCuenta);
+      return deuda || a.nombre.localeCompare(b.nombre, 'es');
+    });
+  const listaPrecioSeleccionada = aCuenta || metodoPago === 'mixto'
+    ? null
+    : listasPrecios.find(lista => lista.metodo_pago === metodoPago) || null;
+  const montoAjusteLista = selectedPedido
+    ? calcularAjusteLista(selectedPedido, listaPrecioSeleccionada)
+    : 0;
 
   useEffect(() => {
-    window.localStorage.setItem(cajaStorageKey, JSON.stringify(cajas));
-  }, [cajas]);
-
-  useEffect(() => {
-    window.localStorage.setItem(apartadosCajaStorageKey, JSON.stringify(apartadosCaja));
+    writeStore(apartadosCajaStorageKey, apartadosCaja, 'restaurant-apartados-caja-updated');
   }, [apartadosCaja]);
 
   useEffect(() => {
+    const monto = selectedPedido ? calcularAjusteLista(selectedPedido, listaPrecioSeleccionada) : 0;
+    if (listaPrecioSeleccionada?.tipo_ajuste === 'recargo') {
+      setDescuento(0);
+      setRecargo(monto);
+    } else {
+      setDescuento(monto);
+      setRecargo(0);
+    }
+  }, [selectedPedido, listaPrecioSeleccionada]);
+
+  useEffect(() => {
     const refrescarPedidos = () => {
-      const actualizados = loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado');
+      const actualizados = loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado');
       setPedidos(actualizados);
       setSelectedPedido(actual => actual ? actualizados.find(pedido => pedido.id === actual.id) || null : null);
     };
@@ -221,8 +207,26 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
   const calcTotal = () => {
     if (!selectedPedido) return 0;
-    return selectedPedido.subtotal - descuento + recargo;
+    return Math.max(0, selectedPedido.subtotal - descuento + recargo);
   };
+
+  const productosSinReceta = (pedido: Pedido) => {
+    const catalogo = loadProductos();
+    return (pedido.items || [])
+      .filter(item => item.estado !== 'cancelado')
+      .map(item => catalogo.find(p => p.id === item.producto_id) || item.producto)
+      .filter((producto): producto is NonNullable<typeof producto> => Boolean(producto && !descuentaStock(producto)));
+  };
+
+  const gastosCajaHoy = gastos.filter(gasto =>
+    gasto.fecha === todayKey() && gasto.alcance === 'caja_dia' && (gasto.estado || 'pagado') === 'pagado'
+  );
+  const totalGastosCajaHoy = gastosCajaHoy.reduce((sum, gasto) => {
+    if (gasto.metodo_pago === 'mixto') {
+      return sum + (gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'efectivo')?.monto || 0);
+    }
+    return gasto.metodo_pago === 'efectivo' ? sum + gasto.monto : sum;
+  }, 0);
 
   const calcVuelto = () => {
     const ef = parseFloat(montoEfectivo) || 0;
@@ -246,7 +250,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       opened_at: new Date().toISOString(),
     };
 
-    setCajas(prev => [nuevaCaja, ...prev.filter(caja => !(caja.fecha === nuevaCaja.fecha && caja.estado === 'abierta'))]);
+    saveCajasDiarias([nuevaCaja, ...cajas.filter(caja => !(caja.fecha === nuevaCaja.fecha && caja.estado === 'abierta'))]);
     setApartadosCaja(prev => [
       {
         id: `apartado-${Date.now()}`,
@@ -274,7 +278,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     if (!cajaAbierta) return;
 
     const efectivoContado = parseFloat(montoCierreEfectivo) || 0;
-    setCajas(prev => prev.map(caja => (
+    saveCajasDiarias(cajas.map(caja => (
       caja.id === cajaAbierta.id
         ? {
             ...caja,
@@ -324,6 +328,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   };
 
   const selectPedido = (pedido: Pedido) => {
+    setACuenta(false); setAnticipoCuenta(''); setPagoError(''); setAvisoCuenta('');
     setSelectedPedido(pedido);
   };
 
@@ -345,6 +350,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   };
 
   const buscarDatosCliente = () => {
+    setClienteError('');
     const numero = clienteDraft.numero_documento.replace(/\D/g, '');
     if (!numero) return;
 
@@ -362,17 +368,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       return;
     }
 
-    setClienteDraft(prev => ({
-      ...prev,
-      nombre: prev.tipo_documento === 'DNI' ? 'Cliente encontrado por DNI' : 'Razón social encontrada',
-      condicion_iva: prev.tipo_documento === 'DNI' ? 'Consumidor final' : 'Responsable inscripto',
-      domicilio: 'Domicilio fiscal simulado',
-      nota: 'Datos autocompletados en frontend. Luego se puede conectar con ARCA/backend.',
-    }));
+    setClienteError('No hay un cliente guardado con ese documento. Completá su nombre para crearlo.');
   };
 
-  const guardarCliente = () => {
-    if (!clienteDraft.numero_documento.trim() || !clienteDraft.nombre.trim()) return;
+  const guardarCliente = async () => {
+    if (!clienteDraft.nombre.trim()) return;
+    setClienteError('');
 
     const nuevoCliente: ClienteFrecuente = {
       id: `cli-${Date.now()}`,
@@ -384,14 +385,16 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       nota: clienteDraft.nota.trim(),
     };
 
-    setClientes(prev => [nuevoCliente, ...prev]);
-    seleccionarCliente(nuevoCliente);
-    setShowClienteForm(false);
+    try {
+      await guardarClienteCuenta(nuevoCliente);
+      seleccionarCliente(nuevoCliente);
+      setShowClienteForm(false);
+    } catch (e) { setClienteError(e instanceof Error ? e.message : 'No se pudo guardar el cliente.'); }
   };
 
   const updateLastPagoComprobante = (tipo: TipoComprobante) => {
     setLastPago(prev => prev ? { ...prev, tipo_comprobante: tipo } : prev);
-    setPagosRegistrados(prev => prev.map(pago => (
+    savePagos(pagosRegistrados.map(pago => (
       pago.id === lastPago?.id ? { ...pago, tipo_comprobante: tipo } : pago
     )));
   };
@@ -446,7 +449,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               </div>
             `).join('')}
             <div class="line"></div>
-            ${pago.descuento_aplicado > 0 ? `<div class="row"><span>Descuento</span><span>-${formatMoney(pago.descuento_aplicado)}</span></div>` : ''}
+            ${pago.descuento_aplicado > 0 ? `<div class="row"><span>Descuento${pago.lista_precio_nombre ? ` (${pago.lista_precio_nombre})` : ''}</span><span>-${formatMoney(pago.descuento_aplicado)}</span></div>` : ''}
             ${pago.recargo_aplicado > 0 ? `<div class="row"><span>Recargo</span><span>${formatMoney(pago.recargo_aplicado)}</span></div>` : ''}
             <div class="row"><span>Método</span><span>${metodosConfig[pago.metodo_pago].label}</span></div>
             <div class="center grand-total">Total: ${formatMoney(pago.total_cobrado)}</div>
@@ -504,8 +507,32 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setMovimientosFinancieros(loadMovimientosFinancieros());
   };
 
+  const procesarCuenta = async () => {
+    if (!selectedPedido || cuentaEnProceso.current) return;
+    if (!selectedCliente) { setPagoError('Seleccioná un cliente guardado para pasar el consumo a su cuenta.'); return; }
+    const sinReceta = productosSinReceta(selectedPedido);
+    if (sinReceta.length && !confirmarSinReceta) {
+      setPagoError(`Estos productos no descuentan stock: ${sinReceta.map(p => p.nombre).join(', ')}. Confirmá de nuevo para continuar.`);
+      setConfirmarSinReceta(true);
+      return;
+    }
+    setConfirmarSinReceta(false);
+    cuentaEnProceso.current = true; setGuardandoCuenta(true); setPagoError('');
+    try {
+      const resultado = await pasarPedidoACuenta({ pedido: selectedPedido, cliente_id: selectedCliente.id,
+        descuento, recargo, anticipo: Number(anticipoCuenta), metodo: medioAnticipo,
+        responsable: user ? [user.nombre, user.apellido].join(' ').trim() : '' });
+      setCuentasDinero(loadCuentasDinero()); setMovimientosFinancieros(loadMovimientosFinancieros());
+      setSelectedPedido(null); setACuenta(false); setAnticipoCuenta(''); clearCliente();
+      setAvisoCuenta('Consumo registrado a nombre de ' + resultado.cliente.nombre + '. Quedaron ' + formatMoney(resultado.pendiente) + ' a cuenta. Deuda total: ' + formatMoney(resultado.saldo) + '. Stock descontado.');
+    } catch (e) { setPagoError(e instanceof Error ? e.message : 'No se pudo registrar el consumo.'); }
+    finally { cuentaEnProceso.current = false; setGuardandoCuenta(false); }
+  };
+
   const procesarPago = () => {
     if (!selectedPedido || !cajaAbierta) return;
+    const actual = loadDemoPedidos().find(p => p.id === selectedPedido.id);
+    if (!actual || ['cobrado', 'cuenta_corriente', 'cancelado'].includes(actual.estado)) { setPagoError('La comanda ya está cerrada.'); return; }
     const total = calcTotal();
     const mixtoEfectivo = parseFloat(montoMixtoEfectivo) || 0;
     const mixtoTransferencia = parseFloat(montoMixtoTransferencia) || 0;
@@ -521,21 +548,33 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       setPagoError('El monto recibido en efectivo no alcanza para completar el cobro.');
       return;
     }
+    const sinReceta = productosSinReceta(selectedPedido);
+    if (sinReceta.length && !confirmarSinReceta) {
+      setPagoError(`Estos productos no descuentan stock: ${sinReceta.map(p => p.nombre).join(', ')}. Confirmá de nuevo para continuar.`);
+      setConfirmarSinReceta(true);
+      return;
+    }
+    setConfirmarSinReceta(false);
     setPagoError('');
+    if (cobroEnProceso.current) return;
+    cobroEnProceso.current = true;
     const pedidoCobrado = selectedPedido;
     const pago: Pago = {
       id: `pago-${Date.now()}`,
       pedido_id: pedidoCobrado.id,
-      cajero_id: 'demo-admin-id',
+      cajero_id: user?.id,
       comprador_nombre: selectedCliente?.nombre || getCompradorName(compradorNombre),
       tipo_comprobante: 'ticket',
       metodo_pago: metodoPago,
       monto: total,
       monto_efectivo: metodoPago === 'efectivo' ? total : metodoPago === 'mixto' ? mixtoEfectivo : 0,
       monto_transferencia: metodoPago === 'transferencia' ? total : metodoPago === 'mixto' ? mixtoTransferencia : 0,
+      monto_tarjeta: metodoPago === 'tarjeta' ? total : 0,
       monto_debito: metodoPago === 'debito' ? total : metodoPago === 'mixto' ? mixtoDebito : 0,
       monto_credito: metodoPago === 'credito' ? total : metodoPago === 'mixto' ? mixtoCredito : 0,
       descuento_aplicado: descuento,
+      lista_precio_id: listaPrecioSeleccionada?.id,
+      lista_precio_nombre: listaPrecioSeleccionada?.nombre,
       recargo_aplicado: recargo,
       total_cobrado: total,
       vuelto: metodoPago === 'efectivo' ? calcVuelto() : 0,
@@ -543,17 +582,19 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       pedido: pedidoCobrado,
     };
     const breakdown = getPagoBreakdown(pago);
-    setPagosRegistrados(prev => [pago, ...prev]);
+    savePagos([pago, ...pagosRegistrados]);
     const pedidoCerrado: Pedido = {
       ...pedidoCobrado,
       estado: 'cobrado',
+      total, descuento, recargo,
       hora_cierre: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
     setPedidos(prev => prev.filter(pedido => pedido.id !== pedidoCerrado.id));
     saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoCerrado.id ? pedidoCerrado : pedido));
+    sincronizarEstadoMesa(pedidoCerrado.mesa_id);
     descontarStockPorVenta(pedidoCerrado);
-    setCajas(prev => prev.map(caja => (
+    saveCajasDiarias(cajas.map(caja => (
       caja.id === cajaAbierta.id
         ? {
             ...caja,
@@ -581,6 +622,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setCompradorNombre('');
     setSelectedCliente(null);
     setClienteBusqueda('');
+    cobroEnProceso.current = false;
   };
 
   /** Cierra la venta: el cobro ya quedó registrado y el stock descontado. */
@@ -603,13 +645,14 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     if (lastPago?.pedido) {
       const breakdown = getPagoBreakdown(lastPago);
       registrarCobroEnCuentas(lastPago, breakdown, -1);
-      const pedidoRestaurado: Pedido = { ...lastPago.pedido, hora_cierre: undefined, updated_at: new Date().toISOString() };
+      const pedidoRestaurado: Pedido = { ...lastPago.pedido, estado: 'abierto', hora_cierre: undefined, updated_at: new Date().toISOString() };
       reponerStockPorVenta(pedidoRestaurado);
       saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoRestaurado.id ? pedidoRestaurado : pedido));
+      sincronizarEstadoMesa(pedidoRestaurado.mesa_id);
       setPedidos(prev => prev.some(pedido => pedido.id === pedidoRestaurado.id) ? prev : [pedidoRestaurado, ...prev]);
       setSelectedPedido(pedidoRestaurado);
-      setPagosRegistrados(prev => prev.filter(pago => pago.id !== lastPago.id));
-      setCajas(prev => prev.map(caja => (
+      savePagos(pagosRegistrados.filter(pago => pago.id !== lastPago.id));
+      saveCajasDiarias(cajas.map(caja => (
         caja.id === cajaAbierta?.id
           ? {
               ...caja,
@@ -866,6 +909,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           <h2 className="text-2xl font-bold text-slate-800">Abrir caja del día</h2>
           <p className="text-sm text-slate-500 mt-1">
             Para comenzar a vender, cargá con cuánto efectivo inicia la caja de hoy.
+            {user?.rol === 'cajero' ? ' Hasta abrirla no se pueden cobrar mesas.' : ''}
           </p>
 
           <div className="mt-6">
@@ -896,6 +940,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   return (
     <div className={vista === 'caja' ? 'space-y-6' : 'flex flex-col xl:flex-row gap-4 xl:gap-6 h-full'}>
       <div className={vista === 'caja' ? 'space-y-4' : 'w-full xl:w-72 flex-shrink-0 space-y-4'}>
+        {avisoCuenta && <p role="status" className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800">{avisoCuenta}</p>}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm space-y-2">
+          <p>Ventas a cuenta: <strong>{formatMoney(cajaAbierta.ventas_cuenta_corriente || 0)}</strong></p>
+          <p>Cobros de cuenta corriente: <strong>{formatMoney(cajaAbierta.cobros_cuenta_corriente || 0)}</strong></p>
+          <p className="text-xs text-slate-500">Los cobros de deudas ingresan a caja sin sumar otra venta.</p>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <p className="text-xs text-slate-500 mb-1">Caja inicial</p>
@@ -938,7 +988,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-3 border-b border-slate-100 flex items-center justify-between">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mesas por Cobrar</p>
-            <button title="Actualizar mesas" onClick={() => setPedidos(loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado'))} className="text-slate-400 hover:text-amber-600"><RefreshCw size={14} /></button>
+            <button title="Actualizar mesas" onClick={() => setPedidos(loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'))} className="text-slate-400 hover:text-amber-600"><RefreshCw size={14} /></button>
           </div>
           <div className="divide-y divide-slate-50">
             {pedidos.filter(p => p.total > 0).map(pedido => (
@@ -1035,8 +1085,40 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-amber-400 text-emerald-600"
                     placeholder="0"
                     min="0"
+                    max={selectedPedido.subtotal}
                   />
                 </div>
+                {listaPrecioSeleccionada && (
+                  <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border px-3 py-2.5 ${
+                    listaPrecioSeleccionada.tipo_ajuste === 'recargo'
+                      ? 'border-orange-100 bg-orange-50'
+                      : 'border-emerald-100 bg-emerald-50'
+                  }`}>
+                    <div>
+                      <p className={`text-xs font-semibold ${listaPrecioSeleccionada.tipo_ajuste === 'recargo' ? 'text-orange-700' : 'text-emerald-700'}`}>
+                        Lista aplicada: {listaPrecioSeleccionada.nombre}
+                      </p>
+                      <p className={`text-xs ${listaPrecioSeleccionada.tipo_ajuste === 'recargo' ? 'text-orange-600' : 'text-emerald-600'}`}>
+                        {listaPrecioSeleccionada.tipo_ajuste === 'recargo' ? 'Interés / recargo' : 'Descuento'} calculado: ${montoAjusteLista.toLocaleString('es-AR', { maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    {(
+                      listaPrecioSeleccionada.tipo_ajuste === 'recargo'
+                        ? Math.abs(recargo - montoAjusteLista) > 0.009 || descuento > 0
+                        : Math.abs(descuento - montoAjusteLista) > 0.009 || recargo > 0
+                    ) && (
+                      <button
+                        onClick={() => {
+                          setDescuento(listaPrecioSeleccionada.tipo_ajuste === 'descuento' ? montoAjusteLista : 0);
+                          setRecargo(listaPrecioSeleccionada.tipo_ajuste === 'recargo' ? montoAjusteLista : 0);
+                        }}
+                        className={`text-xs font-semibold whitespace-nowrap ${listaPrecioSeleccionada.tipo_ajuste === 'recargo' ? 'text-orange-700 hover:text-orange-800' : 'text-emerald-700 hover:text-emerald-800'}`}
+                      >
+                        Restablecer automático
+                      </button>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center gap-3">
                   <label className="text-sm text-slate-600 w-24">Recargo $</label>
                   <input
@@ -1054,6 +1136,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                 </div>
               </div>
 
+              {!aCuenta && (
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-sm font-semibold text-slate-700">Comprador</label>
@@ -1088,7 +1171,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
                   {clienteBusqueda && !selectedCliente && (
                     <div className="mt-2 bg-white border border-slate-100 rounded-xl overflow-hidden">
-                      {clientesFiltrados.slice(0, 4).map(cliente => (
+                      {clientesFiltrados.slice(0, 8).map(cliente => (
                         <button
                           key={cliente.id}
                           onClick={() => seleccionarCliente(cliente)}
@@ -1129,6 +1212,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   )}
                 </div>
               </div>
+              )}
 
               <div className="mb-6">
                 <h4 className="text-sm font-semibold text-slate-700 mb-3">Método de pago</h4>
@@ -1136,9 +1220,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   {(Object.keys(metodosConfig) as MetodoPago[]).map(met => (
                     <button
                       key={met}
-                      onClick={() => { setMetodoPago(met); setPagoError(''); }}
+                      onClick={() => { setACuenta(false); setMetodoPago(met); setPagoError(''); }}
                       className={`py-2.5 px-3 rounded-xl border-2 text-sm font-medium transition-all ${
-                        metodoPago === met
+                        !aCuenta && metodoPago === met
                           ? metodosConfig[met].color + ' border-current shadow-sm'
                           : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
                       }`}
@@ -1148,7 +1232,104 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   ))}
                 </div>
 
-                {metodoPago === 'efectivo' && (
+                <button onClick={() => { setACuenta(true); setPagoError(''); }} className={aCuenta ? 'w-full mb-3 py-3 px-4 rounded-xl border-2 font-semibold bg-amber-50 border-amber-500 text-amber-800' : 'w-full mb-3 py-3 px-4 rounded-xl border-2 font-semibold border-slate-200 text-slate-600 hover:border-amber-400'}>
+                  Pasar a cuenta corriente
+                </button>
+                {aCuenta && <div className="p-4 mb-3 rounded-xl bg-amber-50 border border-amber-200 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm text-amber-900">El consumo descuenta stock y cierra la comanda. El importe pendiente se agrega a la deuda del cliente.</p>
+                    <button
+                      onClick={openClienteForm}
+                      className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-amber-800 hover:text-amber-900 bg-white border border-amber-200 rounded-lg px-2.5 py-1.5"
+                    >
+                      <Plus size={13} />
+                      Nueva cuenta
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-amber-900 mb-1.5">Cuenta corriente</label>
+                    <div className="flex items-center gap-2 bg-white border border-amber-200 rounded-xl px-3 py-2.5 focus-within:border-amber-400">
+                      <Search size={15} className="text-amber-700/70" />
+                      <input
+                        value={clienteBusqueda}
+                        onChange={e => {
+                          setClienteBusqueda(e.target.value);
+                          setSelectedCliente(null);
+                          setCompradorNombre(e.target.value);
+                          setPagoError('');
+                        }}
+                        className="flex-1 text-sm outline-none bg-transparent"
+                        placeholder="Buscar por nombre, DNI o teléfono"
+                      />
+                      {clienteBusqueda && (
+                        <button onClick={clearCliente} className="text-slate-400 hover:text-slate-600" aria-label="Limpiar búsqueda">
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {!selectedCliente && (
+                      <div className="mt-2 bg-white border border-amber-100 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                        {clientesFiltrados.slice(0, 12).map(cliente => {
+                          const deuda = saldoCliente(cliente.id, movimientosCuenta);
+                          return (
+                            <button
+                              key={cliente.id}
+                              onClick={() => { seleccionarCliente(cliente); setPagoError(''); }}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-amber-50 border-b border-slate-50 last:border-b-0"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-800 truncate">{cliente.nombre}</p>
+                                <p className="text-xs text-slate-400 truncate">
+                                  {[cliente.telefono || 'Sin teléfono', cliente.numero_documento ? `${cliente.tipo_documento} ${cliente.numero_documento}` : null].filter(Boolean).join(' · ')}
+                                </p>
+                              </div>
+                              <span className={`text-xs font-bold shrink-0 ${deuda > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>
+                                {deuda > 0 ? `Debe ${formatMoney(deuda)}` : 'Al día'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {clientesFiltrados.length === 0 && (
+                          <div className="px-3 py-3 text-sm text-slate-500">
+                            {clientes.length === 0
+                              ? 'Todavía no hay cuentas. Tocá “Nueva cuenta” para crear la primera.'
+                              : 'No hay una cuenta con esa búsqueda. Tocá “Nueva cuenta” para agregarla.'}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {selectedCliente && (
+                      <div className="mt-2 bg-white border border-emerald-100 rounded-xl p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">{selectedCliente.nombre}</p>
+                            <p className="text-xs text-slate-500">
+                              {[selectedCliente.telefono || 'Sin teléfono', selectedCliente.numero_documento ? `${selectedCliente.tipo_documento} ${selectedCliente.numero_documento}` : null].filter(Boolean).join(' · ')}
+                            </p>
+                            <p className="text-sm text-amber-900 mt-1">
+                              Deuda actual: <strong>{formatMoney(saldoCliente(selectedCliente.id, movimientosCuenta))}</strong>
+                            </p>
+                          </div>
+                          <button onClick={clearCliente} className="text-xs font-semibold text-slate-400 hover:text-slate-600">
+                            Cambiar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <label className="block text-sm text-slate-700">Paga ahora $ (opcional)
+                    <input aria-label="Pago inicial" type="number" min="0" step="0.01" value={anticipoCuenta} onChange={e => setAnticipoCuenta(e.target.value)} placeholder="0" className="mt-1 w-full border border-amber-200 rounded-xl p-2.5 outline-none bg-white" />
+                  </label>
+                  {Number(anticipoCuenta) > 0 && <label className="block text-sm text-slate-700">Medio del pago inicial
+                    <select value={medioAnticipo} onChange={e => setMedioAnticipo(e.target.value as MedioCobroCuenta)} className="mt-1 w-full border border-amber-200 rounded-xl p-2.5 bg-white">{Object.entries(mediosCobroCuenta).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
+                  </label>}
+                  <p className="font-bold text-amber-900">Queda a cuenta: {formatMoney(Math.max(0, calcTotal() - (Number(anticipoCuenta) || 0)))}</p>
+                </div>}
+                {!aCuenta && metodoPago === 'efectivo' && (
                   <div className="flex items-center gap-3">
                     <label className="text-sm text-slate-600 w-28">Monto recibido $</label>
                     <input
@@ -1161,11 +1342,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   </div>
                 )}
 
-                {metodoPago === 'mixto' && (
+                {!aCuenta && metodoPago === 'mixto' && (
                   <div className="rounded-2xl border border-slate-200 overflow-hidden">
                     <div className="bg-slate-50 px-4 py-3 border-b border-slate-100">
                       <p className="text-sm font-semibold text-slate-700">Distribuir el pago</p>
-                      <p className="text-xs text-slate-500">Usá dos o más medios. Dejá en cero los que no necesites.</p>
+                      <p className="text-xs text-slate-500">Usá dos o más medios. En pagos mixtos el descuento se ajusta manualmente.</p>
                     </div>
                     <div className="grid grid-cols-2 gap-3 p-4">
                       {([
@@ -1189,7 +1370,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   </div>
                 )}
 
-                {montoEfectivo && calcVuelto() > 0 && (
+                {!aCuenta && montoEfectivo && calcVuelto() > 0 && (
                   <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex justify-between items-center">
                     <span className="text-sm text-emerald-700 font-medium">Vuelto</span>
                     <span className="text-lg font-bold text-emerald-700">${calcVuelto().toLocaleString()}</span>
@@ -1201,11 +1382,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
             <div className="p-6 border-t border-slate-100">
               <button
-                onClick={procesarPago}
+                onClick={aCuenta ? procesarCuenta : procesarPago}
+                disabled={guardandoCuenta}
                 className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-3 text-lg transition-all shadow-lg shadow-emerald-500/30"
               >
                 <Check size={22} />
-                Cobrar ${calcTotal().toLocaleString()}
+                {guardandoCuenta ? 'Guardando…' : aCuenta ? 'Confirmar consumo a cuenta' : `Cobrar ${calcTotal().toLocaleString()}`}
               </button>
             </div>
           </div>
@@ -1251,6 +1433,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   <p className="text-xs text-blue-600">Transferencia</p>
                   <p className="text-lg font-bold text-blue-700">{formatMoney(cajaAbierta.transferencia)}</p>
                 </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Gastos de la caja del día</p>
+                <p className="text-lg font-bold text-slate-800">{formatMoney(totalGastosCajaHoy)}</p>
+                <p className="text-xs text-slate-400 mt-1">Solo el efectivo salido del cajón. Ya está descontado del esperado.</p>
               </div>
 
               <div>
@@ -1304,6 +1491,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
                 <h3 className="font-bold text-slate-800">Agregar cliente</h3>
+                {clienteError && <p role="alert" className="text-sm text-red-600">{clienteError}</p>}
                 <p className="text-sm text-slate-500">Buscá por documento y completá los datos del comprador.</p>
               </div>
               <button onClick={() => setShowClienteForm(false)} className="text-slate-400 hover:text-slate-600">
@@ -1348,7 +1536,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex gap-2 text-sm text-blue-700">
                 <FileText size={16} className="mt-0.5 shrink-0" />
                 <p>
-                  En esta etapa la búsqueda está simulada en frontend. Después se puede conectar el CUIT/CUIL con ARCA desde backend y usar DNI para clientes guardados.
+                  Buscá entre los clientes guardados. Para crear uno nuevo alcanza con su nombre; el documento es opcional.
                 </p>
               </div>
 

@@ -1,26 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { Profile } from './types';
+import { readStore, writeStore } from './storeSync';
 
 export const usuariosStorageKey = 'restaurant-usuarios';
-const usuariosUpdatedEvent = 'restaurant-usuarios-updated';
+export const usuariosUpdatedEvent = 'restaurant-usuarios-updated';
 
-export const loadUsuarios = (): Profile[] => {
-  if (typeof window === 'undefined') return [];
-  try {
-    const saved = window.localStorage.getItem(usuariosStorageKey);
-    if (!saved) return [];
-    const parsed = JSON.parse(saved) as Profile[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
+export const loadUsuarios = (): Profile[] => readStore<Profile[]>(usuariosStorageKey, []);
 
-export const saveUsuarios = (usuarios: Profile[]) => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(usuariosStorageKey, JSON.stringify(usuarios));
-  window.dispatchEvent(new CustomEvent(usuariosUpdatedEvent));
-};
+export const saveUsuarios = (usuarios: Profile[]) =>
+  writeStore(usuariosStorageKey, usuarios, usuariosUpdatedEvent);
 
 /** Mantiene la lista sincronizada entre pantallas abiertas al mismo tiempo. */
 export const useUsuarios = (): Profile[] => {
@@ -41,3 +29,13 @@ export const useUsuarios = (): Profile[] => {
 
 export const useMozas = (): Profile[] =>
   useUsuarios().filter(u => u.activo && (u.rol === 'moza' || u.rol === 'encargado'));
+
+/** El que inicia sesión también puede tomar comandas, aunque no lo hayan cargado en Usuarios. */
+export const asegurarUsuarioLocal = (perfil: Profile) => {
+  const actuales = loadUsuarios();
+  if (actuales.some(usuario => usuario.id === perfil.id)) {
+    saveUsuarios(actuales.map(usuario => (usuario.id === perfil.id ? { ...usuario, ...perfil, activo: true } : usuario)));
+    return;
+  }
+  saveUsuarios([...actuales, { ...perfil, activo: true }]);
+};

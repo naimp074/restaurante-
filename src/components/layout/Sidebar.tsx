@@ -3,7 +3,7 @@ import {
   LayoutDashboard, UtensilsCrossed, ClipboardList, ChefHat,
   CreditCard, Package, Boxes, Calculator, BarChart3, Users,
   Settings, LogOut, Truck, PanelLeftClose, PanelLeftOpen, ReceiptText,
-  ChevronDown, Grid3X3, Tags, X
+  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X
 } from 'lucide-react';
 import type { PageId, Rol } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -39,15 +39,17 @@ interface SidebarProps {
 
 export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, mobileOpen, onClose }: SidebarProps) {
   const { user, signOut, hasRole } = useAuth();
-  const [showVentasMenu, setShowVentasMenu] = useState(false);
+  const [showVentasMenu, setShowVentasMenu] = useState(
+    currentPage === 'cuenta_corriente' || currentPage === 'ventas' || currentPage === 'pedidos' || currentPage === 'mesas' || currentPage === 'cocina' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'cobros'
+  );
   const [showCajaMenu, setShowCajaMenu] = useState(false);
   const [showProductosMenu, setShowProductosMenu] = useState(false);
   const [showStockMenu, setShowStockMenu] = useState(false);
 
   const compact = collapsed && !mobileOpen;
   const visibleItems = navItems.filter(item => hasRole(...item.roles));
-  const ventasActive = currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cocina' || currentPage === 'pedidos';
-  const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios';
+  const ventasActive = currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'cocina' || currentPage === 'pedidos';
+  const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
   const stockActive = currentPage === 'stock' || currentPage === 'stock_insumos' || currentPage === 'stock_consumos' || currentPage === 'stock_produccion';
 
   return (
@@ -113,7 +115,8 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                 <button
                   onClick={() => {
                     if (compact) {
-                      onNavigate('ventas');
+                      onToggle();
+                      setShowVentasMenu(true);
                       return;
                     }
                     setShowVentasMenu(prev => !prev);
@@ -197,6 +200,18 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         Cobros
                       </button>
                     )}
+                    {hasRole('admin', 'encargado', 'cajero') && (
+                      <button
+                        onClick={() => onNavigate('cuenta_corriente')}
+                        aria-current={currentPage === 'cuenta_corriente' ? 'page' : undefined}
+                        className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                          currentPage === 'cuenta_corriente' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                        }`}
+                      >
+                        <BookOpen size={13} />
+                        Cuenta corriente
+                      </button>
+                    )}
                     {hasRole('admin', 'encargado', 'moza', 'cajero') && (
                       <button
                         onClick={() => onNavigate('ventas')}
@@ -274,6 +289,15 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                     >
                       <Tags size={13} />
                       Lista de precio
+                    </button>
+                    <button
+                      onClick={() => onNavigate('diferentes_listas')}
+                      className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                        currentPage === 'diferentes_listas' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                      }`}
+                    >
+                      <BadgePercent size={13} />
+                      Diferentes listas
                     </button>
                   </div>
                 )}
@@ -372,6 +396,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
       </nav>
 
       <div className={`border-t border-slate-700/50 p-2 space-y-0.5`}>
+        {hasRole('admin', 'encargado') && (
         <button
           onClick={() => onNavigate('configuracion')}
           className={`w-full flex items-center gap-3 rounded-lg py-2.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors ${
@@ -382,6 +407,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
           <Settings size={18} className="flex-shrink-0" />
           {!compact && <span className="text-sm font-medium">Configuración</span>}
         </button>
+        )}
 
         <div className={`flex items-center gap-3 py-2 rounded-lg ${compact ? 'justify-center px-2' : 'px-3'}`}>
           {!compact && (

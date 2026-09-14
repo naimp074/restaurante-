@@ -8,6 +8,7 @@ import Pedidos from './pages/Pedidos';
 import Cocina from './pages/Cocina';
 import Caja from './pages/Caja';
 import Cobros from './pages/Cobros';
+import CuentaCorriente from './pages/CuentaCorriente';
 import Productos from './pages/Productos';
 import Stock from './pages/Stock';
 import Proveedores from './pages/Proveedores';
@@ -18,6 +19,7 @@ import Usuarios from './pages/Usuarios';
 import Configuracion from './pages/Configuracion';
 import type { PageId } from './lib/types';
 import { dayKey } from './lib/fechas';
+import SyncProvider from './lib/sync/SyncProvider';
 
 const cajaStorageKey = 'restaurant-cajas-diarias';
 const todayKey = () => dayKey();
@@ -33,9 +35,16 @@ const hasOpenCajaToday = () => {
   }
 };
 
+const paginaInicial = (rol: string): PageId => {
+  if (rol === 'moza') return 'ventas';
+  if (rol === 'cocina') return 'cocina';
+  if (rol === 'cajero') return 'caja';
+  return 'dashboard';
+};
+
 function AppContent() {
   const { user, loading } = useAuth();
-  const [currentPage, setCurrentPage] = useState<PageId>('dashboard');
+  const [currentPage, setCurrentPage] = useState<PageId | null>(null);
 
   if (loading) {
     return (
@@ -54,8 +63,10 @@ function AppContent() {
     return <Login />;
   }
 
+  const pagina = currentPage ?? paginaInicial(user.rol);
+
   const renderPage = () => {
-    const effectivePage: PageId = user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : currentPage;
+    const effectivePage: PageId = user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : pagina;
 
     switch (effectivePage) {
       case 'dashboard': return <Dashboard />;
@@ -66,10 +77,12 @@ function AppContent() {
       case 'caja_dia': return <Caja apartadoInicial="dia" />;
       case 'caja_arqueos': return <Caja apartadoInicial="arqueos" />;
       case 'cobros': return <Cobros />;
+      case 'cuenta_corriente': return <CuentaCorriente />;
       case 'ventas': return <Pedidos />;
       case 'productos': return <Productos />;
       case 'combos': return <Productos apartadoInicial="combos" />;
       case 'lista_precios': return <Productos apartadoInicial="precios" />;
+      case 'diferentes_listas': return <Productos apartadoInicial="listas" />;
       case 'stock': return <Stock />;
       case 'stock_insumos': return <Stock apartadoInicial="stock" />;
       case 'stock_consumos': return <Stock apartadoInicial="consumos" />;
@@ -79,14 +92,14 @@ function AppContent() {
       case 'costos': return <Costos />;
       case 'reportes': return <Reportes />;
       case 'usuarios': return <Usuarios />;
-      case 'configuracion': return <Configuracion />;
+      case 'configuracion': return user.rol === 'admin' || user.rol === 'encargado' ? <Configuracion /> : <Dashboard />;
       default: return <Dashboard />;
     }
   };
 
   return (
     <Layout
-      currentPage={user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : currentPage}
+      currentPage={user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : pagina}
       onNavigate={setCurrentPage}
     >
       {renderPage()}
@@ -97,7 +110,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <SyncProvider>
+        <AppContent />
+      </SyncProvider>
     </AuthProvider>
   );
 }

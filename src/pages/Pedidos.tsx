@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { Plus, Minus, Trash2, Send, X, Search, Clock } from 'lucide-react';
 import type { Pedido, PedidoItem, Producto } from '../lib/types';
 import { categoriasIniciales } from '../lib/mockData';
-import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
+import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { useProductos } from '../lib/productosStore';
-import { useMesas } from '../lib/mesasStore';
+import { estadoOperativoMesa, mesaTienePedidoAbierto, ocuparMesa, useMesas } from '../lib/mesasStore';
 import { useMozas } from '../lib/usuariosStore';
+import { useAuth } from '../contexts/AuthContext';
 
 const estadoItemColors: Record<string, string> = {
   pendiente: 'bg-yellow-100 text-yellow-700',
@@ -23,19 +24,21 @@ const estadoItemLabels: Record<string, string> = {
 };
 
 export default function Pedidos() {
-  const [pedidos, setPedidos] = useState<Pedido[]>(() => loadDemoPedidos());
-  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos()[0] || null);
+  const { user } = useAuth();
+  const pedidos = usePedidos();
+  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos().find(p => !['cobrado', 'cuenta_corriente', 'cancelado'].includes(p.estado)) || null);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [newMesaId, setNewMesaId] = useState('');
   const [newPersonas, setNewPersonas] = useState(2);
-  const [newMozaId, setNewMozaId] = useState('');
+  const [newMozaId, setNewMozaId] = useState(() => (user && (user.rol === 'moza' || user.rol === 'encargado') ? user.id : ''));
 
   const catalogoProductos = useProductos();
   const mesasDisponibles = useMesas();
   const mozas = useMozas();
+  const mesasLibres = mesasDisponibles.filter(m => estadoOperativoMesa(m, pedidos) === 'libre');
 
   const filteredProductos = catalogoProductos.filter(p => {
     const matchCat = categoriaFiltro === 'todos' || p.categoria_id === categoriaFiltro;
@@ -45,12 +48,12 @@ export default function Pedidos() {
   const pendingItemsToKitchen = selectedPedido?.items?.filter(i => i.estado === 'pendiente') || [];
 
   useEffect(() => {
-    saveDemoPedidos(pedidos);
+    setSelectedPedido(actual => actual ? pedidos.find(pedido => pedido.id === actual.id) || actual : actual);
   }, [pedidos]);
 
   const addItem = (producto: Producto) => {
     if (!selectedPedido) return;
-    const existing = selectedPedido.items?.find(i => i.producto_id === producto.id && i.estado !== 'cancelado');
+    const existing = selectedPedido.items?.find(i => i.producto_id === producto.id && i.estado === 'pendiente');
     if (existing) {
       updateItemQty(existing, existing.cantidad + 1);
     } else {
@@ -90,19 +93,13 @@ export default function Pedidos() {
     const subtotal = (updated.items || []).filter(i => i.estado !== 'cancelado').reduce((s, i) => s + i.subtotal, 0);
     const final = { ...updated, subtotal, total: subtotal - updated.descuento + updated.recargo };
     setSelectedPedido(final);
-    setPedidos(prev => prev.map(p => p.id === final.id ? final : p));
+    saveDemoPedidos(loadDemoPedidos().map(p => p.id === final.id ? final : p));
   };
 
   const sendToKitchen = () => {
     if (!selectedPedido) return;
-    const items = (selectedPedido.items || []).map(item => (
-      item.estado === 'pendiente'
-        ? { ...item, estado: 'en_preparacion' as const, updated_at: new Date().toISOString() }
-        : item
-    ));
     const updated = {
       ...selectedPedido,
-      items,
       estado: 'en_preparacion' as const,
       updated_at: new Date().toISOString(),
     };
@@ -112,7 +109,7 @@ export default function Pedidos() {
   const createOrder = () => {
     const mesa = mesasDisponibles.find(m => m.id === newMesaId);
     const moza = mozas.find(e => e.id === newMozaId);
-    if (!mesa) return;
+    if (!mesa || estadoOperativoMesa(mesa, pedidos) !== 'libre' || mesaTienePedidoAbierto(newMesaId, pedidos)) return;
     const newPedido: Pedido = {
       id: `ped-${Date.now()}`,
       mesa_id: newMesaId,
@@ -126,7 +123,8 @@ export default function Pedidos() {
       updated_at: new Date().toISOString(),
       mesa, empleado: moza, items: [],
     };
-    setPedidos(prev => [...prev, newPedido]);
+    saveDemoPedidos([...loadDemoPedidos(), newPedido]);
+    ocuparMesa(newMesaId, newMozaId);
     setSelectedPedido(newPedido);
     setShowNewOrder(false);
   };
@@ -153,7 +151,7 @@ export default function Pedidos() {
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Comandas Activas</p>
           </div>
           <div className="divide-y divide-slate-50 max-h-[40vh] xl:max-h-[calc(100vh-240px)] overflow-y-auto">
-            {pedidos.filter(p => p.estado !== 'cobrado' && p.estado !== 'cancelado').map(pedido => (
+            {pedidos.filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado').map(pedido => (
               <button
                 key={pedido.id}
                 onClick={() => setSelectedPedido(pedido)}
@@ -229,28 +227,37 @@ export default function Pedidos() {
                         )}
                         <p className="text-xs text-slate-500 mt-0.5">${item.precio_unitario.toLocaleString()} c/u</p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => updateItemQty(item, item.cantidad - 1)}
-                          className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600"
-                        >
-                          <Minus size={10} />
-                        </button>
-                        <span className="text-sm font-bold text-slate-800 w-5 text-center">{item.cantidad}</span>
-                        <button
-                          onClick={() => updateItemQty(item, item.cantidad + 1)}
-                          className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600"
-                        >
-                          <Plus size={10} />
-                        </button>
-                      </div>
-                      <p className="text-sm font-bold text-slate-800 w-20 text-right">${item.subtotal.toLocaleString()}</p>
-                      <button
-                        onClick={() => updateItemQty(item, 0)}
-                        className="text-red-400 hover:text-red-600 transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {item.estado === 'pendiente' ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => updateItemQty(item, item.cantidad - 1)}
+                              className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600"
+                            >
+                              <Minus size={10} />
+                            </button>
+                            <span className="text-sm font-bold text-slate-800 w-5 text-center">{item.cantidad}</span>
+                            <button
+                              onClick={() => updateItemQty(item, item.cantidad + 1)}
+                              className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600"
+                            >
+                              <Plus size={10} />
+                            </button>
+                          </div>
+                          <p className="text-sm font-bold text-slate-800 w-20 text-right">${item.subtotal.toLocaleString()}</p>
+                          <button
+                            onClick={() => updateItemQty(item, 0)}
+                            className="text-red-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-sm font-bold text-slate-800 w-8 text-center">x{item.cantidad}</span>
+                          <p className="text-sm font-bold text-slate-800 w-20 text-right">${item.subtotal.toLocaleString()}</p>
+                        </>
+                      )}
                     </div>
                   ))
                 )}
@@ -377,13 +384,18 @@ export default function Pedidos() {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
                 >
                   <option value="">Seleccionar mesa...</option>
-                  {mesasDisponibles.filter(m => m.estado === 'libre').map(m => (
+                  {mesasLibres.map(m => (
                     <option key={m.id} value={m.id}>{m.nombre || `Mesa ${m.numero}`} - {m.sector}</option>
                   ))}
                 </select>
                 {mesasDisponibles.length === 0 && (
                   <p className="text-xs text-amber-600 mt-1.5">
                     Primero cargá las mesas de tu local desde la pantalla Mesas.
+                  </p>
+                )}
+                {mesasDisponibles.length > 0 && mesasLibres.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    Todas las mesas tienen comanda abierta o están fuera de servicio.
                   </p>
                 )}
               </div>

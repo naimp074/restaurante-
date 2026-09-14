@@ -1,14 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Users, Clock, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
 import type { Mesa, EstadoMesa, Sector } from '../lib/types';
 import { useMozas } from '../lib/usuariosStore';
 import {
+  estadoOperativoMesa,
+  mesaTienePedidoAbierto,
   loadMesas,
   loadSectores,
   saveMesas,
   saveSectores,
+  useMesas,
   type SectorOption,
 } from '../lib/mesasStore';
+import { usePedidos } from '../lib/demoStore';
 
 const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: string; bg: string }> = {
   libre: { label: 'Libre', color: 'text-emerald-700', dot: 'bg-emerald-500', bg: 'bg-emerald-50 border-emerald-200' },
@@ -35,7 +39,8 @@ const getSectorLabel = (sector: string, sectores: SectorOption[]) =>
 const getMesaLabel = (mesa: Mesa) => mesa.nombre || `M${mesa.numero}`;
 
 export default function Mesas() {
-  const [mesas, setMesas] = useState<Mesa[]>(loadMesas);
+  const mesas = useMesas();
+  const pedidos = usePedidos();
   const [selectedMesa, setSelectedMesa] = useState<Mesa | null>(null);
   const [sectorFiltro, setSectorFiltro] = useState<string>('todos');
   const [showModal, setShowModal] = useState(false);
@@ -51,16 +56,9 @@ export default function Mesas() {
   const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
   const [editingSectorName, setEditingSectorName] = useState('');
 
-  const filteredMesas = mesas.filter(m => sectorFiltro === 'todos' || m.sector === sectorFiltro);
   const mozas = useMozas();
-
-  useEffect(() => {
-    saveSectores(sectores);
-  }, [sectores]);
-
-  useEffect(() => {
-    saveMesas(mesas);
-  }, [mesas]);
+  const mesasEnPantalla = mesas.map(mesa => ({ ...mesa, estado: estadoOperativoMesa(mesa, pedidos) }));
+  const filteredMesas = mesasEnPantalla.filter(m => sectorFiltro === 'todos' || m.sector === sectorFiltro);
 
   const openModal = (mesa: Mesa) => {
     setModalMesa(mesa);
@@ -78,13 +76,13 @@ export default function Mesas() {
     const nombre = editMesaName.trim();
     const capacidad = Math.max(1, editMesaCapacidad);
 
-    setMesas(prev => prev.map(m =>
+    saveMesas(loadMesas().map(m =>
       m.id === modalMesa.id
         ? {
             ...m,
             nombre: nombre || undefined,
             capacidad,
-            estado: editEstado,
+            estado: editEstado === 'cerrada' ? 'cerrada' : 'libre',
             empleado_id: editMoza || undefined,
             empleado,
           }
@@ -96,9 +94,13 @@ export default function Mesas() {
 
   const handleDeleteMesa = () => {
     if (!modalMesa) return;
+    if (mesaTienePedidoAbierto(modalMesa.id, pedidos)) {
+      window.alert('No se puede borrar: hay una comanda abierta en esta mesa.');
+      return;
+    }
     if (!window.confirm(`¿Querés borrar ${getMesaLabel(modalMesa)}?`)) return;
 
-    setMesas(prev => prev.filter(m => m.id !== modalMesa.id));
+    saveMesas(loadMesas().filter(m => m.id !== modalMesa.id));
     setSelectedMesa(prev => (prev?.id === modalMesa.id ? null : prev));
     setShowModal(false);
     setModalMesa(null);
@@ -130,7 +132,7 @@ export default function Mesas() {
       updated_at: ahora,
     };
 
-    setMesas(prev => [...prev, nuevaMesa]);
+    saveMesas([...loadMesas(), nuevaMesa]);
     setSelectedMesa(nuevaMesa);
     openModal(nuevaMesa);
   };
@@ -142,7 +144,11 @@ export default function Mesas() {
     const baseId = createSectorId(label) || `apartado-${Date.now()}`;
     const id = sectores.some(s => s.id === baseId) ? `${baseId}-${Date.now()}` : baseId;
 
-    setSectores(prev => [...prev, { id, label }]);
+    setSectores(prev => {
+      const next = [...prev, { id, label }];
+      saveSectores(next);
+      return next;
+    });
     setSectorFiltro(id);
     setNewSectorName('');
     setShowAddSector(false);
@@ -161,9 +167,11 @@ export default function Mesas() {
     const label = editingSectorName.trim();
     if (!label) return;
 
-    setSectores(prev => prev.map(s => (
-      s.id === editingSectorId ? { ...s, label } : s
-    )));
+    setSectores(prev => {
+      const next = prev.map(s => (s.id === editingSectorId ? { ...s, label } : s));
+      saveSectores(next);
+      return next;
+    });
     setEditingSectorId(null);
     setEditingSectorName('');
   };
@@ -176,7 +184,11 @@ export default function Mesas() {
       return;
     }
 
-    setSectores(prev => prev.filter(s => s.id !== sectorId));
+    setSectores(prev => {
+      const next = prev.filter(s => s.id !== sectorId);
+      saveSectores(next);
+      return next;
+    });
     if (sectorFiltro === sectorId) {
       setSectorFiltro('todos');
     }
@@ -187,9 +199,9 @@ export default function Mesas() {
   };
 
   const stats = {
-    libres: mesas.filter(m => m.estado === 'libre').length,
-    ocupadas: mesas.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length,
-    porcobrar: mesas.filter(m => m.estado === 'pendiente_cobro').length,
+    libres: mesasEnPantalla.filter(m => m.estado === 'libre').length,
+    ocupadas: mesasEnPantalla.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length,
+    porcobrar: mesasEnPantalla.filter(m => m.estado === 'pendiente_cobro').length,
   };
 
   return (
@@ -460,19 +472,23 @@ export default function Mesas() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Estado de la Mesa</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Disponibilidad</label>
+                <p className="text-xs text-slate-500 mb-2">Ocupada o libre lo marcan las comandas. Acá solo podés dejarla fuera de servicio.</p>
                 <div className="grid grid-cols-2 gap-2">
-                  {(Object.keys(estadoConfig) as EstadoMesa[]).map(est => (
+                  {([
+                    { id: 'libre' as const, label: 'Operativa' },
+                    { id: 'cerrada' as const, label: 'Fuera de servicio' },
+                  ]).map(est => (
                     <button
-                      key={est}
-                      onClick={() => setEditEstado(est)}
+                      key={est.id}
+                      onClick={() => setEditEstado(est.id)}
                       className={`px-3 py-2 rounded-xl text-xs font-medium border-2 transition-all ${
-                        editEstado === est
-                          ? `${estadoConfig[est].bg} border-current ${estadoConfig[est].color}`
+                        (est.id === 'cerrada' ? editEstado === 'cerrada' : editEstado !== 'cerrada')
+                          ? `${estadoConfig[est.id].bg} border-current ${estadoConfig[est.id].color}`
                           : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
                       }`}
                     >
-                      {estadoConfig[est].label}
+                      {est.label}
                     </button>
                   ))}
                 </div>
@@ -492,7 +508,7 @@ export default function Mesas() {
                 </select>
               </div>
 
-              {editEstado !== 'libre' && (
+              {editEstado !== 'cerrada' && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Cantidad de personas</label>
                   <div className="flex items-center gap-3">

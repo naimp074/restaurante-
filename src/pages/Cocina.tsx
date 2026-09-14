@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Clock, Check, ChefHat, Bell, AlertCircle } from 'lucide-react';
 import type { Pedido, EstadoItem } from '../lib/types';
-import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
+import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 
 const estadoConfig: Record<string, { label: string; color: string; bg: string; action: string; next: EstadoItem }> = {
   pendiente: { label: 'Nuevo', color: 'text-yellow-700', bg: 'bg-yellow-100', action: 'Iniciar', next: 'en_preparacion' },
@@ -11,9 +11,7 @@ const estadoConfig: Record<string, { label: string; color: string; bg: string; a
 };
 
 export default function Cocina() {
-  const [pedidos, setPedidos] = useState<Pedido[]>(
-    () => loadDemoPedidos()
-  );
+  const pedidos = usePedidos();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
 
@@ -21,10 +19,6 @@ export default function Cocina() {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    saveDemoPedidos(pedidos);
-  }, [pedidos]);
 
   const getElapsed = (timestamp: string) => {
     const diff = Math.floor((currentTime.getTime() - new Date(timestamp).getTime()) / 1000);
@@ -40,7 +34,7 @@ export default function Cocina() {
   };
 
   const advanceItemState = (pedidoId: string, itemId: string) => {
-    setPedidos(prev => prev.map(p => {
+    saveDemoPedidos(loadDemoPedidos().map(p => {
       if (p.id !== pedidoId) return p;
       const items = p.items?.map(item => {
         if (item.id !== itemId) return item;
@@ -57,10 +51,13 @@ export default function Cocina() {
     }));
   };
 
-  const activeOrders = pedidos.filter(p => p.estado !== 'entregado' && p.estado !== 'cobrado');
-  const pendingItems = pedidos.flatMap(p => (p.items || []).filter(i => i.estado === 'pendiente')).length;
-  const inProgressItems = pedidos.flatMap(p => (p.items || []).filter(i => i.estado === 'en_preparacion')).length;
-  const readyItems = pedidos.flatMap(p => (p.items || []).filter(i => i.estado === 'listo')).length;
+  const enCocina = pedidos.filter(p =>
+    p.estado !== 'abierto' && p.estado !== 'entregado' && p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'
+  );
+  const activeOrders = enCocina.filter(p => (p.items || []).some(i => i.estado !== 'entregado' && i.estado !== 'cancelado'));
+  const pendingItems = enCocina.flatMap(p => (p.items || []).filter(i => i.estado === 'pendiente')).length;
+  const inProgressItems = enCocina.flatMap(p => (p.items || []).filter(i => i.estado === 'en_preparacion')).length;
+  const readyItems = enCocina.flatMap(p => (p.items || []).filter(i => i.estado === 'listo')).length;
 
   return (
     <div className="h-full flex flex-col space-y-4">

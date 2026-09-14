@@ -91,7 +91,7 @@ const aplicarConsumo = (pedido: Pedido, signo: 1 | -1) => {
   }
 };
 
-/** Descuenta insumos y preparaciones cuando se cobra una comanda. */
+/** Descuenta insumos y preparaciones al cerrar una venta, cobrada o a cuenta. */
 export const descontarStockPorVenta = (pedido: Pedido) => aplicarConsumo(pedido, 1);
 
 /** Devuelve al stock lo consumido si se anula el comprobante. */

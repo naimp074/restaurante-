@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, X, Check } from 'lucide-react';
-import type { AlcanceGasto, CajaDiaria, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, Proveedor, TipoCuentaDinero } from '../lib/types';
+import type { AlcanceGasto, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, Proveedor, TipoCuentaDinero } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
-import { loadCuentasDinero, registrarEntradaCuenta, registrarSalidaCuenta, saveCuentasDinero } from '../lib/finance';
+import { cuentaCajaDiaId, loadCuentasDinero, registrarEntradaCuenta, registrarSalidaCuenta, saveCuentasDinero } from '../lib/finance';
 import { loadProveedores } from '../lib/proveedoresStore';
 import { dayKey } from '../lib/fechas';
-
-const gastosStorageKey = 'restaurant-gastos';
-const cajaStorageKey = 'restaurant-cajas-diarias';
+import { saveGastos, useGastos } from '../lib/gastosStore';
+import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -25,6 +24,7 @@ const estadosGasto = {
 const metodosConfig: Record<MetodoPago, string> = {
   efectivo: 'Efectivo',
   transferencia: 'Transferencia',
+  tarjeta: 'Tarjeta',
   debito: 'Débito',
   credito: 'Crédito',
   mixto: 'Mixto',
@@ -35,32 +35,10 @@ const todayKey = () => dayKey();
 const formatMoney = (value: number) =>
   `$${value.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-const loadGastos = (): Gasto[] => {
-  try {
-    const saved = window.localStorage.getItem(gastosStorageKey);
-    if (!saved) return [];
-    const parsed = JSON.parse(saved) as Gasto[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const loadCajas = (): CajaDiaria[] => {
-  try {
-    const saved = window.localStorage.getItem(cajaStorageKey);
-    if (!saved) return [];
-    const parsed = JSON.parse(saved) as CajaDiaria[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
 export default function Gastos() {
   const { user } = useAuth();
-  const [gastos, setGastos] = useState<Gasto[]>(loadGastos);
-  const [cajas] = useState<CajaDiaria[]>(loadCajas);
+  const gastos = useGastos();
+  const cajas = useCajas();
   const [cuentas, setCuentas] = useState<CuentaDinero[]>(loadCuentasDinero);
   const [proveedores] = useState<Proveedor[]>(loadProveedores);
   const [showForm, setShowForm] = useState(false);
@@ -97,14 +75,10 @@ export default function Gastos() {
   const totalDescuentoCajaHoy = gastosCajaHoy.reduce((sum, gasto) => sum + gasto.monto, 0);
   const gastosPendientes = gastos.filter(gasto => (gasto.estado || 'pagado') !== 'pagado');
   const totalPendiente = gastosPendientes.reduce((sum, gasto) => sum + gasto.monto, 0);
-  const disponibleCajaHoy = (cajaHoy?.monto_esperado_efectivo ?? 0) + (cajaHoy?.tarjeta ?? 0) + (cajaHoy?.transferencia ?? 0) - totalDescuentoCajaHoy;
+  const disponibleCajaHoy = (cajaHoy?.monto_esperado_efectivo ?? 0) + (cajaHoy?.tarjeta ?? 0) + (cajaHoy?.transferencia ?? 0);
   const gastosFiltrados = gastos
     .filter(gasto => filtroEstado === 'todos' || (gasto.estado || 'pagado') === filtroEstado)
     .filter(gasto => filtroCuenta === 'todos' || gasto.cuenta_origen_id === filtroCuenta || gasto.pagos_divididos?.some(parte => parte.cuenta_id === filtroCuenta));
-
-  useEffect(() => {
-    window.localStorage.setItem(gastosStorageKey, JSON.stringify(gastos));
-  }, [gastos]);
 
   const resetForm = () => {
     setConcepto('');
@@ -155,9 +129,9 @@ export default function Gastos() {
       observaciones: observaciones.trim(),
       created_at: new Date().toISOString(),
       creado_por: user ? `${user.nombre} ${user.apellido}` : undefined,
-      cuenta_origen_id: cuentaOrigenId,
+      cuenta_origen_id: alcance === 'caja_dia' && metodoPago === 'efectivo' ? cuentaCajaDiaId : cuentaOrigenId,
       pagos_divididos: metodoPago === 'mixto' ? [
-        { metodo_pago: 'efectivo', cuenta_id: cuentaEfectivoId, monto: efectivoMixto },
+        { metodo_pago: 'efectivo', cuenta_id: alcance === 'caja_dia' ? cuentaCajaDiaId : cuentaEfectivoId, monto: efectivoMixto },
         { metodo_pago: 'transferencia', cuenta_id: cuentaTransferenciaId, monto: transferenciaMixta },
       ] : undefined,
       proveedor_id: proveedorId || undefined,
@@ -167,17 +141,21 @@ export default function Gastos() {
       recurrente,
     };
 
-    setGastos(prev => [gasto, ...prev]);
+    saveGastos([gasto, ...gastos]);
+    const efectivoCajaDia = estado === 'pagado' && alcance === 'caja_dia' && (metodoPago === 'efectivo' || metodoPago === 'mixto');
+    const montoEfectivoCaja = metodoPago === 'mixto' ? efectivoMixto : metodoPago === 'efectivo' ? parsedMonto : 0;
+    if (efectivoCajaDia && montoEfectivoCaja > 0) aplicarGastoEnCajaDia(fecha, montoEfectivoCaja, 1);
     if (estado === 'pagado' && metodoPago === 'mixto') {
       gasto.pagos_divididos?.forEach(parte => registrarSalidaCuenta({
-        cuenta_id: parte.cuenta_id, monto: parte.monto,
+        cuenta_id: alcance === 'caja_dia' && parte.metodo_pago === 'efectivo' ? cuentaCajaDiaId : parte.cuenta_id,
+        monto: parte.monto,
         descripcion: `${gasto.concepto} (${metodosConfig[parte.metodo_pago]})`, origen: 'gasto', fecha,
         metodo_pago: parte.metodo_pago, proveedor_id: proveedorId || undefined, creado_por: gasto.creado_por,
       }));
       setCuentas(loadCuentasDinero());
     } else if (estado === 'pagado' && cuentaOrigenId) {
       registrarSalidaCuenta({
-        cuenta_id: cuentaOrigenId,
+        cuenta_id: alcance === 'caja_dia' && metodoPago === 'efectivo' ? cuentaCajaDiaId : cuentaOrigenId,
         monto: parsedMonto,
         descripcion: gasto.concepto,
         origen: 'gasto',
@@ -233,7 +211,7 @@ export default function Gastos() {
       setCuentas(loadCuentasDinero());
     } else if ((gasto?.estado || 'pagado') === 'pagado' && gasto?.cuenta_origen_id) {
       registrarEntradaCuenta({
-        cuenta_id: gasto.cuenta_origen_id,
+        cuenta_id: gasto.alcance === 'caja_dia' && gasto.metodo_pago === 'efectivo' ? cuentaCajaDiaId : gasto.cuenta_origen_id,
         monto: gasto.monto,
         descripcion: `Anulacion de gasto: ${gasto.concepto}`,
         origen: 'ajuste',
@@ -241,7 +219,13 @@ export default function Gastos() {
       });
       setCuentas(loadCuentasDinero());
     }
-    setGastos(prev => prev.filter(item => item.id !== gastoId));
+    if (gasto && (gasto.estado || 'pagado') === 'pagado' && gasto.alcance === 'caja_dia') {
+      const efectivo = gasto.metodo_pago === 'mixto'
+        ? (gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'efectivo')?.monto || 0)
+        : gasto.metodo_pago === 'efectivo' ? gasto.monto : 0;
+      if (efectivo > 0) aplicarGastoEnCajaDia(gasto.fecha, efectivo, -1);
+    }
+    saveGastos(gastos.filter(item => item.id !== gastoId));
   };
 
   const totalByCategoria = (target: CategoriaGasto) =>

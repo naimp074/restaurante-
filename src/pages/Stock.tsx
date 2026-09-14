@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 import { createWorker } from 'tesseract.js';
@@ -6,6 +6,7 @@ import {
   Plus,
   AlertTriangle,
   TrendingDown,
+  TrendingUp,
   Package,
   CreditCard as Edit2,
   X,
@@ -19,8 +20,12 @@ import {
   Loader2,
   Download,
 } from 'lucide-react';
-import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, RegistroProduccion, UnidadMedida } from '../lib/types';
+import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, RegistroProduccion, TipoComprobanteCompra, UnidadMedida } from '../lib/types';
 import { loadProveedores } from '../lib/proveedoresStore';
+import { loadProductos, saveProductos } from '../lib/productosStore';
+import { analizarImpactoCompra, margenPorcentaje } from '../lib/costosReceta';
+import type { ImpactoCompra } from '../lib/costosReceta';
+import BuscadorInsumo from '../components/BuscadorInsumo';
 import { dayKey } from '../lib/fechas';
 import { crearFacturaProveedor, loadCuentasDinero, registrarPagoProveedor } from '../lib/finance';
 import {
@@ -56,6 +61,20 @@ const getProveedorNombre = (ingrediente: Ingrediente | Partial<Ingrediente>) =>
 
 const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const comprobantesCompra: { tipo: TipoComprobanteCompra; label: string; placeholder: string }[] = [
+  { tipo: 'factura', label: 'Factura', placeholder: 'N° de factura' },
+  { tipo: 'ticket', label: 'Ticket', placeholder: 'N° de ticket' },
+  { tipo: 'otro', label: 'Otro', placeholder: 'Remito, archivo o referencia' },
+];
+
+const getComprobanteTexto = (draft: CompraDraft) => {
+  const detalle = draft.comprobante_nombre?.trim() || '';
+  const tipo = draft.comprobante_tipo || 'factura';
+  if (tipo === 'otro') return detalle;
+  const label = comprobantesCompra.find(item => item.tipo === tipo)?.label || '';
+  return detalle ? `${label} ${detalle}` : label;
+};
+
 const emptyCompraDraft = (): CompraDraft => ({
   id: createId('compra'),
   origen: 'manual',
@@ -64,10 +83,16 @@ const emptyCompraDraft = (): CompraDraft => ({
   total: 0,
   observaciones: '',
   items: [],
+  comprobante_tipo: 'factura',
   condicion_pago: 'pendiente',
   cuenta_origen_id: 'cuenta-caja-grande',
   monto_pagado: 0,
 });
+
+const pesos = (valor: number) => `$${valor.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`;
+
+const colorMargen = (margen: number) =>
+  margen >= 50 ? 'text-emerald-600' : margen >= 35 ? 'text-amber-600' : 'text-red-600';
 
 const normalizeText = (value: string) =>
   value
@@ -224,6 +249,19 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [produccionResponsable, setProduccionResponsable] = useState('');
   const [produccionObservaciones, setProduccionObservaciones] = useState('');
   const [cantidadesUsadas, setCantidadesUsadas] = useState<Record<string, string>>({});
+  const [impactoCompra, setImpactoCompra] = useState<ImpactoCompra | null>(null);
+  const [preciosNuevos, setPreciosNuevos] = useState<Record<string, string>>({});
+  const [preciosElegidos, setPreciosElegidos] = useState<Record<string, boolean>>({});
+  const compraEnProceso = useRef(false);
+
+  const preciosParaAplicar = impactoCompra
+    ? impactoCompra.productos.filter(item =>
+        preciosElegidos[item.producto.id] && (parseFloat(preciosNuevos[item.producto.id]) || 0) > 0
+      ).length
+    : 0;
+  const todosLosPreciosElegidos = impactoCompra
+    ? impactoCompra.productos.every(item => preciosElegidos[item.producto.id])
+    : false;
 
   const selectedIngrediente = ingredientes.find(i => i.id === selectedIngId) || null;
   const selectedMovimientos = movimientos
@@ -333,6 +371,69 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     XLSX.writeFile(workbook, `stock-${dayKey()}.xlsx`);
   };
 
+  const descargarHistorialIngrediente = () => {
+    if (!selectedIngrediente) return;
+
+    const ingresos = selectedMovimientos
+      .filter(movimiento => movimiento.tipo === 'entrada')
+      .reduce((total, movimiento) => total + movimiento.cantidad, 0);
+    const egresos = selectedMovimientos
+      .filter(movimiento => movimiento.tipo === 'salida')
+      .reduce((total, movimiento) => total + movimiento.cantidad, 0);
+    const rows: (string | number)[][] = [
+      ['HISTORIAL DE STOCK'],
+      ['Producto', selectedIngrediente.nombre],
+      ['Proveedor', getProveedorNombre(selectedIngrediente)],
+      ['Unidad de medida', selectedIngrediente.unidad_medida],
+      ['Stock actual', selectedIngrediente.stock_actual],
+      ['Ingresos', ingresos],
+      ['Egresos', egresos],
+      ['Movimientos', selectedMovimientos.length],
+      [],
+      ['Fecha', 'Tipo', 'Motivo', 'Cantidad', 'Unidad', 'Stock anterior', 'Stock nuevo'],
+      ...selectedMovimientos.map(movimiento => [
+        new Date(movimiento.created_at).toLocaleString('es-AR', {
+          dateStyle: 'short',
+          timeStyle: 'short',
+        }),
+        movimiento.tipo === 'entrada'
+          ? 'Ingreso'
+          : movimiento.tipo === 'salida'
+            ? 'Egreso'
+            : 'Ajuste',
+        movimiento.motivo,
+        movimiento.tipo === 'salida' ? -movimiento.cantidad : movimiento.cantidad,
+        selectedIngrediente.unidad_medida,
+        movimiento.stock_anterior,
+        movimiento.stock_nuevo,
+      ]),
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    worksheet['!cols'] = [
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 42 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 16 },
+    ];
+    worksheet['!autofilter'] = { ref: `A10:G${Math.max(rows.length, 10)}` };
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Historial');
+
+    const nombreSeguro = selectedIngrediente.nombre
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'producto';
+
+    XLSX.writeFile(workbook, `historial-${nombreSeguro}-${dayKey()}.xlsx`);
+  };
+
   const openEdit = (ing: Ingrediente) => {
     setEditItem({ ...ing });
     setEditId(ing.id);
@@ -434,6 +535,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       return {
         ...prev,
         origen,
+        comprobante_tipo: fileName ? 'otro' : prev.comprobante_tipo,
         comprobante_nombre: fileName || prev.comprobante_nombre,
         items: [...prev.items, ...parsedItems],
       };
@@ -579,84 +681,89 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
 
   const registrarCompra = () => {
     const validItems = compraDraft.items.filter(item => item.nombre.trim() && item.cantidad > 0);
-    if (!validItems.length || compraTieneErrores) return;
+    if (!validItems.length || compraTieneErrores || compraEnProceso.current) return;
+    compraEnProceso.current = true;
 
     const now = new Date().toISOString();
     const compraId = compraDraft.id;
+    const comprobanteTexto = getComprobanteTexto(compraDraft);
     const movimientosCompra: MovimientoStock[] = [];
+    const costosNuevos = new Map<string, number>();
+    let nextIngredientes = [...ingredientes];
 
-    setIngredientes(prev => {
-      let nextIngredientes = [...prev];
-
-      validItems.forEach((item, index) => {
-        if (item.modo === 'existente' && item.ingrediente_id) {
-          const ingrediente = nextIngredientes.find(i => i.id === item.ingrediente_id);
-          if (!ingrediente) return;
-
-          const stockNuevo = ingrediente.stock_actual + item.cantidad;
-          const updated: Ingrediente = {
-            ...ingrediente,
-            stock_actual: stockNuevo,
-            costo_por_unidad: item.costo_unitario > 0 ? item.costo_unitario : ingrediente.costo_por_unidad,
-            proveedor_id: item.proveedor_id || ingrediente.proveedor_id,
-            updated_at: now,
-          };
-
-          nextIngredientes = nextIngredientes.map(i => i.id === ingrediente.id ? updated : i);
-          movimientosCompra.push({
-            id: `mov-${Date.now()}-${index}`,
-            ingrediente_id: ingrediente.id,
-            tipo: 'entrada',
-            cantidad: item.cantidad,
-            motivo: `Compra registrada${compraDraft.comprobante_nombre ? ` (${compraDraft.comprobante_nombre})` : ''}`,
-            compra_id: compraId,
-            stock_anterior: ingrediente.stock_actual,
-            stock_nuevo: stockNuevo,
-            created_at: now,
-            ingrediente: updated,
-          });
-        } else {
-          const proveedor = getProveedor(item.proveedor_id || compraDraft.proveedor_id);
-          const newIng: Ingrediente = {
-            id: createId('ing'),
-            nombre: item.nombre.trim(),
-            unidad_medida: item.unidad_medida,
-            stock_actual: item.cantidad,
-            stock_minimo: item.stock_minimo || 0,
-            costo_por_unidad: item.costo_unitario,
-            proveedor_id: item.proveedor_id || compraDraft.proveedor_id,
-            proveedor,
-            activo: true,
-            created_at: now,
-            updated_at: now,
-          };
-
-          nextIngredientes = [...nextIngredientes, newIng];
-          movimientosCompra.push({
-            id: `mov-${Date.now()}-${index}`,
-            ingrediente_id: newIng.id,
-            tipo: 'entrada',
-            cantidad: item.cantidad,
-            motivo: `Alta por compra${compraDraft.comprobante_nombre ? ` (${compraDraft.comprobante_nombre})` : ''}`,
-            compra_id: compraId,
-            stock_anterior: 0,
-            stock_nuevo: item.cantidad,
-            created_at: now,
-            ingrediente: newIng,
-          });
-        }
-      });
-
-      return nextIngredientes;
+    validItems.forEach(item => {
+      if (item.modo === 'existente' && item.ingrediente_id && item.costo_unitario > 0) {
+        costosNuevos.set(item.ingrediente_id, item.costo_unitario);
+      }
     });
 
+    validItems.forEach((item, index) => {
+      if (item.modo === 'existente' && item.ingrediente_id) {
+        const ingrediente = nextIngredientes.find(i => i.id === item.ingrediente_id);
+        if (!ingrediente) return;
+
+        const stockNuevo = ingrediente.stock_actual + item.cantidad;
+        const updated: Ingrediente = {
+          ...ingrediente,
+          stock_actual: stockNuevo,
+          costo_por_unidad: item.costo_unitario > 0 ? item.costo_unitario : ingrediente.costo_por_unidad,
+          proveedor_id: item.proveedor_id || ingrediente.proveedor_id,
+          updated_at: now,
+        };
+
+        nextIngredientes = nextIngredientes.map(i => i.id === ingrediente.id ? updated : i);
+        movimientosCompra.push({
+          id: createId(`mov-compra-${index}`),
+          ingrediente_id: ingrediente.id,
+          tipo: 'entrada',
+          cantidad: item.cantidad,
+          motivo: `Compra registrada${comprobanteTexto ? ` (${comprobanteTexto})` : ''}`,
+          compra_id: compraId,
+          stock_anterior: ingrediente.stock_actual,
+          stock_nuevo: stockNuevo,
+          created_at: now,
+          ingrediente: updated,
+        });
+      } else {
+        const proveedor = getProveedor(item.proveedor_id || compraDraft.proveedor_id);
+        const newIng: Ingrediente = {
+          id: createId('ing'),
+          nombre: item.nombre.trim(),
+          unidad_medida: item.unidad_medida,
+          stock_actual: item.cantidad,
+          stock_minimo: item.stock_minimo || 0,
+          costo_por_unidad: item.costo_unitario,
+          proveedor_id: item.proveedor_id || compraDraft.proveedor_id,
+          proveedor,
+          activo: true,
+          created_at: now,
+          updated_at: now,
+        };
+
+        nextIngredientes = [...nextIngredientes, newIng];
+        movimientosCompra.push({
+          id: createId(`mov-alta-${index}`),
+          ingrediente_id: newIng.id,
+          tipo: 'entrada',
+          cantidad: item.cantidad,
+          motivo: `Alta por compra${comprobanteTexto ? ` (${comprobanteTexto})` : ''}`,
+          compra_id: compraId,
+          stock_anterior: 0,
+          stock_nuevo: item.cantidad,
+          created_at: now,
+          ingrediente: newIng,
+        });
+      }
+    });
+
+    setIngredientes(nextIngredientes);
     setMovimientos(prev => [...movimientosCompra, ...prev]);
 
     if (compraProveedorId && compraTotal > 0) {
       const factura = crearFacturaProveedor({
         proveedor_id: compraProveedorId,
         compra_id: compraId,
-        numero: compraDraft.comprobante_nombre,
+        numero: comprobanteTexto,
         fecha: compraDraft.fecha,
         vencimiento: compraDraft.vencimiento || compraDraft.fecha,
         total: compraTotal,
@@ -676,10 +783,57 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       }
     }
 
+    const impacto = analizarImpactoCompra({
+      ingredientes,
+      costosNuevos,
+      productos: loadProductos(),
+      producciones,
+    });
+
+    if (impacto.productos.length) {
+      setPreciosNuevos(Object.fromEntries(
+        impacto.productos.map(item => [item.producto.id, item.precioSugerido ? String(item.precioSugerido) : '']),
+      ));
+      setPreciosElegidos(Object.fromEntries(
+        impacto.productos.map(item => [item.producto.id, item.precioSugerido > 0]),
+      ));
+      setImpactoCompra(impacto);
+    }
+
     setCompraDraft(emptyCompraDraft());
     setCompraPaso('carga');
     setCompraError('');
     setShowCompra(false);
+    compraEnProceso.current = false;
+  };
+
+  // Los costos son un hecho de la compra, así que se guardan siempre. El precio de venta
+  // es una decisión, y solo se toca en los combos que el usuario marcó.
+  const cerrarImpactoCompra = (aplicarPrecios: boolean) => {
+    if (!impactoCompra) return;
+
+    const ajustes = new Map(impactoCompra.productos.map(item => [item.producto.id, item]));
+    const productosGuardados = loadProductos().map(producto => {
+      const ajuste = ajustes.get(producto.id);
+      if (!ajuste) return producto;
+
+      const precioIngresado = parseFloat(preciosNuevos[producto.id]) || 0;
+      const aplicar = aplicarPrecios && preciosElegidos[producto.id] && precioIngresado > 0;
+      const precioVenta = aplicar ? precioIngresado : producto.precio_venta;
+
+      return {
+        ...producto,
+        precio_venta: precioVenta,
+        costo_produccion: ajuste.costoNuevo,
+        margen_ganancia: margenPorcentaje(precioVenta, ajuste.costoNuevo),
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    saveProductos(productosGuardados);
+    setImpactoCompra(null);
+    setPreciosNuevos({});
+    setPreciosElegidos({});
   };
 
   const resetConsumoForm = () => {
@@ -1815,13 +1969,22 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
               </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Comprobante</label>
-                <input
+                  <select
+                    value={compraDraft.comprobante_tipo || 'factura'}
+                    onChange={e => setCompraDraft(prev => ({ ...prev, comprobante_tipo: e.target.value as TipoComprobanteCompra }))}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white mb-2"
+                  >
+                    {comprobantesCompra.map(({ tipo, label }) => (
+                      <option key={tipo} value={tipo}>{label}</option>
+                    ))}
+                  </select>
+                  <input
                     value={compraDraft.comprobante_nombre || ''}
                     onChange={e => setCompraDraft(prev => ({ ...prev, comprobante_nombre: e.target.value }))}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
-                    placeholder="Factura, ticket o archivo"
-                />
-              </div>
+                    placeholder={comprobantesCompra.find(item => item.tipo === (compraDraft.comprobante_tipo || 'factura'))?.placeholder}
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total estimado</label>
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-bold text-slate-800">
@@ -1944,18 +2107,18 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                     {compraDraft.items.map(item => (
                       <tr key={item.id} className={item.modo === 'nuevo' ? 'bg-amber-50/40' : 'bg-white'}>
                         <td className="py-3 px-3 align-top">
-                          <select
-                            value={item.modo === 'nuevo' ? 'nuevo' : item.ingrediente_id || ''}
-                            onChange={e => {
-                              const value = e.target.value;
-                              updateCompraItem(item.id, value === 'nuevo' ? { modo: 'nuevo' } : { modo: 'existente', ingrediente_id: value });
-                            }}
-                            className="w-48 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
-                          >
-                            <option value="">Elegir insumo...</option>
-                            {ingredientes.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
-                            <option value="nuevo">Crear insumo nuevo</option>
-                          </select>
+                          <BuscadorInsumo
+                            ingredientes={ingredientes}
+                            ingredienteId={item.ingrediente_id}
+                            modoNuevo={item.modo === 'nuevo'}
+                            nombreLeido={item.nombre}
+                            onSeleccionar={ingrediente => updateCompraItem(item.id, { modo: 'existente', ingrediente_id: ingrediente.id })}
+                            onCrearNuevo={nombreSugerido => updateCompraItem(item.id, {
+                              modo: 'nuevo',
+                              ...(nombreSugerido ? { nombre: nombreSugerido } : {}),
+                            })}
+                            className="w-48"
+                          />
                           <p className={`mt-1 text-[11px] font-medium ${item.modo === 'nuevo' ? 'text-amber-700' : 'text-emerald-700'}`}>
                             {item.modo === 'nuevo' ? 'Se va a crear' : 'Suma stock existente'}
                           </p>
@@ -2126,12 +2289,136 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
               </div>
             </div>
 
-            <div className="flex justify-end p-6 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={descargarHistorialIngrediente}
+                className="px-4 py-2.5 border border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Download size={16} />
+                Descargar historial
+              </button>
               <button
                 onClick={() => setSelectedIngId(null)}
                 className="px-4 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 transition-colors"
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {impactoCompra && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+            <div className="flex items-start gap-3 p-6 border-b border-slate-100">
+              <div className="w-11 h-11 bg-red-100 rounded-xl flex items-center justify-center shrink-0">
+                <TrendingUp size={20} className="text-red-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-slate-800 text-lg">Subieron los costos</h3>
+                <p className="text-sm text-slate-500">
+                  {impactoCompra.insumos.length} {impactoCompra.insumos.length === 1 ? 'insumo aumentó' : 'insumos aumentaron'} y {impactoCompra.productos.length} {impactoCompra.productos.length === 1 ? 'combo quedó' : 'combos quedaron'} con menos margen. Revisá los precios de venta.
+                </p>
+              </div>
+              <button
+                onClick={() => cerrarImpactoCompra(false)}
+                aria-label="Cerrar aviso de costos"
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-700 mb-2">Insumos que aumentaron</h4>
+                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                  {impactoCompra.insumos.map(insumo => (
+                    <div key={insumo.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{insumo.nombre}</p>
+                        <p className="text-xs text-slate-500">
+                          {pesos(insumo.costoAnterior)} → <span className="font-semibold text-red-600">{pesos(insumo.costoNuevo)}</span> por {insumo.unidad}
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-red-600 shrink-0">+{insumo.variacion.toFixed(1)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <h4 className="text-sm font-semibold text-slate-700">Combos afectados</h4>
+                  <button
+                    onClick={() => {
+                      const marcarTodos = !todosLosPreciosElegidos;
+                      setPreciosElegidos(Object.fromEntries(
+                        impactoCompra.productos.map(item => [item.producto.id, marcarTodos && item.precioSugerido > 0]),
+                      ));
+                    }}
+                    className="text-xs font-semibold text-amber-600 hover:text-amber-700"
+                  >
+                    {todosLosPreciosElegidos ? 'No actualizar ninguno' : 'Actualizar todos'}
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                  {impactoCompra.productos.map(item => (
+                    <div key={item.producto.id} className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] gap-3 p-3">
+                      <input
+                        type="checkbox"
+                        checked={preciosElegidos[item.producto.id] || false}
+                        onChange={e => setPreciosElegidos(prev => ({ ...prev, [item.producto.id]: e.target.checked }))}
+                        aria-label={`Actualizar el precio de ${item.producto.nombre}`}
+                        className="mt-1 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{item.producto.nombre}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Costo {pesos(item.costoAnterior)} → <span className="font-semibold text-red-600">{pesos(item.costoNuevo)}</span>
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Margen <span className={`font-semibold ${colorMargen(item.margenAnterior)}`}>{item.margenAnterior.toFixed(1)}%</span>
+                          {' → '}
+                          <span className={`font-semibold ${colorMargen(item.margenNuevo)}`}>{item.margenNuevo.toFixed(1)}%</span>
+                        </p>
+                      </div>
+                      <div className="col-span-2 sm:col-span-1 sm:w-40">
+                        <p className="text-xs text-slate-400 mb-1">Precio actual {pesos(item.producto.precio_venta)}</p>
+                        <input
+                          type="number"
+                          value={preciosNuevos[item.producto.id] ?? ''}
+                          onChange={e => setPreciosNuevos(prev => ({ ...prev, [item.producto.id]: e.target.value }))}
+                          min="0"
+                          aria-label={`Precio nuevo de ${item.producto.nombre}`}
+                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400"
+                        />
+                        <p className="text-[11px] text-slate-400 mt-1 text-right">
+                          Sugerido para mantener el {item.margenAnterior.toFixed(0)}%
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={() => cerrarImpactoCompra(false)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
+              >
+                Dejar los precios como están
+              </button>
+              <button
+                onClick={() => cerrarImpactoCompra(true)}
+                disabled={preciosParaAplicar === 0}
+                className="flex-1 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-emerald-500 flex items-center justify-center gap-2"
+              >
+                <Check size={16} />
+                {preciosParaAplicar === 1 ? 'Actualizar 1 precio' : `Actualizar ${preciosParaAplicar} precios`}
               </button>
             </div>
           </div>

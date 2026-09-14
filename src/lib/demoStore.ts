@@ -1,4 +1,5 @@
 import type { Ingrediente, MovimientoStock, Pedido, ProduccionPreparada, RegistroProduccion } from './types';
+import { readStore, useStore, writeStore } from './storeSync';
 
 export const demoPedidosStorageKey = 'restaurant-demo-pedidos';
 export const demoIngredientesStorageKey = 'restaurant-demo-ingredientes';
@@ -6,46 +7,31 @@ export const demoMovimientosStockStorageKey = 'restaurant-demo-movimientos-stock
 export const demoProduccionesStorageKey = 'restaurant-demo-producciones';
 export const demoRegistrosProduccionStorageKey = 'restaurant-demo-registros-produccion';
 
-const readStorage = <T>(key: string, fallback: T): T => {
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const saved = window.localStorage.getItem(key);
-    if (!saved) return fallback;
-    return JSON.parse(saved) as T;
-  } catch {
-    return fallback;
-  }
-};
+export const pedidosUpdatedEvent = 'restaurant-pedidos-updated';
+export const ingredientesUpdatedEvent = 'restaurant-ingredientes-updated';
+export const movimientosStockUpdatedEvent = 'restaurant-movimientos-stock-updated';
+export const produccionesUpdatedEvent = 'restaurant-producciones-updated';
+export const registrosProduccionUpdatedEvent = 'restaurant-registros-produccion-updated';
 
-const writeStorage = <T>(key: string, value: T) => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(key, JSON.stringify(value));
-};
+export const loadDemoPedidos = () => readStore<Pedido[]>(demoPedidosStorageKey, []);
+export const saveDemoPedidos = (pedidos: Pedido[]) => writeStore(demoPedidosStorageKey, pedidos, pedidosUpdatedEvent);
+export const usePedidos = () => useStore(pedidosUpdatedEvent, loadDemoPedidos);
 
-export const loadDemoPedidos = () => readStorage<Pedido[]>(demoPedidosStorageKey, []);
-export const saveDemoPedidos = (pedidos: Pedido[]) => {
-  writeStorage(demoPedidosStorageKey, pedidos);
-  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('restaurant-pedidos-updated'));
-};
-
-export const loadDemoIngredientes = () => readStorage<Ingrediente[]>(demoIngredientesStorageKey, []);
+export const loadDemoIngredientes = () => readStore<Ingrediente[]>(demoIngredientesStorageKey, []);
 export const saveDemoIngredientes = (ingredientes: Ingrediente[]) =>
-  writeStorage(demoIngredientesStorageKey, ingredientes);
+  writeStore(demoIngredientesStorageKey, ingredientes, ingredientesUpdatedEvent);
+export const useIngredientes = () => useStore(ingredientesUpdatedEvent, loadDemoIngredientes);
 
-export const loadDemoMovimientosStock = () =>
-  readStorage<MovimientoStock[]>(demoMovimientosStockStorageKey, []);
-
+export const loadDemoMovimientosStock = () => readStore<MovimientoStock[]>(demoMovimientosStockStorageKey, []);
 export const saveDemoMovimientosStock = (movimientos: MovimientoStock[]) =>
-  writeStorage(demoMovimientosStockStorageKey, movimientos);
+  writeStore(demoMovimientosStockStorageKey, movimientos, movimientosStockUpdatedEvent);
+export const useMovimientosStock = () => useStore(movimientosStockUpdatedEvent, loadDemoMovimientosStock);
 
-export const loadDemoProducciones = () =>
-  readStorage<ProduccionPreparada[]>(demoProduccionesStorageKey, []);
-
+export const loadDemoProducciones = () => readStore<ProduccionPreparada[]>(demoProduccionesStorageKey, []);
 export const saveDemoProducciones = (producciones: ProduccionPreparada[]) =>
-  writeStorage(demoProduccionesStorageKey, producciones);
+  writeStore(demoProduccionesStorageKey, producciones, produccionesUpdatedEvent);
+export const useProducciones = () => useStore(produccionesUpdatedEvent, loadDemoProducciones);
 
-export const loadDemoRegistrosProduccion = () =>
-  readStorage<RegistroProduccion[]>(demoRegistrosProduccionStorageKey, []);
-
+export const loadDemoRegistrosProduccion = () => readStore<RegistroProduccion[]>(demoRegistrosProduccionStorageKey, []);
 export const saveDemoRegistrosProduccion = (registros: RegistroProduccion[]) =>
-  writeStorage(demoRegistrosProduccionStorageKey, registros);
+  writeStore(demoRegistrosProduccionStorageKey, registros, registrosProduccionUpdatedEvent);
