@@ -1,5 +1,6 @@
 import type {
   CuentaDinero,
+  Gasto,
   EstadoFacturaProveedor,
   FacturaProveedor,
   MetodoPago,
@@ -7,7 +8,10 @@ import type {
   PagoProveedor,
 } from './types';
 import { dayKey } from './fechas';
-import { writeStore } from './storeSync';
+import { withStoreTransaction, writeStore } from './storeSync';
+import { loadGastos, saveGastos } from './gastosStore';
+import { aplicarGastoEnCajaDia } from './cajaStore';
+import { nuevoId } from './ids';
 
 export const cuentasDineroStorageKey = 'restaurant-cuentas-dinero';
 export const movimientosFinancierosStorageKey = 'restaurant-movimientos-financieros';
@@ -15,7 +19,7 @@ export const facturasProveedorStorageKey = 'restaurant-facturas-proveedor';
 export const pagosProveedorStorageKey = 'restaurant-pagos-proveedor';
 
 const todayKey = () => dayKey();
-const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const createId = (prefix: string) => nuevoId(prefix);
 
 /** Tesoreria acumulada. Conserva el id historico para no romper los movimientos ya guardados. */
 export const cuentaCajaGrandeId = 'cuenta-caja-grande';
@@ -126,7 +130,7 @@ const arrastrarCajaDia = (cuentas: CuentaDinero[], hoy: string): CuentaDinero[] 
   return siguiente;
 };
 
-export const loadCuentasDinero = () => {
+export const loadCuentasDinero = () => withStoreTransaction(() => {
   const hoy = todayKey();
   const saved = readStorage<CuentaDinero[]>(cuentasDineroStorageKey, []);
   if (!Array.isArray(saved) || saved.length === 0) {
@@ -138,7 +142,7 @@ export const loadCuentasDinero = () => {
   const alDia = arrastrarCajaDia(separadas, hoy);
   if (alDia !== saved) writeStorage(cuentasDineroStorageKey, alDia);
   return alDia;
-};
+});
 
 export const transferirEntreCuentas = (data: {
   cuenta_origen_id: string;
@@ -146,8 +150,14 @@ export const transferirEntreCuentas = (data: {
   monto: number;
   descripcion: string;
   fecha?: string;
-}) => {
-  if (data.monto <= 0) return;
+}) => withStoreTransaction(() => {
+  if (data.monto === 0) return;
+  if (!Number.isFinite(data.monto) || data.monto <= 0) throw new Error('Ingresá un importe mayor que cero.');
+  if (data.cuenta_origen_id === data.cuenta_destino_id) throw new Error('Elegí dos cuentas distintas.');
+  const cuentas = loadCuentasDinero();
+  const origen = cuentas.find(cuenta => cuenta.id === data.cuenta_origen_id && cuenta.activa);
+  const destino = cuentas.find(cuenta => cuenta.id === data.cuenta_destino_id && cuenta.activa);
+  if (!origen || !destino) throw new Error('Una de las cuentas no está disponible.');
   const fecha = data.fecha || todayKey();
 
   saveCuentasDinero(loadCuentasDinero().map(cuenta => {
@@ -168,10 +178,10 @@ export const transferirEntreCuentas = (data: {
     created_at: new Date().toISOString(),
   };
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
-};
+});
 
 /** Pasa el efectivo del mostrador a la caja grande y deja la caja del dia en cero. */
-export const cerrarCajaDia = (descripcion = 'Cierre de caja: efectivo del dia a caja grande') => {
+export const cerrarCajaDia = (descripcion = 'Cierre de caja: efectivo del dia a caja grande') => withStoreTransaction(() => {
   const hoy = todayKey();
   const cuentas = loadCuentasDinero();
   const cajaDia = cuentas.find(cuenta => cuenta.id === cuentaCajaDiaId);
@@ -199,7 +209,7 @@ export const cerrarCajaDia = (descripcion = 'Cierre de caja: efectivo del dia a 
   }
 
   return transferido;
-};
+});
 
 export const saveCuentasDinero = (cuentas: CuentaDinero[]) => writeStorage(cuentasDineroStorageKey, cuentas);
 
@@ -258,7 +268,14 @@ export const registrarPagoProveedor = (data: {
   monto: number;
   observaciones?: string;
   creado_por?: string;
-}) => {
+}) => withStoreTransaction(() => {
+  if (!Number.isFinite(data.monto) || data.monto <= 0) throw new Error('Ingresá un pago mayor que cero.');
+  if (!loadCuentasDinero().some(cuenta => cuenta.id === data.cuenta_origen_id && cuenta.activa)) throw new Error('Elegí una cuenta de origen válida.');
+  if (data.factura_id) {
+    const factura = loadFacturasProveedor().find(item => item.id === data.factura_id && item.proveedor_id === data.proveedor_id);
+    if (!factura) throw new Error('La factura no corresponde a este proveedor.');
+    if (Math.round(data.monto * 100) > Math.round((factura.total - factura.pagado) * 100)) throw new Error('El pago supera el saldo pendiente de la factura.');
+  }
   const pago: PagoProveedor = {
     id: createId('pago-prov'),
     proveedor_id: data.proveedor_id,
@@ -284,6 +301,13 @@ export const registrarPagoProveedor = (data: {
       return { ...updated, estado: getFacturaEstado(updated) };
     });
     saveFacturasProveedor(facturas);
+    const factura = facturas.find(item => item.id === data.factura_id);
+    const gastos = loadGastos();
+    if (factura && gastos.some(gasto => gasto.factura_proveedor_id === factura.id)) {
+      saveGastos(gastos.map(gasto => gasto.factura_proveedor_id === factura.id
+        ? { ...gasto, monto_pagado: factura.pagado, estado: factura.pagado >= factura.total ? 'pagado' : 'pendiente' }
+        : gasto));
+    }
   }
 
   const pagos = [pago, ...loadPagosProveedor()];
@@ -306,8 +330,63 @@ export const registrarPagoProveedor = (data: {
   };
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
 
+  if (data.cuenta_origen_id === cuentaCajaDiaId) aplicarGastoEnCajaDia(pago.fecha, data.monto, 1);
   return pago;
-};
+});
+
+/** Registra la compra en Pagos y conserva un solo débito por el importe abonado. */
+export const registrarGastoCompra = (data: {
+  compra_id: string;
+  proveedor_id?: string;
+  fecha: string;
+  vencimiento?: string;
+  comprobante?: string;
+  concepto: string;
+  observaciones: string;
+  total: number;
+  monto_pagado: number;
+  cuenta_origen_id?: string;
+  metodo_pago: MetodoPago;
+}) => withStoreTransaction(() => {
+  const existente = loadGastos().find(gasto => gasto.compra_id === data.compra_id);
+  if (existente) return existente;
+  if (!Number.isFinite(data.total) || data.total <= 0) return;
+  if (!Number.isFinite(data.monto_pagado) || data.monto_pagado < 0 || data.monto_pagado > data.total) {
+    throw new Error('El importe pagado debe estar entre cero y el total de la compra.');
+  }
+  if (data.monto_pagado > 0 && !loadCuentasDinero().some(cuenta => cuenta.id === data.cuenta_origen_id && cuenta.activa)) {
+    throw new Error('Elegí una cuenta de origen para registrar el pago.');
+  }
+  const factura = data.proveedor_id ? crearFacturaProveedor({
+    proveedor_id: data.proveedor_id, compra_id: data.compra_id, numero: data.comprobante,
+    fecha: data.fecha, vencimiento: data.vencimiento, total: data.total, observaciones: data.observaciones,
+  }) : undefined;
+  const gasto: Gasto = {
+    id: `gasto-${data.compra_id}`, compra_id: data.compra_id, factura_proveedor_id: factura?.id,
+    fecha: data.fecha, concepto: data.concepto, categoria: 'variable', alcance: 'general',
+    metodo_pago: data.metodo_pago, monto: data.total, monto_pagado: data.monto_pagado,
+    observaciones: data.observaciones, created_at: new Date().toISOString(),
+    proveedor_id: data.proveedor_id, comprobante: data.comprobante,
+    cuenta_origen_id: data.cuenta_origen_id, vencimiento: data.vencimiento || data.fecha,
+    estado: data.monto_pagado >= data.total ? 'pagado' : 'pendiente',
+  };
+  if (data.monto_pagado > 0 && data.cuenta_origen_id) {
+    if (factura && data.proveedor_id) {
+      registrarPagoProveedor({
+        proveedor_id: data.proveedor_id, factura_id: factura.id, cuenta_origen_id: data.cuenta_origen_id,
+        fecha: data.fecha, metodo_pago: data.metodo_pago, monto: data.monto_pagado, observaciones: data.concepto,
+      });
+    } else {
+      registrarSalidaCuenta({
+        cuenta_id: data.cuenta_origen_id, monto: data.monto_pagado, descripcion: data.concepto,
+        origen: 'gasto', fecha: data.fecha, metodo_pago: data.metodo_pago,
+      });
+      if (data.cuenta_origen_id === cuentaCajaDiaId) aplicarGastoEnCajaDia(data.fecha, data.monto_pagado, 1);
+    }
+  }
+  saveGastos([gasto, ...loadGastos()]);
+  return gasto;
+});
 
 export const registrarEntradaCuenta = (data: {
   cuenta_id: string;
@@ -315,7 +394,7 @@ export const registrarEntradaCuenta = (data: {
   descripcion: string;
   origen: MovimientoFinanciero['origen'];
   fecha?: string;
-}) => {
+}) => withStoreTransaction(() => {
   saveCuentasDinero(loadCuentasDinero().map(cuenta => (
     cuenta.id === data.cuenta_id ? { ...cuenta, saldo: cuenta.saldo + data.monto } : cuenta
   )));
@@ -330,7 +409,7 @@ export const registrarEntradaCuenta = (data: {
     created_at: new Date().toISOString(),
   };
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
-};
+});
 
 export const registrarSalidaCuenta = (data: {
   cuenta_id: string;
@@ -341,7 +420,7 @@ export const registrarSalidaCuenta = (data: {
   metodo_pago?: MetodoPago;
   proveedor_id?: string;
   creado_por?: string;
-}) => {
+}) => withStoreTransaction(() => {
   saveCuentasDinero(loadCuentasDinero().map(cuenta => (
     cuenta.id === data.cuenta_id ? { ...cuenta, saldo: cuenta.saldo - data.monto } : cuenta
   )));
@@ -359,4 +438,4 @@ export const registrarSalidaCuenta = (data: {
     creado_por: data.creado_por,
   };
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
-};
+});

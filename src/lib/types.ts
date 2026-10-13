@@ -93,6 +93,8 @@ export interface Producto {
   precio_venta: number;
   costo_produccion: number;
   margen_ganancia: number;
+  /** Recargo objetivo sobre el costo. Costo 100 y venta 200 = 100. */
+  margen_ideal?: number;
   imagen_url?: string;
   disponible: boolean;
   agotado: boolean;
@@ -240,6 +242,9 @@ export interface CajaDiaria {
 
 export interface Gasto {
   id: string;
+  compra_id?: string;
+  factura_proveedor_id?: string;
+  monto_pagado?: number;
   fecha: string;
   concepto: string;
   categoria: CategoriaGasto;
@@ -410,6 +415,8 @@ export type PageId =
   | 'stock_produccion'
   | 'proveedores'
   | 'gastos'
+  | 'gastos_pagos'
+  | 'gastos_traspasos'
   | 'costos'
   | 'reportes'
   | 'usuarios'

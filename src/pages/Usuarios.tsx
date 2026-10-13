@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, CreditCard as Edit2, X, Check, Shield, Users as UsersIcon } from 'lucide-react';
 import type { Profile, Rol } from '../lib/types';
-import { loadUsuarios, saveUsuarios } from '../lib/usuariosStore';
+import { loadUsuarios, saveUsuarios, useUsuarios } from '../lib/usuariosStore';
+import { useAuth } from '../contexts/AuthContext';
+import CuentasAcceso from '../components/CuentasAcceso';
+import { nuevoId } from '../lib/ids';
 
 const rolConfig: Record<Rol, { label: string; color: string; desc: string }> = {
   admin: { label: 'Administrador', color: 'bg-red-100 text-red-700', desc: 'Acceso completo al sistema' },
@@ -20,15 +23,15 @@ const rolesPermissions: Record<Rol, string[]> = {
 };
 
 export default function Usuarios() {
-  const [usuarios, setUsuarios] = useState<Profile[]>(loadUsuarios);
+  const { modoDemo } = useAuth();
+  const usuarios = useUsuarios();
   const [showForm, setShowForm] = useState(false);
   const [editUser, setEditUser] = useState<Partial<Profile & { email?: string; password?: string }> | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [selectedRol, setSelectedRol] = useState<Rol | null>(null);
 
-  useEffect(() => {
-    saveUsuarios(usuarios);
-  }, [usuarios]);
+  // Siempre sobre la lista guardada: así no se pisan cambios que llegaron de otro dispositivo.
+  const setUsuarios = (actualizar: (previos: Profile[]) => Profile[]) => saveUsuarios(actualizar(loadUsuarios()));
 
   const openEdit = (u: Profile) => {
     setEditUser({ ...u });
@@ -48,7 +51,7 @@ export default function Usuarios() {
       setUsuarios(prev => prev.map(u => u.id === editId ? { ...u, ...editUser } as Profile : u));
     } else {
       const newUser: Profile = {
-        id: `emp-${Date.now()}`,
+        id: nuevoId('emp'),
         nombre: editUser.nombre || '',
         apellido: editUser.apellido || '',
         rol: editUser.rol || 'moza',
@@ -191,6 +194,8 @@ export default function Usuarios() {
           </div>
         </div>
       </div>
+
+      {!modoDemo && <CuentasAcceso />}
 
       {showForm && editUser && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">

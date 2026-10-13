@@ -21,7 +21,7 @@ export const aplicarGastoEnCajaDia = (fecha: string, monto: number, signo: 1 | -
       ? item
       : {
           ...item,
-          monto_esperado_efectivo: Math.max(item.monto_inicial || 0, item.monto_esperado_efectivo - monto * signo),
+          monto_esperado_efectivo: item.monto_esperado_efectivo - monto * signo,
         }
   )));
 };

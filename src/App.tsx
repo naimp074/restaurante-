@@ -1,25 +1,28 @@
-import { useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/layout/Layout';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Mesas from './pages/Mesas';
-import Pedidos from './pages/Pedidos';
-import Cocina from './pages/Cocina';
-import Caja from './pages/Caja';
-import Cobros from './pages/Cobros';
-import CuentaCorriente from './pages/CuentaCorriente';
-import Productos from './pages/Productos';
-import Stock from './pages/Stock';
-import Proveedores from './pages/Proveedores';
-import Gastos from './pages/Gastos';
-import Costos from './pages/Costos';
-import Reportes from './pages/Reportes';
-import Usuarios from './pages/Usuarios';
-import Configuracion from './pages/Configuracion';
 import type { PageId } from './lib/types';
 import { dayKey } from './lib/fechas';
+import { hashDePagina, paginaDesdeHash, paginaInicial, puedeVerPagina } from './lib/paginas';
 import SyncProvider from './lib/sync/SyncProvider';
+
+// Cada pantalla se descarga la primera vez que se abre.
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Mesas = lazy(() => import('./pages/Mesas'));
+const Pedidos = lazy(() => import('./pages/Pedidos'));
+const Cocina = lazy(() => import('./pages/Cocina'));
+const Caja = lazy(() => import('./pages/Caja'));
+const Cobros = lazy(() => import('./pages/Cobros'));
+const CuentaCorriente = lazy(() => import('./pages/CuentaCorriente'));
+const Productos = lazy(() => import('./pages/Productos'));
+const Stock = lazy(() => import('./pages/Stock'));
+const Proveedores = lazy(() => import('./pages/Proveedores'));
+const Gastos = lazy(() => import('./pages/Gastos'));
+const Costos = lazy(() => import('./pages/Costos'));
+const Reportes = lazy(() => import('./pages/Reportes'));
+const Usuarios = lazy(() => import('./pages/Usuarios'));
+const Configuracion = lazy(() => import('./pages/Configuracion'));
 
 const cajaStorageKey = 'restaurant-cajas-diarias';
 const todayKey = () => dayKey();
@@ -35,16 +38,32 @@ const hasOpenCajaToday = () => {
   }
 };
 
-const paginaInicial = (rol: string): PageId => {
-  if (rol === 'moza') return 'ventas';
-  if (rol === 'cocina') return 'cocina';
-  if (rol === 'cajero') return 'caja';
-  return 'dashboard';
+const usePaginaEnHash = () => {
+  const [pagina, setPagina] = useState<PageId | null>(() => paginaDesdeHash(window.location.hash));
+
+  useEffect(() => {
+    const alCambiar = () => setPagina(paginaDesdeHash(window.location.hash));
+    window.addEventListener('hashchange', alCambiar);
+    return () => window.removeEventListener('hashchange', alCambiar);
+  }, []);
+
+  const navegar = useCallback((destino: PageId) => {
+    if (window.location.hash !== hashDePagina(destino)) window.location.hash = hashDePagina(destino);
+    setPagina(destino);
+  }, []);
+
+  return [pagina, navegar] as const;
 };
+
+const CargandoPagina = () => (
+  <div className="flex items-center justify-center py-24">
+    <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 function AppContent() {
   const { user, loading } = useAuth();
-  const [currentPage, setCurrentPage] = useState<PageId | null>(null);
+  const [currentPage, setCurrentPage] = usePaginaEnHash();
 
   if (loading) {
     return (
@@ -63,11 +82,11 @@ function AppContent() {
     return <Login />;
   }
 
-  const pagina = currentPage ?? paginaInicial(user.rol);
+  const solicitada = currentPage ?? paginaInicial(user.rol);
+  const permitida = puedeVerPagina(user.rol, solicitada) ? solicitada : paginaInicial(user.rol);
+  const effectivePage: PageId = user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : permitida;
 
   const renderPage = () => {
-    const effectivePage: PageId = user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : pagina;
-
     switch (effectivePage) {
       case 'dashboard': return <Dashboard />;
       case 'mesas': return <Mesas />;
@@ -88,21 +107,20 @@ function AppContent() {
       case 'stock_consumos': return <Stock apartadoInicial="consumos" />;
       case 'stock_produccion': return <Stock apartadoInicial="produccion" />;
       case 'proveedores': return <Proveedores />;
-      case 'gastos': return <Gastos />;
+      case 'gastos': return <Gastos key="gastos" onNavigate={setCurrentPage} />;
+      case 'gastos_pagos': return <Gastos key="gastos-pagos" apartadoInicial="pagos" onNavigate={setCurrentPage} />;
+      case 'gastos_traspasos': return <Gastos key="gastos-traspasos" apartadoInicial="traspasos" onNavigate={setCurrentPage} />;
       case 'costos': return <Costos />;
       case 'reportes': return <Reportes />;
       case 'usuarios': return <Usuarios />;
-      case 'configuracion': return user.rol === 'admin' || user.rol === 'encargado' ? <Configuracion /> : <Dashboard />;
+      case 'configuracion': return <Configuracion />;
       default: return <Dashboard />;
     }
   };
 
   return (
-    <Layout
-      currentPage={user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : pagina}
-      onNavigate={setCurrentPage}
-    >
-      {renderPage()}
+    <Layout currentPage={effectivePage} onNavigate={setCurrentPage}>
+      <Suspense fallback={<CargandoPagina />}>{renderPage()}</Suspense>
     </Layout>
   );
 }

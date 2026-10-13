@@ -45,9 +45,13 @@ const centavos = (monto: number) => Math.round(monto * 100);
 export const loadCuentaCorriente = (): CuentaStore => {
   const saved = window.localStorage.getItem(cuentaCorrienteStorageKey);
   if (!saved) return { clientes: [], movimientos: [] };
-  const parsed = JSON.parse(saved) as CuentaStore;
-  if (!Array.isArray(parsed.clientes) || !Array.isArray(parsed.movimientos)) throw new Error('No se pudo leer la cuenta corriente guardada.');
-  return parsed;
+  const parsed = JSON.parse(saved) as Partial<CuentaStore> | null;
+  if (!parsed || typeof parsed !== 'object') throw new Error('No se pudo leer la cuenta corriente guardada.');
+  // Al sincronizar puede llegar una parte antes que la otra.
+  const clientes = parsed.clientes ?? [];
+  const movimientos = parsed.movimientos ?? [];
+  if (!Array.isArray(clientes) || !Array.isArray(movimientos)) throw new Error('No se pudo leer la cuenta corriente guardada.');
+  return { clientes, movimientos };
 };
 const save = (data: CuentaStore) => writeStore(cuentaCorrienteStorageKey, data, eventName);
 export const saldoCliente = (clienteId: string, movimientos = loadCuentaCorriente().movimientos) =>

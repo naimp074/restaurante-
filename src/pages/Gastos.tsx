@@ -1,12 +1,23 @@
-import { useState } from 'react';
-import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, X, Check } from 'lucide-react';
-import type { AlcanceGasto, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, Proveedor, TipoCuentaDinero } from '../lib/types';
+import { useEffect, useState } from 'react';
+import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote } from 'lucide-react';
+import type { AlcanceGasto, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, PageId, Proveedor, TipoCuentaDinero } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
-import { cuentaCajaDiaId, loadCuentasDinero, registrarEntradaCuenta, registrarSalidaCuenta, saveCuentasDinero } from '../lib/finance';
+import {
+  cuentaBancoId,
+  cuentaCajaDiaId,
+  cuentaCajaGrandeId,
+  loadCuentasDinero,
+  loadMovimientosFinancieros,
+  registrarEntradaCuenta,
+  registrarSalidaCuenta,
+  saveCuentasDinero,
+  transferirEntreCuentas,
+} from '../lib/finance';
 import { loadProveedores } from '../lib/proveedoresStore';
 import { dayKey } from '../lib/fechas';
 import { saveGastos, useGastos } from '../lib/gastosStore';
 import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
+import { nuevoId } from '../lib/ids';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -35,11 +46,60 @@ const todayKey = () => dayKey();
 const formatMoney = (value: number) =>
   `$${value.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-export default function Gastos() {
+const ordenCuentas = (cuentas: CuentaDinero[]) => {
+  const prioridad = [cuentaCajaDiaId, cuentaCajaGrandeId, cuentaBancoId, 'cuenta-mercado-pago'];
+  return [...cuentas].sort((a, b) => {
+    const ia = prioridad.indexOf(a.id);
+    const ib = prioridad.indexOf(b.id);
+    if (ia === -1 && ib === -1) return a.nombre.localeCompare(b.nombre, 'es');
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+};
+
+const colorCuenta = {
+  amber: 'bg-amber-50 text-amber-600 border-amber-100',
+  blue: 'bg-blue-50 text-blue-600 border-blue-100',
+  green: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+  violet: 'bg-violet-50 text-violet-600 border-violet-100',
+  red: 'bg-red-50 text-red-600 border-red-100',
+  slate: 'bg-slate-50 text-slate-600 border-slate-100',
+} as const;
+
+type ColorCuenta = keyof typeof colorCuenta;
+
+const estiloCuenta = (cuenta: CuentaDinero): { icon: typeof Wallet; color: ColorCuenta; sub: string } => {
+  if (cuenta.id === cuentaCajaDiaId) {
+    return { icon: Banknote, color: 'amber', sub: 'Plata del día' };
+  }
+  if (cuenta.id === cuentaCajaGrandeId) {
+    return { icon: Wallet, color: 'blue', sub: 'Tesorería' };
+  }
+  if (cuenta.tipo === 'banco') {
+    return { icon: Landmark, color: 'green', sub: 'Banco' };
+  }
+  if (cuenta.tipo === 'billetera_virtual') {
+    return { icon: Smartphone, color: 'violet', sub: 'Billetera' };
+  }
+  if (cuenta.tipo === 'tarjeta') {
+    return { icon: CreditCard, color: 'red', sub: 'Tarjeta' };
+  }
+  return { icon: Wallet, color: 'slate', sub: 'Cuenta' };
+};
+
+interface GastosProps {
+  apartadoInicial?: 'pagos' | 'traspasos';
+  onNavigate?: (page: PageId) => void;
+}
+
+export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const { user } = useAuth();
   const gastos = useGastos();
   const cajas = useCajas();
+  const apartado = apartadoInicial || null;
   const [cuentas, setCuentas] = useState<CuentaDinero[]>(loadCuentasDinero);
+  const [movimientos, setMovimientos] = useState(loadMovimientosFinancieros);
   const [proveedores] = useState<Proveedor[]>(loadProveedores);
   const [showForm, setShowForm] = useState(false);
   const [concepto, setConcepto] = useState('');
@@ -67,14 +127,44 @@ export default function Gastos() {
   const [nuevaCuentaTipo, setNuevaCuentaTipo] = useState<TipoCuentaDinero>('efectivo');
   const [nuevaCuentaSaldo, setNuevaCuentaSaldo] = useState('');
   const [nuevaCuentaError, setNuevaCuentaError] = useState('');
+  const [cuentaAbiertaId, setCuentaAbiertaId] = useState<string | null>(null);
+  const [traspasoDestinoId, setTraspasoDestinoId] = useState(cuentaBancoId);
+  const [traspasoMonto, setTraspasoMonto] = useState('');
+  const [traspasoError, setTraspasoError] = useState('');
+
+  useEffect(() => {
+    const actualizar = () => {
+      setCuentas(loadCuentasDinero());
+      setMovimientos(loadMovimientosFinancieros());
+    };
+    const eventos = ['restaurant-cuentas-dinero-updated', 'restaurant-movimientos-financieros-updated', 'storage'];
+    eventos.forEach(evento => window.addEventListener(evento, actualizar));
+    return () => eventos.forEach(evento => window.removeEventListener(evento, actualizar));
+  }, []);
+
+  useEffect(() => {
+    if (apartado !== 'traspasos') {
+      setCuentaAbiertaId(null);
+      setShowNuevaCuenta(false);
+    }
+  }, [apartado]);
+
+  const abrirNuevaCuenta = () => {
+    setShowNuevaCuenta(true);
+    setNuevaCuentaNombre('');
+    setNuevaCuentaTipo('banco');
+    setNuevaCuentaSaldo('');
+    setNuevaCuentaError('');
+  };
 
   const cajaHoy = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
   const gastosHoy = gastos.filter(gasto => gasto.fecha === todayKey());
-  const gastosCajaHoy = gastosHoy.filter(gasto => gasto.alcance === 'caja_dia');
   const totalGastosHoy = gastosHoy.reduce((sum, gasto) => sum + gasto.monto, 0);
-  const totalDescuentoCajaHoy = gastosCajaHoy.reduce((sum, gasto) => sum + gasto.monto, 0);
+  const totalDescuentoCajaHoy = movimientos
+    .filter(mov => mov.fecha === todayKey() && mov.tipo === 'salida' && mov.cuenta_id === cuentaCajaDiaId)
+    .reduce((sum, mov) => sum + mov.monto, 0);
   const gastosPendientes = gastos.filter(gasto => (gasto.estado || 'pagado') !== 'pagado');
-  const totalPendiente = gastosPendientes.reduce((sum, gasto) => sum + gasto.monto, 0);
+  const totalPendiente = gastosPendientes.reduce((sum, gasto) => sum + Math.max(0, gasto.monto - (gasto.monto_pagado || 0)), 0);
   const disponibleCajaHoy = (cajaHoy?.monto_esperado_efectivo ?? 0) + (cajaHoy?.tarjeta ?? 0) + (cajaHoy?.transferencia ?? 0);
   const gastosFiltrados = gastos
     .filter(gasto => filtroEstado === 'todos' || (gasto.estado || 'pagado') === filtroEstado)
@@ -119,7 +209,7 @@ export default function Gastos() {
     }
 
     const gasto: Gasto = {
-      id: `gasto-${Date.now()}`,
+      id: nuevoId('gasto'),
       fecha,
       concepto: concepto.trim(),
       categoria,
@@ -182,7 +272,7 @@ export default function Gastos() {
       return;
     }
     const nuevaCuenta: CuentaDinero = {
-      id: `cuenta-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: nuevoId('cuenta'),
       nombre,
       tipo: nuevaCuentaTipo,
       saldo,
@@ -193,6 +283,7 @@ export default function Gastos() {
     saveCuentasDinero(actualizadas);
     setCuentas(actualizadas);
     setCuentaOrigenId(nuevaCuenta.id);
+    setTraspasoDestinoId(nuevaCuenta.id);
     setShowNuevaCuenta(false);
     setNuevaCuentaNombre('');
     setNuevaCuentaTipo('efectivo');
@@ -202,6 +293,7 @@ export default function Gastos() {
 
   const deleteGasto = (gastoId: string) => {
     const gasto = gastos.find(item => item.id === gastoId);
+    if (gasto?.compra_id) return;
     if ((gasto?.estado || 'pagado') === 'pagado' && gasto?.pagos_divididos?.length) {
       gasto.pagos_divididos.forEach(parte => registrarEntradaCuenta({
         cuenta_id: parte.cuenta_id, monto: parte.monto,
@@ -230,6 +322,386 @@ export default function Gastos() {
 
   const totalByCategoria = (target: CategoriaGasto) =>
     gastosHoy.filter(gasto => gasto.categoria === target).reduce((sum, gasto) => sum + gasto.monto, 0);
+
+  const cuentasActivas = ordenCuentas(cuentas.filter(cuenta => cuenta.activa));
+  const nombreCuenta = (id?: string) => cuentas.find(cuenta => cuenta.id === id)?.nombre || 'Cuenta';
+  const cuentaAbierta = cuentasActivas.find(cuenta => cuenta.id === cuentaAbiertaId) || null;
+  const destinosTraspaso = cuentasActivas.filter(cuenta => cuenta.id !== cuentaAbierta?.id);
+
+  const abrirCuenta = (id: string) => {
+    setCuentaAbiertaId(id);
+    const otra = cuentasActivas.find(cuenta => cuenta.id !== id);
+    setTraspasoDestinoId(otra?.id || id);
+    setTraspasoMonto('');
+    setTraspasoError('');
+  };
+
+  const guardarTraspaso = () => {
+    const origenId = cuentaAbierta?.id;
+    const montoNum = Number.parseFloat(traspasoMonto.replace(',', '.'));
+    setTraspasoError('');
+    if (!origenId) {
+      setTraspasoError('Elegí de qué cuenta sale la plata.');
+      return;
+    }
+    if (!Number.isFinite(montoNum) || montoNum <= 0) {
+      setTraspasoError('Ingresá un monto mayor a cero.');
+      return;
+    }
+    if (origenId === traspasoDestinoId) {
+      setTraspasoError('Elegí a qué cuenta va la plata.');
+      return;
+    }
+    const origen = cuentas.find(cuenta => cuenta.id === origenId);
+    const destino = cuentas.find(cuenta => cuenta.id === traspasoDestinoId);
+    if (!origen || !destino) {
+      setTraspasoError('No se encontró una de las cuentas.');
+      return;
+    }
+    if (origen.saldo < montoNum) {
+      setTraspasoError(`No hay suficiente saldo en ${origen.nombre}. Disponible: ${formatMoney(origen.saldo)}.`);
+      return;
+    }
+
+    const fecha = todayKey();
+    transferirEntreCuentas({
+      cuenta_origen_id: origenId,
+      cuenta_destino_id: traspasoDestinoId,
+      monto: montoNum,
+      descripcion: `Traspaso de ${origen.nombre} a ${destino.nombre}`,
+      fecha,
+    });
+    if (origenId === cuentaCajaDiaId) aplicarGastoEnCajaDia(fecha, montoNum, 1);
+    if (traspasoDestinoId === cuentaCajaDiaId) aplicarGastoEnCajaDia(fecha, montoNum, -1);
+    setCuentas(loadCuentasDinero());
+    setMovimientos(loadMovimientosFinancieros());
+    setTraspasoMonto('');
+  };
+
+  if (!apartado) {
+    return (
+      <div className="space-y-5">
+        <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-sm">
+          <div className="bg-gradient-to-r from-slate-900 to-amber-950 px-6 py-5">
+            <h2 className="text-white font-bold text-xl">Gastos</h2>
+            <p className="text-slate-300 text-sm mt-1">Elegí si vas a pagar algo o a mover plata entre cuentas.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+          <button
+            type="button"
+            onClick={() => onNavigate?.('gastos_pagos')}
+            className="bg-white border border-slate-200 rounded-2xl p-6 text-left hover:border-amber-300 hover:shadow-lg transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mb-4">
+              <Wallet size={22} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Pagos</h3>
+            <p className="text-sm text-slate-500 mt-1">
+              Sueldos, alquiler, extras y todo lo que sale del local.
+            </p>
+            <p className="text-xs font-semibold text-amber-600 mt-4">{gastosHoy.length} pagos cargados hoy</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate?.('gastos_traspasos')}
+            className="bg-white border border-slate-200 rounded-2xl p-6 text-left hover:border-emerald-300 hover:shadow-lg transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4">
+              <ArrowLeftRight size={22} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Traspasos</h3>
+            <p className="text-sm text-slate-500 mt-1">
+              Pasá plata de efectivo a banco, transferencia o al revés. No es un gasto: la plata sigue siendo tuya.
+            </p>
+            <p className="text-xs font-semibold text-emerald-600 mt-4">{cuentasActivas.length} cuentas disponibles</p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (apartado === 'traspasos') {
+    const totalCuentas = cuentasActivas.reduce((sum, cuenta) => sum + cuenta.saldo, 0);
+    const destinoSeleccionado = destinosTraspaso.find(cuenta => cuenta.id === traspasoDestinoId);
+    const movimientosCuenta = cuentaAbierta
+      ? movimientos.filter(movimiento =>
+          movimiento.origen === 'transferencia_interna'
+          && (movimiento.cuenta_id === cuentaAbierta.id || movimiento.cuenta_destino_id === cuentaAbierta.id)
+        )
+      : [];
+
+    const modalNuevaCuenta = showNuevaCuenta ? (
+      <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+          <div className="flex items-center justify-between p-5 border-b border-slate-100">
+            <div>
+              <h3 className="font-bold text-slate-800">Nueva cuenta</h3>
+              <p className="text-sm text-slate-500">Va a aparecer en Traspasos para mover plata.</p>
+            </div>
+            <button type="button" onClick={() => setShowNuevaCuenta(false)} className="text-slate-400 hover:text-slate-600">
+              <X size={18} />
+            </button>
+          </div>
+          <div className="p-5 space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Nombre *</label>
+              <input
+                value={nuevaCuentaNombre}
+                onChange={e => { setNuevaCuentaNombre(e.target.value); setNuevaCuentaError(''); }}
+                placeholder="Ej: Banco Galicia, Mercado Pago 2"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Tipo</label>
+                <select
+                  value={nuevaCuentaTipo}
+                  onChange={e => setNuevaCuentaTipo(e.target.value as TipoCuentaDinero)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white outline-none focus:border-amber-400"
+                >
+                  <option value="efectivo">Efectivo</option>
+                  <option value="banco">Banco</option>
+                  <option value="billetera_virtual">Billetera virtual</option>
+                  <option value="tarjeta">Tarjeta</option>
+                  <option value="otra">Otra</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Saldo inicial</label>
+                <input
+                  type="number"
+                  value={nuevaCuentaSaldo}
+                  onChange={e => setNuevaCuentaSaldo(e.target.value)}
+                  placeholder="0"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-right outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+            {nuevaCuentaError && <p className="text-sm font-medium text-red-600">{nuevaCuentaError}</p>}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowNuevaCuenta(false)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={guardarNuevaCuenta}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+              >
+                <Check size={16} />
+                Guardar cuenta
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+    if (cuentaAbierta) {
+      const visual = estiloCuenta(cuentaAbierta);
+      const Icono = visual.icon;
+
+      return (
+        <div className="space-y-5">
+          <button
+            type="button"
+                onClick={() => {
+                  setCuentaAbiertaId(null);
+                  setTraspasoError('');
+                  setTraspasoMonto('');
+                }}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800"
+          >
+            <ArrowLeft size={16} />
+            Todas las cuentas
+          </button>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="flex items-start justify-between mb-3">
+              <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${colorCuenta[visual.color]}`}>
+                <Icono size={18} />
+              </div>
+              <p className="text-xs font-medium text-slate-500">{visual.sub}</p>
+            </div>
+            <p className={`text-3xl font-bold ${cuentaAbierta.saldo < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+              {formatMoney(cuentaAbierta.saldo)}
+            </p>
+            <p className="text-sm text-slate-500 mt-0.5">{cuentaAbierta.nombre}</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+            <div>
+              <h3 className="font-semibold text-slate-800">Pasar plata a</h3>
+              <p className="text-sm text-slate-500">Tocá a dónde va y confirmá el monto. No es un gasto.</p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {destinosTraspaso.map(cuenta => {
+                const destinoVisual = estiloCuenta(cuenta);
+                const DestinoIcono = destinoVisual.icon;
+                const activo = cuenta.id === traspasoDestinoId;
+                return (
+                  <button
+                    key={cuenta.id}
+                    type="button"
+                    onClick={() => setTraspasoDestinoId(cuenta.id)}
+                    className={`rounded-2xl border p-4 text-left transition-all ${
+                      activo ? 'border-amber-400 bg-amber-50 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className={`w-9 h-9 rounded-xl border flex items-center justify-center mb-3 ${colorCuenta[destinoVisual.color]}`}>
+                      <DestinoIcono size={16} />
+                    </div>
+                    <p className="text-base font-bold text-slate-800">{formatMoney(cuenta.saldo)}</p>
+                    <p className="text-sm text-slate-500 mt-0.5">{cuenta.nombre}</p>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={abrirNuevaCuenta}
+                className="rounded-2xl border border-dashed border-slate-300 p-4 text-left hover:border-amber-400 hover:bg-amber-50/50 transition-all"
+              >
+                <div className="w-9 h-9 rounded-xl border border-slate-200 bg-slate-50 text-slate-500 flex items-center justify-center mb-3">
+                  <Plus size={16} />
+                </div>
+                <p className="text-sm font-semibold text-slate-800">Nueva cuenta</p>
+                <p className="text-xs text-slate-500 mt-0.5">Agregar destino</p>
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Monto a pasar</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={traspasoMonto}
+                onChange={e => setTraspasoMonto(e.target.value)}
+                placeholder="0"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+              />
+            </div>
+
+            {traspasoError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{traspasoError}</p>
+            )}
+
+            <button
+              type="button"
+              onClick={guardarTraspaso}
+              className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition-colors"
+            >
+              <ArrowLeftRight size={14} />
+              {destinoSeleccionado
+                ? `Pasar a ${destinoSeleccionado.nombre}`
+                : 'Pasar plata'}
+            </button>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="font-semibold text-slate-800">Movimientos</h3>
+              <p className="text-sm text-slate-500">Solo a dónde fue la plata.</p>
+            </div>
+            {movimientosCuenta.length === 0 ? (
+              <p className="px-5 py-8 text-sm text-slate-500 text-center">Todavía no hay traspasos en esta cuenta.</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {movimientosCuenta.map(movimiento => {
+                  const sale = movimiento.cuenta_id === cuentaAbierta.id;
+                  const destino = nombreCuenta(sale ? movimiento.cuenta_destino_id : movimiento.cuenta_id);
+                  return (
+                    <div key={movimiento.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-slate-800">
+                        {sale ? `A ${destino}` : `De ${destino}`}
+                      </p>
+                      <p className={`text-sm font-bold ${sale ? 'text-slate-800' : 'text-emerald-600'}`}>
+                        {sale ? '−' : '+'}{formatMoney(movimiento.monto)}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {modalNuevaCuenta}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-5">
+        <button
+          type="button"
+          onClick={() => onNavigate?.('gastos')}
+          className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800"
+        >
+          <ArrowLeft size={16} />
+          Gastos
+        </button>
+
+        <div>
+          <h2 className="font-semibold text-slate-800">Traspasos</h2>
+          <p className="text-sm text-slate-500">
+            Tocá una cuenta para ver la plata, los movimientos y pasar a otra.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {cuentasActivas.map(cuenta => {
+            const visual = estiloCuenta(cuenta);
+            const Icono = visual.icon;
+            return (
+              <button
+                key={cuenta.id}
+                type="button"
+                onClick={() => abrirCuenta(cuenta.id)}
+                className="bg-white rounded-2xl border border-slate-200 p-5 text-left hover:border-amber-300 hover:shadow-sm transition-all"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${colorCuenta[visual.color]}`}>
+                    <Icono size={18} />
+                  </div>
+                  <p className="text-xs font-medium text-slate-500">{visual.sub}</p>
+                </div>
+                <p className={`text-2xl font-bold ${cuenta.saldo < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                  {formatMoney(cuenta.saldo)}
+                </p>
+                <p className="text-sm text-slate-500 mt-0.5">{cuenta.nombre}</p>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={abrirNuevaCuenta}
+            className="bg-white rounded-2xl border border-dashed border-slate-300 p-5 text-left hover:border-amber-400 hover:bg-amber-50/40 transition-all"
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className="w-10 h-10 rounded-xl border border-slate-200 bg-slate-50 text-slate-500 flex items-center justify-center">
+                <Plus size={18} />
+              </div>
+              <p className="text-xs font-medium text-slate-500">Nueva</p>
+            </div>
+            <p className="text-lg font-bold text-slate-800">Agregar cuenta</p>
+            <p className="text-sm text-slate-500 mt-0.5">Banco, billetera u otra</p>
+          </button>
+        </div>
+
+        <p className="text-sm text-slate-500">
+          Total en cuentas: <span className="font-semibold text-slate-800">{formatMoney(totalCuentas)}</span>
+        </p>
+        {modalNuevaCuenta}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -268,7 +740,15 @@ export default function Gastos() {
 
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-semibold text-slate-800">Gastos</h2>
+          <button
+            type="button"
+            onClick={() => onNavigate?.('gastos')}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800 mb-2"
+          >
+            <ArrowLeft size={16} />
+            Gastos
+          </button>
+          <h2 className="font-semibold text-slate-800">Pagos</h2>
           <p className="text-sm text-slate-500">Registrá pagos de sueldos, fijos, variables y extras</p>
         </div>
         <button
@@ -369,16 +849,19 @@ export default function Gastos() {
                           Vence {new Date(`${gasto.vencimiento}T00:00:00`).toLocaleDateString('es-AR')}
                         </p>
                       )}
+                      {gasto.compra_id && (gasto.monto_pagado || 0) > 0 && estadoGasto !== 'pagado' && (
+                        <p className="text-[11px] text-slate-500 mt-1">Pagado: {formatMoney(gasto.monto_pagado || 0)} · Resta: {formatMoney(gasto.monto - (gasto.monto_pagado || 0))}</p>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right text-sm font-bold text-red-600">-{formatMoney(gasto.monto)}</td>
                     <td className="py-3 px-4 text-center">
-                      <button
+                      {gasto.compra_id ? <span className="text-xs text-slate-400">Compra de stock</span> : <button
                         onClick={() => deleteGasto(gasto.id)}
                         className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
                         title="Eliminar gasto"
                       >
                         <Trash2 size={14} />
-                      </button>
+                      </button>}
                     </td>
                   </tr>
                 );

@@ -11,6 +11,7 @@ import {
 } from '../lib/finance';
 import { loadDemoIngredientes, saveDemoIngredientes } from '../lib/demoStore';
 import { dayKey } from '../lib/fechas';
+import { nuevoId } from '../lib/ids';
 
 const emptyProveedor: Partial<Proveedor> = {
   nombre: '',
@@ -59,6 +60,7 @@ export default function Proveedores() {
   const [pagoCuentaId, setPagoCuentaId] = useState('cuenta-caja-grande');
   const [pagoMetodo, setPagoMetodo] = useState<MetodoPago>('efectivo');
   const [pagoMonto, setPagoMonto] = useState('');
+  const [pagoError, setPagoError] = useState('');
   const [pagoFecha, setPagoFecha] = useState(dayKey());
   const [pagoObservaciones, setPagoObservaciones] = useState('');
   const [showHistorialPagos, setShowHistorialPagos] = useState(true);
@@ -186,7 +188,7 @@ export default function Proveedores() {
       )));
     } else {
       const newProveedor: Proveedor = {
-        id: `prov-${Date.now()}`,
+        id: nuevoId('prov'),
         nombre: editProveedor.nombre.trim(),
         contacto: editProveedor.contacto?.trim() || '',
         telefono: editProveedor.telefono?.trim() || '',
@@ -214,6 +216,7 @@ export default function Proveedores() {
   };
 
   const openPago = (factura?: FacturaProveedor) => {
+    setPagoError('');
     const targetFactura = factura || facturasPendientes[0];
     setPagoFacturaId(targetFactura?.id || '');
     setPagoMonto(targetFactura ? String(Math.max(targetFactura.total - targetFactura.pagado, 0)) : '');
@@ -260,7 +263,9 @@ export default function Proveedores() {
     const monto = parseFloat(pagoMonto);
     if (!pagoCuentaId || !monto || monto <= 0) return;
 
-    registrarPagoProveedor({
+    setPagoError('');
+    try {
+      registrarPagoProveedor({
       proveedor_id: selectedProveedor.id,
       factura_id: pagoFacturaId || undefined,
       cuenta_origen_id: pagoCuentaId,
@@ -268,7 +273,11 @@ export default function Proveedores() {
       metodo_pago: pagoMetodo,
       monto,
       observaciones: pagoObservaciones || `Pago a ${selectedProveedor.nombre}`,
-    });
+      });
+    } catch (error) {
+      setPagoError(error instanceof Error ? error.message : 'No se pudo registrar el pago.');
+      return;
+    }
 
     refreshFinance();
     setShowPagoForm(false);
@@ -312,7 +321,7 @@ export default function Proveedores() {
     } else {
       if (!nuevoInsumoNombre.trim()) return;
       const nuevoInsumo: Ingrediente = {
-        id: `ing-${Date.now()}`,
+        id: nuevoId('ing'),
         nombre: nuevoInsumoNombre.trim(),
         unidad_medida: nuevoInsumoUnidad,
         stock_actual: parseFloat(nuevoInsumoStock) || 0,
@@ -1357,6 +1366,7 @@ export default function Proveedores() {
                   placeholder="Ej: transferencia comprobante 123, pago parcial, efectivo de caja grande"
                 />
               </div>
+              {pagoError && <p role="alert" className="text-sm text-red-600">{pagoError}</p>}
             </div>
 
             <div className="flex gap-3 p-6 border-t border-slate-100">

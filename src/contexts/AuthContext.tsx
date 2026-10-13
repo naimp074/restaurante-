@@ -39,8 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const cargarPerfil = useCallback(async (authUser: User) => {
-    if (!supabase) return;
+  const cargarPerfil = useCallback(async (authUser: User): Promise<string | undefined> => {
+    if (!supabase) return undefined;
 
     const { data, error } = await supabase
       .from('profiles')
@@ -48,18 +48,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('id', authUser.id)
       .maybeSingle();
 
-    if (error || !data) {
-      // La sesión existe pero no hay perfil: sin rol no se puede operar.
+    const perfil = data as Profile | null;
+    // Sin perfil activo y asignado a un local no se puede operar: las políticas lo rechazan todo.
+    const motivo = error || !perfil
+      ? 'Tu usuario no tiene un perfil en el sistema. Pedile al administrador que lo revise.'
+      : !perfil.activo || !perfil.local_id
+        ? 'Tu cuenta todavía no fue aprobada. Pedile al administrador que la active desde Usuarios.'
+        : undefined;
+
+    if (motivo || !perfil) {
       await supabase.auth.signOut();
       setUser(null);
       setLoading(false);
-      return;
+      return motivo;
     }
 
-    const perfil = data as Profile;
     asegurarUsuarioLocal(perfil);
     setUser(perfil);
     setLoading(false);
+    return undefined;
   }, []);
 
   useEffect(() => {
@@ -125,8 +132,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) return { error: mensajeError(error.message) };
     if (!data.user) return { error: 'No se pudo iniciar sesión' };
 
-    await cargarPerfil(data.user);
-    return {};
+    const motivo = await cargarPerfil(data.user);
+    return motivo ? { error: motivo } : {};
   };
 
   const signOut = () => {

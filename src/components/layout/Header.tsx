@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useEstadoSync } from '../../lib/sync/useEstadoSync';
+import { useUsoAlmacenamientoLocal } from '../../lib/espacioLocal';
 
 const pageTitles: Record<PageId, string> = {
   dashboard: 'Dashboard',
@@ -25,6 +26,8 @@ const pageTitles: Record<PageId, string> = {
   stock_produccion: 'Producción',
   proveedores: 'Proveedores',
   gastos: 'Gastos',
+  gastos_pagos: 'Pagos',
+  gastos_traspasos: 'Traspasos',
   costos: 'Costos y Recetas',
   reportes: 'Reportes y Estadísticas',
   usuarios: 'Gestión de Usuarios',
@@ -39,6 +42,7 @@ interface HeaderProps {
 export default function Header({ currentPage, onMenuClick }: HeaderProps) {
   const { user, modoDemo } = useAuth();
   const sync = useEstadoSync();
+  const usoLocal = useUsoAlmacenamientoLocal();
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -76,9 +80,22 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
           Sin conexión, se guarda acá hasta sincronizar
         </p>
       )}
-      {!modoDemo && sync.online && sync.pendiente > 0 && (
+      {!modoDemo && sync.online && sync.pendiente > 0 && !sync.error && (
         <p className="hidden sm:block text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
           Sincronizando cambios…
+        </p>
+      )}
+      {!modoDemo && sync.online && sync.error && (
+        <p className="text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 max-w-[260px] truncate" title={sync.error}>
+          {sync.error}
+        </p>
+      )}
+      {usoLocal >= 0.8 && (
+        <p
+          className="text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5"
+          title="El navegador se está quedando sin espacio para guardar datos. Avisá al administrador."
+        >
+          Memoria del navegador al {Math.round(usoLocal * 100)}%
         </p>
       )}
 

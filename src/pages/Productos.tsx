@@ -1,22 +1,28 @@
 import { useEffect, useState } from 'react';
-import * as XLSX from 'xlsx';
 import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload, BadgePercent } from 'lucide-react';
-import type { Ingrediente, ListaPrecio, MetodoListaPrecio, Producto, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
+import type { Ingrediente, ListaPrecio, MetodoListaPrecio, Producto, ProduccionPreparada, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
 import { categoriasIniciales } from '../lib/mockData';
-import { loadProductos, saveProductos } from '../lib/productosStore';
-import { calcularCostoProducto, costoUnitarioProduccion, productosSinDescuento, sugerirInsumoPara } from '../lib/costosReceta';
+import { loadProductos, saveProductos, useProductos } from '../lib/productosStore';
+import { actualizarCostosProductos, calcularCostoProducto, costoUnitarioProduccion, margenPorcentaje, precioPorMargen, productosSinDescuento, sugerirInsumoPara } from '../lib/costosReceta';
 import BuscadorInsumo from '../components/BuscadorInsumo';
-import { loadDemoProducciones, saveDemoIngredientes, useIngredientes, useProducciones } from '../lib/demoStore';
+import { loadDemoIngredientes, loadDemoProducciones, saveDemoIngredientes, useIngredientes, useProducciones } from '../lib/demoStore';
 import { dayKey } from '../lib/fechas';
-import { getDescuentoProducto, loadListasPrecios, metodosListasPrecio, saveListasPrecios } from '../lib/listasPreciosStore';
+import { getDescuentoProducto, loadListasPrecios, metodosListasPrecio, saveListasPrecios, useListasPrecios } from '../lib/listasPreciosStore';
+import { withStoreTransaction } from '../lib/storeSync';
+import { nuevoId } from '../lib/ids';
+import { cargarXlsx, type Xlsx } from '../lib/cargadores';
 
 const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
 
 const getRecetaItemTipo = (item: RecetaItem): TipoComponenteReceta => item.tipo || 'stock';
 
-const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = []) => {
+const getRecetaItemData = (
+  item: RecetaItem,
+  catalogo: Ingrediente[] = [],
+  producciones: ProduccionPreparada[] = loadDemoProducciones(),
+) => {
   if (getRecetaItemTipo(item) === 'produccion') {
-    const produccion = item.produccion || loadDemoProducciones().find(p => p.id === item.produccion_id);
+    const produccion = producciones.find(p => p.id === item.produccion_id) || item.produccion;
     return {
       codigo: produccion?.id || '',
       nombre: produccion?.nombre || 'Producción',
@@ -30,7 +36,7 @@ const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = []) => {
     };
   }
 
-  const ingrediente = item.ingrediente || catalogo.find(i => i.id === item.ingrediente_id);
+  const ingrediente = catalogo.find(i => i.id === item.ingrediente_id) || item.ingrediente;
   return {
     codigo: ingrediente?.codigo || item.ingrediente_id || '',
     nombre: ingrediente?.nombre || 'Insumo',
@@ -42,11 +48,15 @@ const getRecetaItemData = (item: RecetaItem, catalogo: Ingrediente[] = []) => {
   };
 };
 
-const calcularCostoReceta = (receta: RecetaItem[] = [], catalogo: Ingrediente[] = []) =>
+const calcularCostoReceta = (
+  receta: RecetaItem[] = [],
+  catalogo: Ingrediente[] = [],
+  producciones: ProduccionPreparada[] = loadDemoProducciones(),
+) =>
   calcularCostoProducto(
     { receta } as Producto,
     id => catalogo.find(i => i.id === id)?.costo_por_unidad || 0,
-    loadDemoProducciones(),
+    producciones,
   );
 
 interface ComboImportDraft {
@@ -127,12 +137,33 @@ const findIngredienteEnCatalogo = (catalogo: Ingrediente[], codigo?: string, nom
   });
 };
 
+const recetaPersistible = (receta: RecetaItem[], productoId: string): RecetaItem[] =>
+  receta.map(item => ({
+    id: item.id,
+    producto_id: productoId,
+    tipo: item.tipo,
+    ingrediente_id: item.ingrediente_id,
+    produccion_id: item.produccion_id,
+    cantidad: item.cantidad,
+    unidad_medida: item.unidad_medida,
+    costo_calculado: item.costo_calculado,
+    created_at: item.created_at,
+  }));
+
+const mensajeErrorGuardado = (error: unknown) => {
+  const texto = error instanceof Error ? `${error.name} ${error.message}` : '';
+  if (/quota|lleno|exceed/i.test(texto)) {
+    return 'El Excel es demasiado grande para guardarlo en este navegador. Probá con menos filas o liberá espacio.';
+  }
+  return 'No pude guardar los combos. Intentá de nuevo.';
+};
+
 const findProduccionByName = (value: unknown) => {
   const normalized = normalizeText(cleanArticuloNombre(String(value ?? '')));
   return loadDemoProducciones().find(item => normalizeText(item.nombre) === normalized || normalizeText(item.nombre).includes(normalized));
 };
 
-const pickBestSheet = (workbook: XLSX.WorkBook) => {
+const pickBestSheet = (XLSX: Xlsx, workbook: ReturnType<Xlsx['read']>) => {
   let bestName = workbook.SheetNames[0];
   let bestCount = -1;
   workbook.SheetNames.forEach(name => {
@@ -150,9 +181,20 @@ interface ProductosProps {
 }
 
 export default function Productos({ apartadoInicial }: ProductosProps) {
-  const [productos, setProductos] = useState<Producto[]>(loadProductos);
+  const productos = useProductos();
+  const setProductos = (actualizar: (actuales: Producto[]) => Producto[]) => {
+    saveProductos(actualizar(loadProductos()));
+  };
   const insumosCatalogo = useIngredientes();
-  useProducciones();
+  const producciones = useProducciones();
+
+  useEffect(() => {
+    const actuales = loadProductos();
+    const actualizados = actualizarCostosProductos(actuales, insumosCatalogo, producciones);
+    if (actualizados.some((producto, index) => producto !== actuales[index])) {
+      saveProductos(actualizados);
+    }
+  }, [insumosCatalogo, producciones]);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');
   const [vista, setVista] = useState<'catalogo' | 'precios' | 'listas' | 'planilla'>(
@@ -162,7 +204,10 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   const [selectedProducto, setSelectedProducto] = useState<Producto | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editForm, setEditForm] = useState<Partial<Producto>>({});
-  const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>(loadListasPrecios);
+  const listasPrecios = useListasPrecios();
+  const setListasPrecios = (actualizar: (actuales: ListaPrecio[]) => ListaPrecio[]) => {
+    saveListasPrecios(actualizar(loadListasPrecios()));
+  };
   const [metodoLista, setMetodoLista] = useState<MetodoListaPrecio>('efectivo');
   const [margenMasivo, setMargenMasivo] = useState('');
   const [productosPrecioSeleccionados, setProductosPrecioSeleccionados] = useState<string[]>([]);
@@ -170,6 +215,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   const [importDrafts, setImportDrafts] = useState<ComboImportDraft[]>([]);
   const [importError, setImportError] = useState('');
   const [importInsumos, setImportInsumos] = useState<Ingrediente[]>([]);
+  const [importResultado, setImportResultado] = useState('');
   const [detalleCombo, setDetalleCombo] = useState<Producto | null>(null);
   const [showVinculacionStock, setShowVinculacionStock] = useState(false);
   const [vinculos, setVinculos] = useState<Record<string, { ingredienteId?: string; cantidad: string }>>({});
@@ -179,7 +225,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     const cantidad = 1;
 
     return {
-      id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: nuevoId('rec'),
       producto_id: productoId,
       tipo: 'stock',
       ingrediente_id: ingrediente?.id,
@@ -238,7 +284,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     const ahora = new Date().toISOString();
     const costo = cantidad * ingrediente.costo_por_unidad;
     const receta: RecetaItem[] = [{
-      id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: nuevoId('rec'),
       producto_id: producto.id,
       tipo: 'stock',
       ingrediente_id: ingrediente.id,
@@ -254,7 +300,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           ...item,
           receta,
           costo_produccion: costo,
-          margen_ganancia: item.precio_venta > 0 ? ((item.precio_venta - costo) / item.precio_venta) * 100 : 0,
+          margen_ganancia: margenPorcentaje(item.precio_venta, costo),
           updated_at: ahora,
         }
       : item));
@@ -273,12 +319,10 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   const saveProducto = () => {
     if (!editForm.nombre) return;
     const receta = editForm.receta || [];
-    const costoReceta = calcularCostoReceta(receta, insumosCatalogo);
+    const costoReceta = calcularCostoReceta(receta, insumosCatalogo, producciones);
     const costoProduccion = receta.length > 0 ? costoReceta : editForm.costo_produccion || 0;
     const precioVenta = editForm.precio_venta || 0;
-    const margenGanancia = precioVenta > 0
-      ? ((precioVenta - costoProduccion) / precioVenta) * 100
-      : 0;
+    const margenGanancia = margenPorcentaje(precioVenta, costoProduccion);
     const categoria = categoriasIniciales.find(c => c.id === editForm.categoria_id);
 
     if (selectedProducto) {
@@ -292,7 +336,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         updated_at: new Date().toISOString(),
       } as Producto : p));
     } else {
-      const newId = `prod-${Date.now()}`;
+      const newId = nuevoId('prod');
       const newProd: Producto = {
         id: newId,
         codigo: editForm.codigo?.trim() || `COMBO-${Date.now().toString().slice(-5)}`,
@@ -317,9 +361,9 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     setImportError('');
     setImportInsumos([]);
     try {
-      const buffer = await file.arrayBuffer();
+      const [XLSX, buffer] = await Promise.all([cargarXlsx(), file.arrayBuffer()]);
       const workbook = XLSX.read(buffer, { type: 'array' });
-      const sheet = pickBestSheet(workbook);
+      const sheet = pickBestSheet(XLSX, workbook);
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
       const grouped = new Map<string, ComboImportDraft>();
       const insumosNuevos = new Map<string, Ingrediente>();
@@ -330,20 +374,22 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         const nombreLimpio = cleanArticuloNombre(nombreRaw) || codigo || 'Artículo';
         const existente = findIngredienteEnCatalogo(workingCatalog, codigo, nombreLimpio);
         if (existente) {
-          const actualizado: Ingrediente = {
-            ...existente,
-            codigo: existente.codigo || codigo || existente.codigo,
-            costo_por_unidad: costoUnitario > 0 ? costoUnitario : existente.costo_por_unidad,
-            unidad_medida: unidad || existente.unidad_medida,
-            updated_at: new Date().toISOString(),
-          };
-          workingCatalog = workingCatalog.map(item => item.id === existente.id ? actualizado : item);
-          insumosNuevos.set(actualizado.id, actualizado);
-          return actualizado;
+          if (!existente.codigo && codigo) {
+            const actualizado: Ingrediente = {
+              ...existente,
+              codigo,
+              unidad_medida: unidad || existente.unidad_medida,
+              updated_at: new Date().toISOString(),
+            };
+            workingCatalog = workingCatalog.map(item => item.id === existente.id ? actualizado : item);
+            insumosNuevos.set(actualizado.id, actualizado);
+            return actualizado;
+          }
+          return existente;
         }
 
         const nuevo: Ingrediente = {
-          id: `ing-import-${codigo || normalizeText(nombreLimpio).replace(/\s+/g, '-') || Date.now()}`,
+          id: `ing-import-${codigo || normalizeText(nombreLimpio).replace(/\s+/g, '-') || nuevoId()}`,
           codigo: codigo || undefined,
           nombre: nombreLimpio,
           unidad_medida: unidad,
@@ -359,7 +405,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         return nuevo;
       };
 
-      rows.forEach((row, rowIndex) => {
+      rows.forEach(row => {
         const nombre = String(getRowValue(row, [
           'descripcion combo',
           'descripción combo',
@@ -454,7 +500,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
 
           const nuevaLinea: RecetaItem = produccion
             ? {
-                id: `import-rec-${rowIndex}-${Date.now()}`,
+                id: nuevoId('import-rec'),
                 producto_id: 'import',
                 tipo: 'produccion',
                 produccion_id: produccion.id,
@@ -467,7 +513,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             : (() => {
                 const ingrediente = ensureArticulo(articuloCodigo, articuloNombre, costoUnitario, unidad);
                 return {
-                  id: `import-rec-${rowIndex}-${Date.now()}`,
+                  id: nuevoId('import-rec'),
                   producto_id: 'import',
                   tipo: 'stock' as TipoComponenteReceta,
                   ingrediente_id: ingrediente.id,
@@ -500,65 +546,73 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         setImportError('No pude detectar combos. Usá columnas como Código Combo y Descripción Combo (formato coffee).');
         return;
       }
-      setImportInsumos(Array.from(insumosNuevos.values()));
+      const insumos = Array.from(insumosNuevos.values());
+      setImportInsumos(insumos);
       setImportDrafts(drafts);
+      persistirCombosImportados(drafts, insumos);
     } catch {
       setImportError('No pude leer el archivo. Probá con Excel .xlsx o CSV.');
     }
   };
 
-  const confirmarImportacionCombos = () => {
-    if (!importDrafts.length) return;
+  const persistirCombosImportados = (drafts: ComboImportDraft[], insumos: Ingrediente[]) => {
+    if (!drafts.length) return false;
 
-    if (importInsumos.length) {
-      const map = new Map(insumosCatalogo.map(item => [item.id, item]));
-      importInsumos.forEach(item => map.set(item.id, item));
-      saveDemoIngredientes(Array.from(map.values()));
-    }
+    try {
+      withStoreTransaction(() => {
+        if (insumos.length) {
+          const map = new Map(loadDemoIngredientes().map(item => [item.id, item]));
+          insumos.forEach(item => map.set(item.id, item));
+          saveDemoIngredientes(Array.from(map.values()));
+        }
 
-    setProductos(prev => {
-      let next = [...prev];
+        const catalogoImport = loadDemoIngredientes();
+        let next = [...loadProductos()];
 
-      importDrafts.forEach((draft, index) => {
-        const existing = next.find(producto =>
-          normalizeText(producto.nombre) === normalizeText(draft.nombre)
-          || (draft.codigo && normalizeText(producto.codigo || '') === normalizeText(draft.codigo))
-        );
-        const id = existing?.id || `prod-import-${Date.now()}-${index}`;
-        const receta = draft.receta.map(item => ({ ...item, producto_id: id }));
-        const costoIncidencias = receta.reduce((sum, item) => sum + item.costo_calculado, 0);
-        const costoProduccion = costoIncidencias > 0
-          ? costoIncidencias
-          : (draft.costo_total && draft.costo_total > 0 ? draft.costo_total : 0);
-        const precioVenta = draft.precio_venta || existing?.precio_venta || precioPorMargen(costoProduccion, 50) || 0;
-        const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
-        const producto: Producto = {
-          ...(existing || {}),
-          id,
-          codigo: draft.codigo || existing?.codigo || `COMBO-${String(index + 1).padStart(3, '0')}`,
-          nombre: draft.nombre,
-          descripcion: draft.descripcion || existing?.descripcion || '',
-          categoria_id: draft.categoria_id,
-          precio_venta: precioVenta,
-          costo_produccion: costoProduccion,
-          margen_ganancia: precioVenta > 0 ? ((precioVenta - costoProduccion) / precioVenta) * 100 : 0,
-          disponible: existing?.disponible ?? true,
-          agotado: existing?.agotado ?? false,
-          activo: existing?.activo ?? true,
-          tiempo_preparacion: draft.tiempo_preparacion || 10,
-          created_at: existing?.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          categoria,
-          receta,
-        };
+        drafts.forEach((draft, index) => {
+          const existing = next.find(producto =>
+            normalizeText(producto.nombre) === normalizeText(draft.nombre)
+            || (draft.codigo && normalizeText(producto.codigo || '') === normalizeText(draft.codigo))
+          );
+          const id = existing?.id || nuevoId('prod-import');
+          const receta = recetaPersistible(draft.receta, id);
+          const costoProduccion = receta.length
+            ? calcularCostoReceta(receta, catalogoImport, producciones)
+            : 0;
+          const precioSugerido = precioPorMargen(costoProduccion, 100);
+          const precioVenta = draft.precio_venta || existing?.precio_venta || precioSugerido || 0;
+          const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
+          const producto: Producto = {
+            ...(existing || {}),
+            id,
+            codigo: draft.codigo || existing?.codigo || `COMBO-${String(index + 1).padStart(3, '0')}`,
+            nombre: draft.nombre,
+            descripcion: draft.descripcion || existing?.descripcion || '',
+            categoria_id: draft.categoria_id,
+            precio_venta: precioVenta,
+            costo_produccion: costoProduccion,
+            margen_ganancia: margenPorcentaje(precioVenta, costoProduccion),
+            disponible: existing?.disponible ?? true,
+            agotado: existing?.agotado ?? false,
+            activo: existing?.activo ?? true,
+            tiempo_preparacion: draft.tiempo_preparacion || 10,
+            created_at: existing?.created_at || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            categoria,
+            receta,
+          };
 
-        next = existing
-          ? next.map(item => item.id === existing.id ? producto : item)
-          : [producto, ...next];
+          next = existing
+            ? next.map(item => item.id === existing.id ? producto : item)
+            : [producto, ...next];
+        });
+
+        saveProductos(next);
       });
-
-      return next;
-    });
+    } catch (error) {
+      setImportError(mensajeErrorGuardado(error));
+      return false;
+    }
 
     setShowImport(false);
     setImportDrafts([]);
@@ -566,30 +620,60 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     setImportError('');
     setVista('planilla');
     setApartado('combos');
+    setImportResultado(`Se guardaron ${drafts.length} combo${drafts.length === 1 ? '' : 's'} desde el Excel.`);
+    return true;
   };
 
-  const margen = (precio: number, costo: number) => precio > 0 ? ((precio - costo) / precio * 100).toFixed(1) : '0';
-  const margenColor = (m: number) => m >= 50 ? 'text-emerald-600' : m >= 35 ? 'text-amber-600' : 'text-red-600';
-  const redondearPrecio = (precio: number) => Math.ceil(precio / 100) * 100;
-  const precioPorMargen = (costo: number, margenDeseado: number) => {
-    if (costo <= 0 || margenDeseado <= 0 || margenDeseado >= 100) return 0;
-    return redondearPrecio(costo / (1 - margenDeseado / 100));
+  const confirmarImportacionCombos = () => {
+    persistirCombosImportados(importDrafts, importInsumos);
+  };
+
+  const margen = (precio: number, costo: number) => margenPorcentaje(precio, costo).toFixed(1);
+  const margenColor = (m: number) => m >= 100 ? 'text-emerald-600' : m >= 50 ? 'text-amber-600' : 'text-red-600';
+  const costoVivoProducto = (producto: Producto) => {
+    const vivo = calcularCostoProducto(
+      producto,
+      id => insumosCatalogo.find(insumo => insumo.id === id)?.costo_por_unidad || 0,
+      producciones,
+    );
+    return vivo > 0 ? vivo : producto.costo_produccion;
+  };
+  const margenIdealDe = (producto: Producto) => {
+    if (producto.margen_ideal && producto.margen_ideal > 0) {
+      return producto.margen_ideal;
+    }
+    const actual = parseFloat(margen(producto.precio_venta, costoVivoProducto(producto)));
+    return actual > 0 ? actual : 100;
+  };
+  const datosDePrecio = (producto: Producto) => {
+    const costoStock = costoVivoProducto(producto);
+    const margenIdeal = margenIdealDe(producto);
+    const margenActual = parseFloat(margen(producto.precio_venta, costoStock));
+    const precioSugerido = precioPorMargen(costoStock, margenIdeal);
+    return { costoStock, margenActual, margenIdeal, precioSugerido };
+  };
+  const aplicarCambiosPrecio = (producto: Producto, margenDeseado: number) => {
+    const { costoStock } = datosDePrecio(producto);
+    const precioVenta = precioPorMargen(costoStock, margenDeseado);
+    return {
+      ...producto,
+      precio_venta: precioVenta || producto.precio_venta,
+      costo_produccion: costoStock,
+      margen_ganancia: margenDeseado,
+      margen_ideal: margenDeseado,
+      updated_at: new Date().toISOString(),
+    };
   };
   const aplicarMargenMasivo = () => {
     const margenDeseado = parseFloat(margenMasivo);
-    if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100 || productosPrecioSeleccionados.length === 0) return;
-    if (!window.confirm(`Esto actualizará el precio de ${productosPrecioSeleccionados.length} productos seleccionados con ${margenDeseado}% de margen. ¿Confirmar?`)) return;
+    if (!margenDeseado || margenDeseado <= 0 || productosPrecioSeleccionados.length === 0) return;
+    if (!window.confirm(`Esto va a poner ${margenDeseado}% de margen ideal y el precio sugerido según el costo de stock en ${productosPrecioSeleccionados.length} productos. ¿Confirmar?`)) return;
 
-    setProductos(prev => prev.map(producto => {
-      if (!productosPrecioSeleccionados.includes(producto.id)) return producto;
-      const precioVenta = precioPorMargen(producto.costo_produccion, margenDeseado);
-      return {
-        ...producto,
-        precio_venta: precioVenta || producto.precio_venta,
-        margen_ganancia: margenDeseado,
-        updated_at: new Date().toISOString(),
-      };
-    }));
+    setProductos(prev => prev.map(producto => (
+      productosPrecioSeleccionados.includes(producto.id)
+        ? aplicarCambiosPrecio(producto, margenDeseado)
+        : producto
+    )));
     setProductosPrecioSeleccionados([]);
   };
 
@@ -610,29 +694,74 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       return Array.from(new Set([...prev, ...idsVisibles]));
     });
   };
-  const actualizarMargenProducto = (productoId: string, margenDeseado: number) => {
-    if (!margenDeseado || margenDeseado <= 0 || margenDeseado >= 100) return;
+  const actualizarMargenIdeal = (productoId: string, margenDeseado: number) => {
+    if (!margenDeseado || margenDeseado <= 0) return;
+    setProductos(prev => prev.map(producto => (
+      producto.id === productoId
+        ? { ...producto, margen_ideal: margenDeseado, updated_at: new Date().toISOString() }
+        : producto
+    )));
+  };
+  const actualizarPrecioManual = (productoId: string, precioManual: number) => {
+    if (!Number.isFinite(precioManual) || precioManual < 0) return;
     setProductos(prev => prev.map(producto => {
       if (producto.id !== productoId) return producto;
-      const precioVenta = precioPorMargen(producto.costo_produccion, margenDeseado);
+      const costoStock = costoVivoProducto(producto);
+      const margenActual = parseFloat(margen(precioManual, costoStock));
+      const margenIdeal = margenActual > 0 ? margenActual : producto.margen_ideal;
       return {
         ...producto,
-        precio_venta: precioVenta || producto.precio_venta,
-        margen_ganancia: margenDeseado,
+        precio_venta: precioManual,
+        costo_produccion: costoStock,
+        margen_ganancia: margenActual,
+        margen_ideal: margenIdeal,
         updated_at: new Date().toISOString(),
       };
     }));
   };
+  const aplicarPrecioSugerido = (productoId: string) => {
+    setProductos(prev => prev.map(producto => {
+      if (producto.id !== productoId) return producto;
+      return aplicarCambiosPrecio(producto, margenIdealDe(producto));
+    }));
+  };
+  const aplicarPreciosSugeridosMasivo = () => {
+    const ids = new Set(productosPrecioSeleccionados);
+    if (!ids.size) return;
+    const aCambiar = productos.filter(producto => {
+      if (!ids.has(producto.id)) return false;
+      const { precioSugerido } = datosDePrecio(producto);
+      return precioSugerido > 0 && Math.abs(precioSugerido - producto.precio_venta) >= 0.01;
+    });
+    if (!aCambiar.length) {
+      window.alert('Los seleccionados ya tienen el precio sugerido o no tienen costo para calcularlo.');
+      return;
+    }
+    if (!window.confirm(`Esto va a pasar el precio de lista al sugerido en ${aCambiar.length} combo${aCambiar.length === 1 ? '' : 's'}, cada uno con su margen ideal. ¿Confirmar?`)) return;
+
+    const idsACambiar = new Set(aCambiar.map(producto => producto.id));
+    setProductos(prev => prev.map(producto => (
+      idsACambiar.has(producto.id)
+        ? aplicarCambiosPrecio(producto, margenIdealDe(producto))
+        : producto
+    )));
+  };
   const exportarListaPrecios = () => {
-    const headers = ['Producto', 'Categoria', 'Costo', 'Margen %', 'Precio lista', 'Estado'];
-    const rows = filtered.map(producto => [
-      producto.nombre,
-      producto.categoria?.nombre || '',
-      producto.costo_produccion,
-      margen(producto.precio_venta, producto.costo_produccion),
-      producto.precio_venta,
-      producto.agotado ? 'Agotado' : producto.disponible ? 'Activo' : 'Inactivo',
-    ]);
+    const headers = ['Producto', 'Categoria', 'Precio lista', 'Precio manual', 'Costo stock', 'Margen %', 'Margen ideal %', 'Precio sugerido', 'Estado'];
+    const rows = filtered.map(producto => {
+      const datos = datosDePrecio(producto);
+      return [
+        producto.nombre,
+        producto.categoria?.nombre || '',
+        producto.precio_venta,
+        producto.precio_venta,
+        datos.costoStock,
+        datos.margenActual.toFixed(1),
+        datos.margenIdeal.toFixed(1),
+        datos.precioSugerido,
+        producto.agotado ? 'Agotado' : producto.disponible ? 'Activo' : 'Inactivo',
+      ];
+    });
     const csv = [headers, ...rows]
       .map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
       .join('\n');
@@ -711,7 +840,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     URL.revokeObjectURL(url);
   };
 
-  const exportarRecetasCombos = () => {
+  const exportarRecetasCombos = async () => {
+    const XLSX = await cargarXlsx();
     const headers = [
       'Código Combo',
       'Descripción Combo',
@@ -727,7 +857,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
 
     productos.forEach(producto => {
       const receta = producto.receta || [];
-      const costoTotal = receta.length ? calcularCostoReceta(receta, insumosCatalogo) : producto.costo_produccion;
+      const costoTotal = receta.length ? calcularCostoReceta(receta, insumosCatalogo, producciones) : producto.costo_produccion;
 
       if (receta.length === 0) {
         rows.push([
@@ -745,7 +875,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       }
 
       receta.forEach(item => {
-        const data = getRecetaItemData(item, insumosCatalogo);
+        const data = getRecetaItemData(item, insumosCatalogo, producciones);
         const prefijo = getRecetaItemTipo(item) === 'produccion' ? 'PRODUCCIÓN' : 'STOCK';
         rows.push([
           producto.codigo || producto.id,
@@ -837,7 +967,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       return {
         ...form,
         receta,
-        costo_produccion: receta.length > 0 ? calcularCostoReceta(receta, insumosCatalogo) : form.costo_produccion,
+        costo_produccion: receta.length > 0 ? calcularCostoReceta(receta, insumosCatalogo, producciones) : form.costo_produccion,
       };
     });
   };
@@ -849,7 +979,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       return {
         ...form,
         receta,
-        costo_produccion: calcularCostoReceta(receta, insumosCatalogo),
+        costo_produccion: calcularCostoReceta(receta, insumosCatalogo, producciones),
       };
     });
   };
@@ -860,17 +990,17 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       return {
         ...form,
         receta,
-        costo_produccion: receta.length > 0 ? calcularCostoReceta(receta, insumosCatalogo) : 0,
+        costo_produccion: receta.length > 0 ? calcularCostoReceta(receta, insumosCatalogo, producciones) : 0,
       };
     });
   };
 
-  const costoRecetaActual = calcularCostoReceta(editForm.receta || [], insumosCatalogo);
+  const costoRecetaActual = calcularCostoReceta(editForm.receta || [], insumosCatalogo, producciones);
   const costoProduccionActual = (editForm.receta?.length || 0) > 0 ? costoRecetaActual : editForm.costo_produccion || 0;
 
   const filasPlanilla = filtered.flatMap(producto => {
     const receta = producto.receta || [];
-    const costoTotal = receta.length ? calcularCostoReceta(receta, insumosCatalogo) : producto.costo_produccion;
+    const costoTotal = receta.length ? calcularCostoReceta(receta, insumosCatalogo, producciones) : producto.costo_produccion;
     if (!receta.length) {
       return [{
         key: `${producto.id}-empty`,
@@ -887,7 +1017,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       }];
     }
     return receta.map(item => {
-      const data = getRecetaItemData(item, insumosCatalogo);
+      const data = getRecetaItemData(item, insumosCatalogo, producciones);
       const prefijo = getRecetaItemTipo(item) === 'produccion' ? 'PRODUCCIÓN' : 'STOCK';
       return {
         key: `${producto.id}-${item.id}`,
@@ -912,12 +1042,9 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
   }, [apartadoInicial]);
 
   useEffect(() => {
-    saveProductos(productos);
-  }, [productos]);
-
-  useEffect(() => {
-    saveListasPrecios(listasPrecios);
-  }, [listasPrecios]);
+    setCategoriaFiltro('todos');
+    setBusqueda('');
+  }, [apartado]);
 
   if (!apartado) {
     return (
@@ -990,7 +1117,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             {apartado === 'listas'
               ? 'Descuentos e intereses automáticos según el medio de pago'
               : apartado === 'precios'
-                ? 'Precios base, costos y márgenes de venta'
+                ? 'El margen es el recargo sobre el costo: costo 100 y venta 200 = 100%'
               : vista === 'planilla'
                 ? 'Misma estructura que el Excel: combo, artículos, costos e incidencia'
                 : 'Catálogo y recetas de combos'}
@@ -1017,7 +1144,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
               </button>
             </div>
             <button
-              onClick={() => setShowImport(true)}
+              onClick={() => { setImportError(''); setShowImport(true); }}
               className="border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2 rounded-xl flex items-center gap-2 text-sm transition-colors"
             >
               <Upload size={16} />
@@ -1055,9 +1182,17 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                 Limpiar selección
               </button>
             )}
+            <button
+              onClick={aplicarPreciosSugeridosMasivo}
+              disabled={productosPrecioSeleccionados.length === 0}
+              className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-400 disabled:opacity-40 disabled:hover:bg-amber-500 transition-colors"
+            >
+              Aplicar precios sugeridos
+              {productosPrecioSeleccionados.length > 0 ? ` (${productosPrecioSeleccionados.length})` : ''}
+            </button>
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <span className="text-xs font-semibold text-slate-500">
-                Margen para {productosPrecioSeleccionados.length} seleccionado{productosPrecioSeleccionados.length === 1 ? '' : 's'} %
+                Margen ideal para {productosPrecioSeleccionados.length} seleccionado{productosPrecioSeleccionados.length === 1 ? '' : 's'} %
               </span>
               <input
                 type="number"
@@ -1065,8 +1200,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                 onChange={e => setMargenMasivo(e.target.value)}
                 className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm text-right outline-none focus:border-amber-400"
                 min="1"
-                max="99"
-                placeholder="45"
+                max="999"
+                placeholder="100"
               />
               <button
                 onClick={aplicarMargenMasivo}
@@ -1125,6 +1260,20 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           </div>
         )}
       </div>
+
+      {importResultado && apartado === 'combos' && (
+        <div className="flex items-start justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-semibold text-emerald-800">{importResultado}</p>
+          <button
+            type="button"
+            onClick={() => setImportResultado('')}
+            className="text-emerald-700 hover:text-emerald-900"
+            aria-label="Cerrar aviso"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {apartado === 'listas' && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1214,19 +1363,26 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
               <input
                 value={busqueda}
                 onChange={e => setBusqueda(e.target.value)}
-                placeholder="Buscar combo..."
+                placeholder={apartado === 'combos' ? 'Buscar combo...' : 'Buscar producto...'}
                 className="bg-transparent text-sm outline-none flex-1 placeholder-slate-400"
               />
             </div>
             <div className="text-sm text-slate-500">
               {filtered.length} resultados
             </div>
+            {(busqueda || categoriaFiltro !== 'todos') && (
+              <button type="button" onClick={() => { setBusqueda(''); setCategoriaFiltro('todos'); }}
+                className="text-sm font-semibold text-amber-600 hover:text-amber-700">
+                Limpiar filtros
+              </button>
+            )}
           </div>
 
           {vista === 'catalogo' ? (
             <div className="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               {filtered.map(prod => {
-                const m = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
+                const costoStock = costoVivoProducto(prod);
+                const m = parseFloat(margen(prod.precio_venta, costoStock));
                 const cantidadArticulos = (prod.receta || []).length;
                 return (
                   <div
@@ -1261,8 +1417,8 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     </div>
                     <div className="flex items-end justify-between mt-4 pt-4 border-t border-slate-100">
                       <div>
-                        <p className="text-xs text-slate-400">Costo / Precio</p>
-                        <p className="text-sm font-semibold text-slate-600">${prod.costo_produccion.toLocaleString()}</p>
+                        <p className="text-xs text-slate-400">Costo stock / Precio</p>
+                        <p className="text-sm font-semibold text-slate-600">${costoStock.toLocaleString()}</p>
                         <p className="text-xl font-bold text-slate-900">${prod.precio_venta.toLocaleString()}</p>
                       </div>
                       <div className="flex items-center gap-1">
@@ -1345,7 +1501,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             <>
               {vista === 'precios' ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full min-w-[1240px]">
                     <thead>
                       <tr className="border-b border-slate-100 bg-slate-50/50">
                         <th className="py-3 px-4 text-center">
@@ -1360,15 +1516,19 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Producto</th>
                         <th className="text-left py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Categoría</th>
                         <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio lista</th>
-                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo</th>
-                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen %</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio manual</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Costo stock</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Margen ideal</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Precio sugerido</th>
                         <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estado</th>
                         <th className="text-center py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">Editar</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {filtered.map(prod => {
-                        const margenActual = parseFloat(margen(prod.precio_venta, prod.costo_produccion));
+                        const datos = datosDePrecio(prod);
+                        const precioDesfasado = datos.precioSugerido > 0 && Math.abs(datos.precioSugerido - prod.precio_venta) >= 0.01;
                         return (
                           <tr key={prod.id} className={`hover:bg-slate-50 transition-colors ${productosPrecioSeleccionados.includes(prod.id) ? 'bg-amber-50/60' : ''} ${!prod.disponible ? 'opacity-60' : ''}`}>
                             <td className="py-3 px-4 text-center">
@@ -1386,21 +1546,60 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                             </td>
                             <td className="py-3 px-4 text-sm text-slate-500">{prod.categoria?.nombre || '-'}</td>
                             <td className="py-3 px-4 text-right font-bold text-slate-800">${prod.precio_venta.toLocaleString()}</td>
-                            <td className="py-3 px-4 text-right text-sm text-slate-500">${prod.costo_produccion.toLocaleString()}</td>
+                            <td className="py-3 px-4">
+                              <input
+                                key={`${prod.id}-manual-${prod.precio_venta}`}
+                                type="number"
+                                min="0"
+                                step="1"
+                                defaultValue={prod.precio_venta}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                                }}
+                                onBlur={e => {
+                                  const valor = Number.parseFloat(e.target.value.replace(',', '.'));
+                                  if (!Number.isFinite(valor) || valor < 0) {
+                                    e.target.value = String(prod.precio_venta);
+                                    return;
+                                  }
+                                  if (Math.abs(valor - prod.precio_venta) < 0.01) return;
+                                  actualizarPrecioManual(prod.id, valor);
+                                }}
+                                aria-label={`Precio manual de ${prod.nombre}`}
+                                className="w-28 ml-auto block border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-right font-semibold outline-none focus:border-amber-400"
+                              />
+                            </td>
+                            <td className="py-3 px-4 text-right text-sm font-semibold text-slate-700">
+                              ${datos.costoStock.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            </td>
+                            <td className={`py-3 px-4 text-right text-sm font-bold ${margenColor(datos.margenActual)}`}>
+                              {datos.margenActual.toFixed(1)}%
+                            </td>
                             <td className="py-3 px-4">
                               <div className="flex items-center justify-end gap-2">
                                 <input
-                                  key={`${prod.id}-${prod.precio_venta}`}
+                                  key={`${prod.id}-ideal-${datos.margenIdeal}`}
                                   type="number"
-                                  defaultValue={margenActual.toFixed(1)}
-                                  onBlur={e => actualizarMargenProducto(prod.id, parseFloat(e.target.value))}
+                                  defaultValue={datos.margenIdeal.toFixed(1)}
+                                  onBlur={e => actualizarMargenIdeal(prod.id, parseFloat(e.target.value))}
                                   className="w-20 border border-slate-200 rounded-xl px-2 py-1.5 text-sm text-right font-semibold outline-none focus:border-amber-400"
                                   min="1"
-                                  max="99"
+                                  max="999"
                                   step="0.1"
                                 />
-                                <span className={`text-xs font-bold ${margenColor(margenActual)}`}>%</span>
+                                <span className="text-xs font-bold text-slate-500">%</span>
                               </div>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => aplicarPrecioSugerido(prod.id)}
+                                className={`font-bold hover:text-amber-600 ${precioDesfasado ? 'text-amber-700' : 'text-slate-800'}`}
+                                title="Aplicar este precio de lista"
+                              >
+                                ${datos.precioSugerido.toLocaleString()}
+                              </button>
+                              <p className="text-[11px] text-slate-400">Costo stock + margen ideal</p>
                             </td>
                             <td className="py-3 px-4 text-center">
                               <span className={`text-xs px-2 py-1 rounded-full font-medium ${prod.agotado ? 'bg-red-100 text-red-600' : prod.disponible ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
@@ -1434,6 +1633,25 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
+                  {filtered.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-12 text-center">
+                        <p className="text-sm font-medium text-slate-700">
+                          {productos.length ? 'No hay productos con estos filtros.' : 'Todavía no hay productos de venta cargados.'}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-2">
+                          {productos.length ? 'Limpiá la búsqueda y la categoría para ver todos los productos.' : 'Agregá o importá tus productos en Combos: aparecerán en todas las listas. Los insumos de Stock se usan para las recetas.'}
+                        </p>
+                        <button type="button" onClick={() => {
+                          setBusqueda('');
+                          setCategoriaFiltro('todos');
+                          if (!productos.length) { setApartado('combos'); setVista('catalogo'); }
+                        }} className="mt-4 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-400">
+                          {productos.length ? 'Mostrar todos los productos' : 'Ir a Combos'}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                   {filtered.map(prod => {
                     const descuentoProducto = listaActual ? getDescuentoProducto(listaActual, prod.id) : 0;
                     const personalizado = !!listaActual && Object.prototype.hasOwnProperty.call(listaActual.descuentos_productos, prod.id);
@@ -1505,7 +1723,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
                 <h3 className="font-bold text-slate-800 text-lg">Importar combos desde planilla</h3>
-                <p className="text-sm text-slate-500">Compatible con el formato coffee: una fila por artículo del combo.</p>
+                <p className="text-sm text-slate-500">Al subir el archivo se guardan los combos. Si algo falla, queda la vista previa para reintentar.</p>
               </div>
               <button onClick={() => setShowImport(false)}><X size={18} className="text-slate-400" /></button>
             </div>
@@ -1515,7 +1733,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                 <label className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:border-amber-300 hover:bg-amber-50/30 cursor-pointer transition-colors">
                   <Upload size={26} className="mx-auto text-amber-500 mb-2" />
                   <p className="text-sm font-semibold text-slate-700">Subir Excel o CSV</p>
-                  <p className="text-xs text-slate-400 mt-1">Ej: coffee2.xlsx con Código Combo + Descripción Artículo</p>
+                  <p className="text-xs text-slate-400 mt-1">Se guarda al elegir el archivo. Ej: coffee2.xlsx con Código Combo + Descripción Artículo</p>
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
@@ -1552,14 +1770,14 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                   <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
                     <div>
                       <h4 className="text-sm font-bold text-slate-800">Vista previa</h4>
-                      <p className="text-xs text-slate-500">{importDrafts.length} combos detectados</p>
+                      <p className="text-xs text-slate-500">{importDrafts.length} combos detectados. No se pudieron guardar: reintentá.</p>
                     </div>
                     <button
                       onClick={confirmarImportacionCombos}
                       className="bg-emerald-500 hover:bg-emerald-400 text-white font-semibold px-4 py-2 rounded-xl text-sm flex items-center gap-2"
                     >
                       <Check size={15} />
-                      Confirmar carga
+                      Reintentar guardado
                     </button>
                   </div>
                   <div className="overflow-x-auto">
@@ -1576,15 +1794,13 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {importDrafts.map(draft => {
-                          const costo = draft.costo_total && draft.costo_total > 0
-                            ? draft.costo_total
-                            : calcularCostoReceta(draft.receta, [...insumosCatalogo, ...importInsumos]);
+                          const costo = calcularCostoReceta(draft.receta, [...insumosCatalogo, ...importInsumos], producciones);
                           const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
                           return (
                             <tr key={draft.key}>
                               <td className="py-3 px-3">
                                 <p className="text-sm font-semibold text-slate-800">{draft.nombre}</p>
-                                <p className="text-xs text-slate-400">{draft.receta.slice(0, 2).map(r => getRecetaItemData(r, [...insumosCatalogo, ...importInsumos]).nombre).join(', ') || 'Sin artículos'}{draft.receta.length > 2 ? '…' : ''}</p>
+                                <p className="text-xs text-slate-400">{draft.receta.slice(0, 2).map(r => getRecetaItemData(r, [...insumosCatalogo, ...importInsumos], producciones).nombre).join(', ') || 'Sin artículos'}{draft.receta.length > 2 ? '…' : ''}</p>
                               </td>
                               <td className="py-3 px-3 text-sm font-semibold text-amber-700">{draft.codigo || '-'}</td>
                               <td className="py-3 px-3 text-sm text-slate-600">{categoria?.nombre || 'Combos'}</td>
@@ -1693,9 +1909,11 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 read-only:bg-slate-50"
                     min="0"
                   />
-                  {(editForm.receta?.length || 0) > 0 && (
-                    <p className="text-[11px] text-slate-400 mt-1">Calculado por los insumos de la receta.</p>
-                  )}
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {(editForm.receta?.length || 0) > 0
+                      ? 'Sale del costo actual de stock y producciones de la receta.'
+                      : 'Sin receta no hay costo de stock. Agregá insumos para calcularlo solo.'}
+                  </p>
                 </div>
                 <div className="col-span-2 border border-slate-200 rounded-2xl overflow-hidden">
                   <div className="flex items-center justify-between gap-3 bg-slate-50 px-4 py-3 border-b border-slate-100">
@@ -1730,7 +1948,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                         <tbody className="divide-y divide-slate-50">
                           {(editForm.receta || []).map(item => {
                             const tipo = getRecetaItemTipo(item);
-                            const data = getRecetaItemData(item, insumosCatalogo);
+                            const data = getRecetaItemData(item, insumosCatalogo, producciones);
                             const costoUnitario = data.costoUnitario;
                             const costoLinea = item.cantidad * costoUnitario;
                             const sinStock = item.cantidad > data.stockActual;
@@ -1996,9 +2214,9 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                   <p className="text-lg font-bold text-slate-800">{(detalleCombo.receta || []).length}</p>
                 </div>
                 <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                  <p className="text-xs text-slate-500">Costo total</p>
+                  <p className="text-xs text-slate-500">Costo stock</p>
                   <p className="text-lg font-bold text-slate-800">
-                    ${detalleCombo.costo_produccion.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    ${costoVivoProducto(detalleCombo).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
@@ -2022,7 +2240,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {(detalleCombo.receta || []).map(item => {
-                        const data = getRecetaItemData(item, insumosCatalogo);
+                        const data = getRecetaItemData(item, insumosCatalogo, producciones);
                         const esProduccion = getRecetaItemTipo(item) === 'produccion';
                         return (
                           <tr key={item.id}>

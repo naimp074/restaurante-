@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
-import { Plus, Minus, Trash2, Send, X, Search, Clock } from 'lucide-react';
-import type { Pedido, PedidoItem, Producto } from '../lib/types';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed } from 'lucide-react';
+import type { Mesa, Pedido, PedidoItem, Producto } from '../lib/types';
 import { categoriasIniciales } from '../lib/mockData';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { useProductos } from '../lib/productosStore';
-import { estadoOperativoMesa, mesaTienePedidoAbierto, ocuparMesa, useMesas } from '../lib/mesasStore';
+import { estadoOperativoMesa, loadMesas, mesaTienePedidoAbierto, ocuparMesa, useMesas } from '../lib/mesasStore';
 import { useMozas } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
+import { nuevoId } from '../lib/ids';
 
 const estadoItemColors: Record<string, string> = {
   pendiente: 'bg-yellow-100 text-yellow-700',
@@ -22,6 +23,7 @@ const estadoItemLabels: Record<string, string> = {
   entregado: 'Entregado',
   cancelado: 'Cancelado',
 };
+const pedidoAbierto = (pedido: Pedido) => !['cobrado', 'cuenta_corriente', 'cancelado'].includes(pedido.estado);
 
 export default function Pedidos() {
   const { user } = useAuth();
@@ -34,6 +36,8 @@ export default function Pedidos() {
   const [newMesaId, setNewMesaId] = useState('');
   const [newPersonas, setNewPersonas] = useState(2);
   const [newMozaId, setNewMozaId] = useState(() => (user && (user.rol === 'moza' || user.rol === 'encargado') ? user.id : ''));
+  const borradorId = useRef<string | null>(null);
+  const [pedidoError, setPedidoError] = useState('');
 
   const catalogoProductos = useProductos();
   const mesasDisponibles = useMesas();
@@ -48,7 +52,13 @@ export default function Pedidos() {
   const pendingItemsToKitchen = selectedPedido?.items?.filter(i => i.estado === 'pendiente') || [];
 
   useEffect(() => {
-    setSelectedPedido(actual => actual ? pedidos.find(pedido => pedido.id === actual.id) || actual : actual);
+    setSelectedPedido(actual => {
+      if (!actual) return null;
+      if (actual.id === borradorId.current) {
+        return pedidos.find(pedido => pedido.mesa_id === actual.mesa_id && pedidoAbierto(pedido)) || actual;
+      }
+      return pedidos.find(pedido => pedido.id === actual.id && pedidoAbierto(pedido)) || null;
+    });
   }, [pedidos]);
 
   const addItem = (producto: Producto) => {
@@ -58,7 +68,7 @@ export default function Pedidos() {
       updateItemQty(existing, existing.cantidad + 1);
     } else {
       const newItem: PedidoItem = {
-        id: `item-${Date.now()}`,
+        id: nuevoId('item'),
         pedido_id: selectedPedido.id,
         producto_id: producto.id,
         cantidad: 1,
@@ -90,10 +100,28 @@ export default function Pedidos() {
   };
 
   const updatePedido = (updated: Pedido) => {
+    const actuales = loadDemoPedidos();
+    const esNuevo = updated.id === borradorId.current;
+    const guardado = actuales.find(pedido => pedido.id === updated.id);
+    const mesa = loadMesas().find(item => item.id === updated.mesa_id);
+    if (!mesa || mesa.estado === 'cerrada' || (!esNuevo && (!guardado || !pedidoAbierto(guardado)))) {
+      setPedidoError('La mesa o la comanda ya no está disponible. Seleccioná otra mesa.');
+      return;
+    }
+    const otroPedido = esNuevo && actuales.find(pedido => pedido.mesa_id === updated.mesa_id && pedidoAbierto(pedido));
+    if (otroPedido) {
+      borradorId.current = null;
+      setSelectedPedido(otroPedido);
+      setPedidoError('Esta mesa ya tiene una comanda abierta. Agregá el producto a esa comanda.');
+      return;
+    }
     const subtotal = (updated.items || []).filter(i => i.estado !== 'cancelado').reduce((s, i) => s + i.subtotal, 0);
-    const final = { ...updated, subtotal, total: subtotal - updated.descuento + updated.recargo };
+    const final = { ...updated, subtotal, total: subtotal - updated.descuento + updated.recargo, updated_at: new Date().toISOString() };
+    borradorId.current = null;
+    saveDemoPedidos(esNuevo ? [...actuales, final] : actuales.map(p => p.id === final.id ? final : p));
+    if (esNuevo) ocuparMesa(final.mesa_id, final.empleado_id);
     setSelectedPedido(final);
-    saveDemoPedidos(loadDemoPedidos().map(p => p.id === final.id ? final : p));
+    setPedidoError('');
   };
 
   const sendToKitchen = () => {
@@ -106,27 +134,44 @@ export default function Pedidos() {
     updatePedido(updated);
   };
 
-  const createOrder = () => {
-    const mesa = mesasDisponibles.find(m => m.id === newMesaId);
-    const moza = mozas.find(e => e.id === newMozaId);
-    if (!mesa || estadoOperativoMesa(mesa, pedidos) !== 'libre' || mesaTienePedidoAbierto(newMesaId, pedidos)) return;
-    const newPedido: Pedido = {
-      id: `ped-${Date.now()}`,
-      mesa_id: newMesaId,
-      empleado_id: newMozaId,
-      cantidad_personas: newPersonas,
+  const prepararPedido = (mesa: Mesa, personas: number, mozaId: string): Pedido => ({
+      id: nuevoId('ped'),
+      mesa_id: mesa.id,
+      empleado_id: mozaId || undefined,
+      cantidad_personas: personas,
       estado: 'abierto',
       subtotal: 0, descuento: 0, recargo: 0, total: 0,
       observaciones: '',
       hora_apertura: new Date().toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      mesa, empleado: moza, items: [],
-    };
-    saveDemoPedidos([...loadDemoPedidos(), newPedido]);
+      mesa, empleado: mozas.find(e => e.id === mozaId), items: [],
+  });
+
+  const seleccionarMesa = (mesa: Mesa) => {
+    if (mesa.estado === 'cerrada') return;
+    const abierto = loadDemoPedidos().find(pedido => pedido.mesa_id === mesa.id && pedidoAbierto(pedido));
+    const seleccionado = abierto || prepararPedido(mesa, Math.min(2, Math.max(1, mesa.capacidad)), mesa.empleado_id || newMozaId);
+    borradorId.current = abierto ? null : seleccionado.id;
+    setSelectedPedido(seleccionado);
+    setShowAddProduct(true);
+    setPedidoError('');
+    setBusqueda('');
+    setCategoriaFiltro('todos');
+  };
+
+  const createOrder = () => {
+    const mesa = loadMesas().find(m => m.id === newMesaId);
+    const actuales = loadDemoPedidos();
+    if (!mesa || estadoOperativoMesa(mesa, actuales) !== 'libre' || mesaTienePedidoAbierto(newMesaId, actuales)) return;
+    const newPedido = prepararPedido(mesa, newPersonas, newMozaId);
+    borradorId.current = null;
+    saveDemoPedidos([...actuales, newPedido]);
     ocuparMesa(newMesaId, newMozaId);
     setSelectedPedido(newPedido);
     setShowNewOrder(false);
+    setShowAddProduct(true);
+    setPedidoError('');
   };
 
   const tiempoAbierto = (hora: string) => {
@@ -136,8 +181,8 @@ export default function Pedidos() {
   };
 
   return (
-    <div className="flex flex-col xl:flex-row gap-4 xl:gap-6 h-full">
-      <div className="w-full xl:w-64 flex-shrink-0 space-y-3">
+    <div className="flex flex-col md:flex-row gap-4 xl:gap-6 h-full">
+      <div className="w-full md:w-56 xl:w-64 flex-shrink-0 space-y-3">
         <button
           onClick={() => setShowNewOrder(true)}
           className="w-full bg-amber-500 hover:bg-amber-400 text-white font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm transition-colors"
@@ -147,48 +192,66 @@ export default function Pedidos() {
         </button>
 
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="p-3 border-b border-slate-100">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Comandas Activas</p>
+          <div className="p-4 border-b border-slate-100">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-slate-800">Mesas</h3>
+              <span className="text-xs font-medium text-emerald-700">{mesasLibres.length} libres</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Seleccioná una mesa y agregá su pedido.</p>
           </div>
-          <div className="divide-y divide-slate-50 max-h-[40vh] xl:max-h-[calc(100vh-240px)] overflow-y-auto">
-            {pedidos.filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado').map(pedido => (
-              <button
-                key={pedido.id}
-                onClick={() => setSelectedPedido(pedido)}
-                className={`w-full p-3 text-left hover:bg-slate-50 transition-colors ${selectedPedido?.id === pedido.id ? 'bg-amber-50 border-l-2 border-amber-500' : ''}`}
-              >
-                <div className="flex justify-between items-start">
-                  <span className="font-semibold text-slate-800 text-sm">Mesa {pedido.mesa?.numero}</span>
-                  <span className="text-xs text-slate-400">{tiempoAbierto(pedido.hora_apertura)}</span>
-                </div>
-                <div className="text-xs text-slate-500 mt-0.5">{pedido.empleado?.nombre}</div>
-                <div className="flex justify-between items-center mt-1.5">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    pedido.estado === 'en_preparacion' ? 'bg-orange-100 text-orange-700' :
-                    pedido.estado === 'listo' ? 'bg-green-100 text-green-700' :
-                    pedido.estado === 'entregado' ? 'bg-blue-100 text-blue-700' :
-                    'bg-slate-100 text-slate-600'
-                  }`}>
-                    {pedido.estado === 'en_preparacion' ? 'En prep.' :
-                     pedido.estado === 'listo' ? 'Listo' :
-                     pedido.estado === 'entregado' ? 'Entregado' : 'Abierto'}
-                  </span>
-                  <span className="text-xs font-semibold text-slate-700">${pedido.total.toLocaleString()}</span>
-                </div>
-              </button>
-            ))}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-1 gap-2 p-3 max-h-[40vh] md:max-h-[calc(100vh-260px)] overflow-y-auto">
+            {[...mesasDisponibles].sort((a, b) => a.numero - b.numero).map(mesa => {
+              const pedido = pedidos.find(item => item.mesa_id === mesa.id && pedidoAbierto(item));
+              const cerrada = mesa.estado === 'cerrada';
+              const seleccionada = selectedPedido?.mesa_id === mesa.id;
+              return (
+                <button
+                  key={mesa.id}
+                  type="button"
+                  onClick={() => seleccionarMesa(mesa)}
+                  disabled={cerrada}
+                  aria-pressed={seleccionada}
+                  className={`w-full rounded-xl border p-3 text-left transition-colors ${
+                    seleccionada ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-400' :
+                    cerrada ? 'border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed' :
+                    pedido ? 'border-blue-200 bg-blue-50 hover:border-blue-400' :
+                    'border-emerald-200 bg-emerald-50 hover:border-emerald-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <UtensilsCrossed size={16} className={pedido ? 'text-blue-600 shrink-0' : 'text-emerald-600 shrink-0'} />
+                    <span className="font-semibold text-slate-800 text-sm truncate">{mesa.nombre || `Mesa ${mesa.numero}`}</span>
+                  </div>
+                  {mesa.nombre && <p className="text-[11px] text-slate-500 mt-1">Mesa {mesa.numero}</p>}
+                  <div className="flex flex-wrap justify-between items-center gap-1 mt-2">
+                    <span className={`text-xs font-medium ${cerrada ? 'text-slate-500' : pedido ? 'text-blue-700' : 'text-emerald-700'}`}>
+                      {cerrada ? 'Fuera de servicio' : pedido ? 'Ocupada' : 'Libre'}
+                    </span>
+                    {pedido && <span className="text-xs font-bold text-slate-700">${pedido.total.toLocaleString('es-AR')}</span>}
+                  </div>
+                  {pedido ? (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      {pedido.estado === 'en_preparacion' ? 'En preparación' : pedido.estado === 'listo' ? 'Listo' : pedido.estado === 'entregado' ? 'Entregado' : 'Comanda abierta'} · {tiempoAbierto(pedido.hora_apertura)}
+                    </p>
+                  ) : !cerrada && <p className="text-[11px] text-emerald-700 mt-1">Tocá para agregar pedido</p>}
+                </button>
+              );
+            })}
+            {mesasDisponibles.length === 0 && (
+              <p className="col-span-full py-6 text-center text-sm text-slate-500">Todavía no hay mesas. Cargalas desde la pantalla Mesas.</p>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col lg:flex-row gap-4 lg:gap-6 min-w-0">
+      <div className="flex-1 flex flex-col xl:flex-row gap-4 xl:gap-6 min-w-0">
         {selectedPedido ? (
           <>
             <div className="flex-1 bg-white rounded-2xl border border-slate-200 flex flex-col">
               <div className="p-5 border-b border-slate-100">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h3 className="font-bold text-slate-800">Mesa {selectedPedido.mesa?.numero}</h3>
+                    <h3 className="font-bold text-slate-800">{selectedPedido.mesa?.nombre || `Mesa ${selectedPedido.mesa?.numero}`}</h3>
                     <p className="text-sm text-slate-500">
                       {selectedPedido.empleado?.nombre} · {selectedPedido.cantidad_personas} personas · {tiempoAbierto(selectedPedido.hora_apertura)}
                     </p>
@@ -201,6 +264,24 @@ export default function Pedidos() {
                     Agregar producto
                   </button>
                 </div>
+                {selectedPedido.id === borradorId.current && (
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <label className="text-xs text-slate-500">Personas
+                      <input type="number" min="1" value={selectedPedido.cantidad_personas}
+                        onChange={e => setSelectedPedido({ ...selectedPedido, cantidad_personas: Math.max(1, parseInt(e.target.value) || 1) })}
+                        className="ml-2 w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800" />
+                    </label>
+                    <label className="text-xs text-slate-500">Moza
+                      <select value={selectedPedido.empleado_id || ''}
+                        onChange={e => setSelectedPedido({ ...selectedPedido, empleado_id: e.target.value || undefined, empleado: mozas.find(moza => moza.id === e.target.value) })}
+                        className="ml-2 rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-800">
+                        <option value="">Sin asignar</option>
+                        {mozas.map(moza => <option key={moza.id} value={moza.id}>{moza.nombre}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                {pedidoError && <p role="alert" className="mt-3 text-sm text-red-600">{pedidoError}</p>}
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 space-y-2">
@@ -292,7 +373,7 @@ export default function Pedidos() {
             </div>
 
             {showAddProduct && (
-              <div className="w-full lg:w-96 flex-shrink-0 bg-white rounded-2xl border border-slate-200 flex flex-col max-h-[70vh] lg:max-h-none">
+              <div className="w-full xl:w-80 2xl:w-96 flex-shrink-0 bg-white rounded-2xl border border-slate-200 flex flex-col max-h-[70vh] xl:max-h-none">
                 <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   <h4 className="font-semibold text-slate-800">Agregar Productos</h4>
                   <button onClick={() => setShowAddProduct(false)}>
@@ -362,7 +443,7 @@ export default function Pedidos() {
           <div className="flex-1 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-400">
             <div className="text-center">
               <Clock size={40} className="mx-auto mb-3 opacity-30" />
-              <p>Seleccioná una comanda para gestionarla</p>
+              <p>Seleccioná una mesa para agregar su pedido</p>
             </div>
           </div>
         )}

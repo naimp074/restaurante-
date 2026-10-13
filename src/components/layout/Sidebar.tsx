@@ -3,7 +3,7 @@ import {
   LayoutDashboard, UtensilsCrossed, ClipboardList, ChefHat,
   CreditCard, Package, Boxes, Calculator, BarChart3, Users,
   Settings, LogOut, Truck, PanelLeftClose, PanelLeftOpen, ReceiptText,
-  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X
+  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet
 } from 'lucide-react';
 import type { PageId, Rol } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -45,12 +45,16 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
   const [showCajaMenu, setShowCajaMenu] = useState(false);
   const [showProductosMenu, setShowProductosMenu] = useState(false);
   const [showStockMenu, setShowStockMenu] = useState(false);
+  const [showGastosMenu, setShowGastosMenu] = useState(
+    currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos'
+  );
 
   const compact = collapsed && !mobileOpen;
   const visibleItems = navItems.filter(item => hasRole(...item.roles));
   const ventasActive = currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'cocina' || currentPage === 'pedidos';
   const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
   const stockActive = currentPage === 'stock' || currentPage === 'stock_insumos' || currentPage === 'stock_consumos' || currentPage === 'stock_produccion';
+  const gastosActive = currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos';
 
   return (
     <aside
@@ -107,7 +111,16 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
           const isVentas = item.id === 'ventas';
           const isProductos = item.id === 'productos';
           const isStock = item.id === 'stock';
-          const isActive = isVentas ? ventasActive : isProductos ? productosActive : isStock ? stockActive : currentPage === item.id;
+          const isGastos = item.id === 'gastos';
+          const isActive = isVentas
+            ? ventasActive
+            : isProductos
+              ? productosActive
+              : isStock
+                ? stockActive
+                : isGastos
+                  ? gastosActive
+                  : currentPage === item.id;
 
           if (isVentas) {
             return (
@@ -363,6 +376,67 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                     >
                       <ChefHat size={13} />
                       Producción
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          if (isGastos) {
+            return (
+              <div key={item.id}>
+                <button
+                  onClick={() => {
+                    onNavigate('gastos');
+                    if (!compact) setShowGastosMenu(true);
+                  }}
+                  className={`w-full flex items-center gap-3 rounded-lg transition-all duration-150 group relative py-2.5 ${
+                    compact ? 'justify-center px-2' : 'px-3'
+                  } ${
+                    isActive
+                      ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                  }`}
+                  title={compact ? item.label : undefined}
+                >
+                  <Icon size={18} className="flex-shrink-0" />
+                  {!compact && <span className="text-sm font-medium truncate flex-1 text-left">{item.label}</span>}
+                  {!compact && (
+                    <ChevronDown
+                      size={14}
+                      className={`transition-transform ${showGastosMenu ? 'rotate-180' : ''}`}
+                    />
+                  )}
+                </button>
+
+                {!compact && showGastosMenu && (
+                  <div className="ml-6 mt-1 space-y-0.5 rounded-xl bg-slate-800/60 p-1">
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onNavigate('gastos_pagos');
+                      }}
+                      className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                        currentPage === 'gastos_pagos' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                      }`}
+                    >
+                      <Wallet size={13} />
+                      Pagos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onNavigate('gastos_traspasos');
+                      }}
+                      className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                        currentPage === 'gastos_traspasos' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                      }`}
+                    >
+                      <ArrowLeftRight size={13} />
+                      Traspasos
                     </button>
                   </div>
                 )}

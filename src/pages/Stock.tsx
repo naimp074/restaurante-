@@ -1,7 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
-import * as pdfjsLib from 'pdfjs-dist';
-import { createWorker } from 'tesseract.js';
+import { useMemo, useRef, useState } from 'react';
 import {
   Plus,
   AlertTriangle,
@@ -19,15 +16,26 @@ import {
   Trash2,
   Loader2,
   Download,
+  Search,
 } from 'lucide-react';
-import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, RegistroProduccion, TipoComprobanteCompra, UnidadMedida } from '../lib/types';
+import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, TipoComprobanteCompra, UnidadMedida } from '../lib/types';
 import { loadProveedores } from '../lib/proveedoresStore';
 import { loadProductos, saveProductos } from '../lib/productosStore';
-import { analizarImpactoCompra, margenPorcentaje } from '../lib/costosReceta';
-import type { ImpactoCompra } from '../lib/costosReceta';
+import {
+  actualizarCostosProductos,
+  actualizarCostosProducciones,
+  aplicarPreciosSugeridos,
+  analizarImpactoCompra,
+  comboDelInsumo,
+  crearComboDesdeInsumo,
+  detectarCambiosCosto,
+  redondearPrecio,
+} from '../lib/costosReceta';
+import type { InsumoEncarecido } from '../lib/costosReceta';
 import BuscadorInsumo from '../components/BuscadorInsumo';
 import { dayKey } from '../lib/fechas';
-import { crearFacturaProveedor, loadCuentasDinero, registrarPagoProveedor } from '../lib/finance';
+import { loadCuentasDinero, registrarGastoCompra } from '../lib/finance';
+import { useStoredState, withStoreTransaction } from '../lib/storeSync';
 import {
   loadDemoIngredientes,
   loadDemoMovimientosStock,
@@ -37,7 +45,13 @@ import {
   saveDemoMovimientosStock,
   saveDemoProducciones,
   saveDemoRegistrosProduccion,
+  ingredientesUpdatedEvent,
+  movimientosStockUpdatedEvent,
+  produccionesUpdatedEvent,
+  registrosProduccionUpdatedEvent,
 } from '../lib/demoStore';
+import { nuevoId } from '../lib/ids';
+import { cargarOcr, cargarPdf, cargarXlsx } from '../lib/cargadores';
 
 const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
 const motivosConsumo = [
@@ -51,15 +65,13 @@ const motivosConsumo = [
   'Ajuste de stock',
 ];
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
-
 const getProveedor = (proveedorId?: string) =>
   loadProveedores().find(p => p.id === proveedorId);
 
 const getProveedorNombre = (ingrediente: Ingrediente | Partial<Ingrediente>) =>
   getProveedor(ingrediente.proveedor_id)?.nombre || 'Sin proveedor';
 
-const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const createId = (prefix: string) => nuevoId(prefix);
 
 const comprobantesCompra: { tipo: TipoComprobanteCompra; label: string; placeholder: string }[] = [
   { tipo: 'factura', label: 'Factura', placeholder: 'N° de factura' },
@@ -90,9 +102,6 @@ const emptyCompraDraft = (): CompraDraft => ({
 });
 
 const pesos = (valor: number) => `$${valor.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`;
-
-const colorMargen = (margen: number) =>
-  margen >= 50 ? 'text-emerald-600' : margen >= 35 ? 'text-amber-600' : 'text-red-600';
 
 const normalizeText = (value: string) =>
   value
@@ -205,8 +214,8 @@ interface StockProps {
 }
 
 export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
-  const [ingredientes, setIngredientes] = useState<Ingrediente[]>(() => loadDemoIngredientes());
-  const [movimientos, setMovimientos] = useState<MovimientoStock[]>(() => loadDemoMovimientosStock());
+  const [ingredientes, setIngredientes] = useStoredState(ingredientesUpdatedEvent, loadDemoIngredientes, saveDemoIngredientes);
+  const [movimientos, setMovimientos] = useStoredState(movimientosStockUpdatedEvent, loadDemoMovimientosStock, saveDemoMovimientosStock);
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState<Partial<Ingrediente> | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
@@ -232,8 +241,8 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [filtroConsumoIngId, setFiltroConsumoIngId] = useState('todos');
   const [filtroConsumoDesde, setFiltroConsumoDesde] = useState('');
   const [filtroConsumoHasta, setFiltroConsumoHasta] = useState('');
-  const [producciones, setProducciones] = useState<ProduccionPreparada[]>(() => loadDemoProducciones());
-  const [registrosProduccion, setRegistrosProduccion] = useState<RegistroProduccion[]>(() => loadDemoRegistrosProduccion());
+  const [producciones, setProducciones] = useStoredState(produccionesUpdatedEvent, loadDemoProducciones, saveDemoProducciones);
+  const [registrosProduccion, setRegistrosProduccion] = useStoredState(registrosProduccionUpdatedEvent, loadDemoRegistrosProduccion, saveDemoRegistrosProduccion);
   const [showProduccionForm, setShowProduccionForm] = useState(false);
   const [showDefinicionProduccion, setShowDefinicionProduccion] = useState(false);
   const [definicionEditId, setDefinicionEditId] = useState<string | null>(null);
@@ -249,19 +258,20 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [produccionResponsable, setProduccionResponsable] = useState('');
   const [produccionObservaciones, setProduccionObservaciones] = useState('');
   const [cantidadesUsadas, setCantidadesUsadas] = useState<Record<string, string>>({});
-  const [impactoCompra, setImpactoCompra] = useState<ImpactoCompra | null>(null);
-  const [preciosNuevos, setPreciosNuevos] = useState<Record<string, string>>({});
-  const [preciosElegidos, setPreciosElegidos] = useState<Record<string, boolean>>({});
+  const [confirmacionCosto, setConfirmacionCosto] = useState<InsumoEncarecido[] | null>(null);
+  const [costosElegidos, setCostosElegidos] = useState<Record<string, boolean>>({});
+  const [comboIng, setComboIng] = useState<Ingrediente | null>(null);
+  const [comboNombre, setComboNombre] = useState('');
+  const [comboCantidad, setComboCantidad] = useState('1');
+  const [comboPrecio, setComboPrecio] = useState('');
+  const [comboError, setComboError] = useState('');
+  const [comboAviso, setComboAviso] = useState('');
+  const [busquedaStock, setBusquedaStock] = useState('');
   const compraEnProceso = useRef(false);
-
-  const preciosParaAplicar = impactoCompra
-    ? impactoCompra.productos.filter(item =>
-        preciosElegidos[item.producto.id] && (parseFloat(preciosNuevos[item.producto.id]) || 0) > 0
-      ).length
-    : 0;
-  const todosLosPreciosElegidos = impactoCompra
-    ? impactoCompra.productos.every(item => preciosElegidos[item.producto.id])
-    : false;
+  const costosMarcados = confirmacionCosto
+    ? confirmacionCosto.filter(insumo => costosElegidos[insumo.id]).map(insumo => insumo.id)
+    : [];
+  const todosLosCostosElegidos = !!confirmacionCosto && confirmacionCosto.every(insumo => costosElegidos[insumo.id]);
 
   const selectedIngrediente = ingredientes.find(i => i.id === selectedIngId) || null;
   const selectedMovimientos = movimientos
@@ -274,6 +284,17 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     cantidad_sugerida: Math.max(i.stock_minimo * 2 - i.stock_actual, 0),
   }));
   const stockOk = ingredientes.filter(i => i.stock_actual > i.stock_minimo * 1.5);
+  const ingredientesFiltrados = useMemo(() => {
+    const consulta = normalizeText(busquedaStock);
+    if (!consulta) return ingredientes;
+    return ingredientes.filter(ingrediente => {
+      const proveedor = normalizeText(getProveedorNombre(ingrediente));
+      return normalizeText(ingrediente.nombre).includes(consulta)
+        || normalizeText(ingrediente.unidad_medida).includes(consulta)
+        || normalizeText(ingrediente.codigo || '').includes(consulta)
+        || proveedor.includes(consulta);
+    });
+  }, [ingredientes, busquedaStock]);
   const compraTotal = useMemo(
     () => compraDraft.items.reduce((sum, item) => sum + item.cantidad * item.costo_unitario, 0),
     [compraDraft.items]
@@ -286,7 +307,8 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       : 0;
   const compraTieneErrores = compraDraft.items.some(item =>
     !item.nombre.trim() ||
-    item.cantidad <= 0 ||
+    !Number.isFinite(item.cantidad) || item.cantidad <= 0 ||
+    !Number.isFinite(item.costo_unitario) || item.costo_unitario < 0 ||
     (item.modo === 'existente' && !item.ingrediente_id) ||
     (item.modo === 'nuevo' && !item.unidad_medida)
   );
@@ -318,29 +340,14 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const produccionTieneFaltantes = insumosProduccion.some(item => !item.suficiente);
   const costoProduccionTotal = insumosProduccion.reduce((sum, item) => sum + item.costo, 0);
 
-  useEffect(() => {
-    saveDemoIngredientes(ingredientes);
-  }, [ingredientes]);
-
-  useEffect(() => {
-    saveDemoMovimientosStock(movimientos);
-  }, [movimientos]);
-
-  useEffect(() => {
-    saveDemoProducciones(producciones);
-  }, [producciones]);
-
-  useEffect(() => {
-    saveDemoRegistrosProduccion(registrosProduccion);
-  }, [registrosProduccion]);
-
   const getStockStatus = (ing: Ingrediente) => {
     if (ing.stock_actual <= ing.stock_minimo) return { color: 'bg-red-100 text-red-700', label: 'Crítico', dot: 'bg-red-500' };
     if (ing.stock_actual <= ing.stock_minimo * 1.5) return { color: 'bg-amber-100 text-amber-700', label: 'Bajo', dot: 'bg-amber-500' };
     return { color: 'bg-emerald-100 text-emerald-700', label: 'Normal', dot: 'bg-emerald-500' };
   };
 
-  const descargarExcelStock = () => {
+  const descargarExcelStock = async () => {
+    const XLSX = await cargarXlsx();
     const rows: (string | number)[][] = [
       ['Codigo', 'Descripcion', 'Unidad', 'cantidad', 'COSTO', 'COSTO', 'TOTALIZACION STOCK'],
       ...ingredientes.map((ing, index) => [
@@ -371,8 +378,9 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     XLSX.writeFile(workbook, `stock-${dayKey()}.xlsx`);
   };
 
-  const descargarHistorialIngrediente = () => {
+  const descargarHistorialIngrediente = async () => {
     if (!selectedIngrediente) return;
+    const XLSX = await cargarXlsx();
 
     const ingresos = selectedMovimientos
       .filter(movimiento => movimiento.tipo === 'entrada')
@@ -446,6 +454,54 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     setShowForm(true);
   };
 
+  const comboExistente = comboIng ? comboDelInsumo(loadProductos(), comboIng.id) : undefined;
+  const comboCantidadNum = parseFloat(comboCantidad) || 0;
+  const comboCosto = comboIng ? comboCantidadNum * comboIng.costo_por_unidad : 0;
+  const comboPrecioSugerido = comboCosto > 0 ? redondearPrecio(comboCosto / 0.5) : 0;
+
+  const abrirComboDesdeInsumo = (ing: Ingrediente) => {
+    const existente = comboDelInsumo(loadProductos(), ing.id);
+    setComboIng(ing);
+    setComboNombre(existente?.nombre || ing.nombre);
+    setComboCantidad(String(existente?.receta?.[0]?.cantidad || 1));
+    setComboPrecio(existente?.precio_venta ? String(existente.precio_venta) : '');
+    setComboError('');
+    setComboAviso('');
+  };
+
+  const guardarComboDesdeInsumo = () => {
+    if (!comboIng) return;
+    const precioVenta = parseFloat(comboPrecio) || 0;
+    if (!comboNombre.trim()) {
+      setComboError('Poné el nombre con el que se va a vender.');
+      return;
+    }
+    if (comboCantidadNum <= 0) {
+      setComboError('La cantidad que se descuenta por venta tiene que ser mayor a cero.');
+      return;
+    }
+    if (precioVenta <= 0) {
+      setComboError('Poné el precio de venta para poder ofrecerlo en el menú.');
+      return;
+    }
+
+    const existente = comboDelInsumo(loadProductos(), comboIng.id);
+    const combo = crearComboDesdeInsumo(comboIng, {
+      nombre: comboNombre,
+      precioVenta,
+      cantidad: comboCantidadNum,
+      existente,
+    });
+    const actuales = loadProductos();
+    saveProductos(existente
+      ? actuales.map(producto => producto.id === combo.id ? combo : producto)
+      : [combo, ...actuales]);
+    setComboAviso(existente
+      ? `Actualizamos el combo ${combo.nombre}. Ya se puede vender.`
+      : `${combo.nombre} quedó en Combos y se puede vender suelto.`);
+    setComboIng(null);
+  };
+
   const openCompra = (origen: OrigenCompra = 'manual', items: CompraItemDraft[] = []) => {
     setCompraDraft({
       ...emptyCompraDraft(),
@@ -455,6 +511,8 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     });
     setCompraPaso('carga');
     setCompraError('');
+    setConfirmacionCosto(null);
+    setCostosElegidos({});
     setShowCompra(true);
   };
 
@@ -545,7 +603,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   };
 
   const readExcelFile = async (file: File) => {
-    const buffer = await file.arrayBuffer();
+    const [XLSX, buffer] = await Promise.all([cargarXlsx(), file.arrayBuffer()]);
     const workbook = XLSX.read(buffer, { type: 'array' });
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
@@ -573,7 +631,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   };
 
   const readPdfFile = async (file: File) => {
-    const buffer = await file.arrayBuffer();
+    const [pdfjsLib, buffer] = await Promise.all([cargarPdf(), file.arrayBuffer()]);
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
     const pages = await Promise.all(
       Array.from({ length: pdf.numPages }, async (_, index) => {
@@ -586,6 +644,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   };
 
   const readImageFile = async (file: File) => {
+    const { createWorker } = await cargarOcr();
     const worker = await createWorker('spa');
     const result = await worker.recognize(file);
     await worker.terminate();
@@ -621,22 +680,57 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     }
   };
 
+  const calcularCambioCostos = (
+    ingredientesAntes: Ingrediente[],
+    costosNuevos: Map<string, number>,
+    ingredientesDespues: Ingrediente[],
+  ) => {
+    const productosAntes = loadProductos();
+    const nextProducciones = actualizarCostosProducciones(producciones, ingredientesDespues);
+    const impacto = analizarImpactoCompra({
+      ingredientes: ingredientesAntes,
+      costosNuevos,
+      productos: productosAntes,
+      producciones,
+    });
+    return {
+      impacto,
+      nextProducciones,
+      productos: aplicarPreciosSugeridos(
+        actualizarCostosProductos(productosAntes, ingredientesDespues, nextProducciones),
+        impacto,
+      ),
+    };
+  };
+
+  const persistirCambioCostos = (cambio: ReturnType<typeof calcularCambioCostos>) => {
+    saveProductos(cambio.productos);
+    if (cambio.nextProducciones.some((item, index) => item !== producciones[index])) {
+      setProducciones(cambio.nextProducciones);
+    }
+  };
+
   const saveItem = () => {
     if (!editItem?.nombre) return;
     const proveedor = getProveedor(editItem.proveedor_id);
     if (editId) {
       const current = ingredientes.find(i => i.id === editId);
       const nextStock = editItem.stock_actual ?? current?.stock_actual ?? 0;
+      const updated = { ...current, ...editItem, proveedor_id: editItem.proveedor_id || undefined, proveedor } as Ingrediente;
+      const nextIngredientes = ingredientes.map(i => i.id === editId ? updated : i);
 
-      setIngredientes(prev => prev.map(i =>
-        i.id === editId
-          ? { ...i, ...editItem, proveedor_id: editItem.proveedor_id || undefined, proveedor } as Ingrediente
-          : i
-      ));
+      setIngredientes(nextIngredientes);
+      if (current && Math.abs((editItem.costo_por_unidad || 0) - current.costo_por_unidad) >= 0.001) {
+        persistirCambioCostos(calcularCambioCostos(
+          ingredientes,
+          new Map([[current.id, editItem.costo_por_unidad || 0]]),
+          nextIngredientes,
+        ));
+      }
       if (current && nextStock !== current.stock_actual) {
         const diferencia = nextStock - current.stock_actual;
         setMovimientos(prev => [{
-          id: `mov-${Date.now()}`,
+          id: nuevoId('mov'),
           ingrediente_id: current.id,
           tipo: diferencia > 0 ? 'entrada' : 'salida',
           cantidad: Math.abs(diferencia),
@@ -649,7 +743,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       }
     } else {
       const newIng: Ingrediente = {
-        id: `ing-${Date.now()}`,
+        id: nuevoId('ing'),
         nombre: editItem.nombre || '',
         unidad_medida: editItem.unidad_medida || 'unidad',
         stock_actual: editItem.stock_actual || 0,
@@ -664,7 +758,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       setIngredientes(prev => [...prev, newIng]);
       if (newIng.stock_actual > 0) {
         setMovimientos(prev => [{
-          id: `mov-${Date.now()}`,
+          id: nuevoId('mov'),
           ingrediente_id: newIng.id,
           tipo: 'entrada',
           cantidad: newIng.stock_actual,
@@ -679,7 +773,29 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     setShowForm(false);
   };
 
-  const registrarCompra = () => {
+  const costosCompraPropuestos = () => {
+    const costosNuevos = new Map<string, number>();
+    compraDraft.items.forEach(item => {
+      if (item.modo === 'existente' && item.ingrediente_id && item.costo_unitario > 0) {
+        costosNuevos.set(item.ingrediente_id, item.costo_unitario);
+      }
+    });
+    return costosNuevos;
+  };
+
+  const intentarRegistrarCompra = () => {
+    const validItems = compraDraft.items.filter(item => item.nombre.trim() && item.cantidad > 0);
+    if (!validItems.length || compraTieneErrores || compraEnProceso.current) return;
+    const cambios = detectarCambiosCosto(ingredientes, costosCompraPropuestos());
+    if (cambios.length) {
+      setCostosElegidos(Object.fromEntries(cambios.map(insumo => [insumo.id, false])));
+      setConfirmacionCosto(cambios);
+      return;
+    }
+    registrarCompra(new Set());
+  };
+
+  const registrarCompra = (idsCostoAActualizar: Set<string>) => {
     const validItems = compraDraft.items.filter(item => item.nombre.trim() && item.cantidad > 0);
     if (!validItems.length || compraTieneErrores || compraEnProceso.current) return;
     compraEnProceso.current = true;
@@ -692,7 +808,12 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     let nextIngredientes = [...ingredientes];
 
     validItems.forEach(item => {
-      if (item.modo === 'existente' && item.ingrediente_id && item.costo_unitario > 0) {
+      if (
+        item.modo === 'existente' &&
+        item.ingrediente_id &&
+        item.costo_unitario > 0 &&
+        idsCostoAActualizar.has(item.ingrediente_id)
+      ) {
         costosNuevos.set(item.ingrediente_id, item.costo_unitario);
       }
     });
@@ -703,10 +824,11 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
         if (!ingrediente) return;
 
         const stockNuevo = ingrediente.stock_actual + item.cantidad;
+        const actualizarCosto = idsCostoAActualizar.has(ingrediente.id) && item.costo_unitario > 0;
         const updated: Ingrediente = {
           ...ingrediente,
           stock_actual: stockNuevo,
-          costo_por_unidad: item.costo_unitario > 0 ? item.costo_unitario : ingrediente.costo_por_unidad,
+          costo_por_unidad: actualizarCosto ? item.costo_unitario : ingrediente.costo_por_unidad,
           proveedor_id: item.proveedor_id || ingrediente.proveedor_id,
           updated_at: now,
         };
@@ -756,84 +878,48 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       }
     });
 
-    setIngredientes(nextIngredientes);
-    setMovimientos(prev => [...movimientosCompra, ...prev]);
-
-    if (compraProveedorId && compraTotal > 0) {
-      const factura = crearFacturaProveedor({
-        proveedor_id: compraProveedorId,
-        compra_id: compraId,
-        numero: comprobanteTexto,
-        fecha: compraDraft.fecha,
-        vencimiento: compraDraft.vencimiento || compraDraft.fecha,
-        total: compraTotal,
-        observaciones: compraDraft.observaciones || 'Factura creada desde compra de stock',
-      });
-
-      if (montoPagadoCompra > 0 && compraDraft.cuenta_origen_id) {
-        registrarPagoProveedor({
+    const cambioCostos = costosNuevos.size
+      ? calcularCambioCostos(ingredientes, costosNuevos, nextIngredientes)
+      : null;
+    try {
+      withStoreTransaction(() => {
+        registrarGastoCompra({
           proveedor_id: compraProveedorId,
-          factura_id: factura.id,
-          cuenta_origen_id: compraDraft.cuenta_origen_id,
+          compra_id: compraId,
+          comprobante: comprobanteTexto,
+          concepto: `Compra de stock: ${validItems.map(item => `${item.nombre} (${item.cantidad} ${item.unidad_medida})`).join(', ')}`,
           fecha: compraDraft.fecha,
+          vencimiento: compraDraft.vencimiento || compraDraft.fecha,
+          total: compraTotal,
+          observaciones: compraDraft.observaciones,
+          monto_pagado: montoPagadoCompra,
+          cuenta_origen_id: compraDraft.cuenta_origen_id,
           metodo_pago: metodoPagoCompra,
-          monto: montoPagadoCompra,
-          observaciones: `Pago ${compraDraft.condicion_pago === 'pagada' ? 'total' : 'parcial'} de compra ${factura.numero}`,
         });
-      }
+        setIngredientes(nextIngredientes);
+        setMovimientos(prev => [...movimientosCompra, ...prev]);
+        if (cambioCostos) {
+          saveProductos(cambioCostos.productos);
+          if (cambioCostos.nextProducciones.some((item, index) => item !== producciones[index])) {
+            setProducciones(cambioCostos.nextProducciones);
+          }
+        }
+      });
+    } catch (error) {
+      setConfirmacionCosto(null);
+      setCostosElegidos({});
+      setCompraError(error instanceof Error ? error.message : 'No se pudo registrar el gasto de la compra.');
+      compraEnProceso.current = false;
+      return;
     }
 
-    const impacto = analizarImpactoCompra({
-      ingredientes,
-      costosNuevos,
-      productos: loadProductos(),
-      producciones,
-    });
-
-    if (impacto.productos.length) {
-      setPreciosNuevos(Object.fromEntries(
-        impacto.productos.map(item => [item.producto.id, item.precioSugerido ? String(item.precioSugerido) : '']),
-      ));
-      setPreciosElegidos(Object.fromEntries(
-        impacto.productos.map(item => [item.producto.id, item.precioSugerido > 0]),
-      ));
-      setImpactoCompra(impacto);
-    }
-
+    setConfirmacionCosto(null);
+    setCostosElegidos({});
     setCompraDraft(emptyCompraDraft());
     setCompraPaso('carga');
     setCompraError('');
     setShowCompra(false);
     compraEnProceso.current = false;
-  };
-
-  // Los costos son un hecho de la compra, así que se guardan siempre. El precio de venta
-  // es una decisión, y solo se toca en los combos que el usuario marcó.
-  const cerrarImpactoCompra = (aplicarPrecios: boolean) => {
-    if (!impactoCompra) return;
-
-    const ajustes = new Map(impactoCompra.productos.map(item => [item.producto.id, item]));
-    const productosGuardados = loadProductos().map(producto => {
-      const ajuste = ajustes.get(producto.id);
-      if (!ajuste) return producto;
-
-      const precioIngresado = parseFloat(preciosNuevos[producto.id]) || 0;
-      const aplicar = aplicarPrecios && preciosElegidos[producto.id] && precioIngresado > 0;
-      const precioVenta = aplicar ? precioIngresado : producto.precio_venta;
-
-      return {
-        ...producto,
-        precio_venta: precioVenta,
-        costo_produccion: ajuste.costoNuevo,
-        margen_ganancia: margenPorcentaje(precioVenta, ajuste.costoNuevo),
-        updated_at: new Date().toISOString(),
-      };
-    });
-
-    saveProductos(productosGuardados);
-    setImpactoCompra(null);
-    setPreciosNuevos({});
-    setPreciosElegidos({});
   };
 
   const resetConsumoForm = () => {
@@ -1645,6 +1731,14 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
 
   return (
     <div className="space-y-5">
+      {comboAviso && (
+        <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3 text-sm text-emerald-800 flex items-start justify-between gap-3">
+          <p>{comboAviso}</p>
+          <button onClick={() => setComboAviso('')} className="text-emerald-500 hover:text-emerald-700" aria-label="Cerrar aviso">
+            <X size={16} />
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <button
           onClick={() => setShowStockCritico(true)}
@@ -1713,6 +1807,32 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex-1 max-w-md">
+            <Search size={14} className="text-slate-400" />
+            <input
+              value={busquedaStock}
+              onChange={e => setBusquedaStock(e.target.value)}
+              placeholder="Buscar insumo, proveedor o unidad..."
+              aria-label="Buscar en stock"
+              className="bg-transparent text-sm outline-none flex-1 placeholder-slate-400"
+            />
+            {busquedaStock && (
+              <button
+                type="button"
+                onClick={() => setBusquedaStock('')}
+                className="text-slate-400 hover:text-slate-600"
+                aria-label="Limpiar búsqueda"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <p className="text-sm text-slate-500">
+            {ingredientesFiltrados.length} {ingredientesFiltrados.length === 1 ? 'insumo' : 'insumos'}
+            {busquedaStock ? ` de ${ingredientes.length}` : ''}
+          </p>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1729,7 +1849,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {ingredientes.map(ing => {
+              {ingredientesFiltrados.map(ing => {
                 const status = getStockStatus(ing);
                 const pct = Math.min(100, Math.round((ing.stock_actual / (ing.stock_minimo * 3)) * 100));
                 return (
@@ -1778,11 +1898,25 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                         >
                           <Edit2 size={14} />
                         </button>
+                        <button
+                          onClick={() => abrirComboDesdeInsumo(ing)}
+                          className="px-2 py-1 rounded-lg text-xs font-semibold text-amber-700 hover:bg-amber-50 transition-colors whitespace-nowrap"
+                          title="Crear un combo para venderlo suelto"
+                        >
+                          Agregar a combo
+                        </button>
                       </div>
                     </td>
                   </tr>
                 );
               })}
+              {ingredientesFiltrados.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="py-10 text-center text-sm text-slate-400">
+                    {busquedaStock ? 'No encontré ningún insumo con esa búsqueda.' : 'Todavía no hay insumos cargados.'}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -1881,7 +2015,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                   Cargá un Excel, PDF, foto de factura o agregá productos manualmente. Revisá todo antes de sumar stock.
                 </p>
               </div>
-              <button onClick={() => setShowCompra(false)}><X size={18} className="text-slate-400" /></button>
+              <button onClick={() => { setConfirmacionCosto(null); setShowCompra(false); }}><X size={18} className="text-slate-400" /></button>
             </div>
 
             <div className="p-5 space-y-5 overflow-y-auto">
@@ -2104,9 +2238,21 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {compraDraft.items.map(item => (
-                      <tr key={item.id} className={item.modo === 'nuevo' ? 'bg-amber-50/40' : 'bg-white'}>
-                        <td className="py-3 px-3 align-top">
+                    {compraDraft.items.map(item => {
+                      const ingrediente = item.modo === 'existente'
+                        ? ingredientes.find(ing => ing.id === item.ingrediente_id)
+                        : undefined;
+                      const costoAnterior = ingrediente?.costo_por_unidad || 0;
+                      const mismaUnidad = ingrediente?.unidad_medida === item.unidad_medida;
+                      const puedeComparar = mismaUnidad && costoAnterior > 0 && Number.isFinite(costoAnterior)
+                        && item.costo_unitario > 0 && Number.isFinite(item.costo_unitario);
+                      const diferencia = puedeComparar ? Math.round((item.costo_unitario - costoAnterior) * 1000) / 1000 : 0;
+                      const variacion = puedeComparar ? Math.abs(diferencia / costoAnterior * 100) : 0;
+                      const formatoCosto = (valor: number) => `$${valor.toLocaleString('es-AR', { maximumFractionDigits: 3 })}`;
+
+                      return (
+                      <tr key={item.id} className={item.modo === 'nuevo' ? 'bg-yellow-50' : 'bg-emerald-50'}>
+                        <td className={`py-3 px-3 align-top border-l-4 ${item.modo === 'nuevo' ? 'border-yellow-400' : 'border-emerald-400'}`}>
                           <BuscadorInsumo
                             ingredientes={ingredientes}
                             ingredienteId={item.ingrediente_id}
@@ -2120,7 +2266,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                             className="w-48"
                           />
                           <p className={`mt-1 text-[11px] font-medium ${item.modo === 'nuevo' ? 'text-amber-700' : 'text-emerald-700'}`}>
-                            {item.modo === 'nuevo' ? 'Se va a crear' : 'Suma stock existente'}
+                            {item.modo === 'nuevo' ? 'Crea un insumo nuevo' : 'Suma stock existente'}
                           </p>
                         </td>
                         <td className="py-3 px-3 align-top">
@@ -2155,10 +2301,26 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                             type="number"
                             value={item.costo_unitario || ''}
                             onChange={e => updateCompraItem(item.id, { costo_unitario: parseFloat(e.target.value) || 0 })}
+                            aria-label={`Costo unitario de ${item.nombre || 'insumo nuevo'}`}
                             className="w-28 border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400"
                             min="0"
                             step="0.001"
                           />
+                          <div className="mt-1.5 max-w-44 text-[11px]" aria-live="polite" aria-atomic="true">
+                            {ingrediente && costoAnterior > 0 && (
+                              <p className="text-slate-600">Antes: {formatoCosto(costoAnterior)} / {ingrediente.unidad_medida}</p>
+                            )}
+                            {puedeComparar ? diferencia !== 0 ? (
+                              <div className={`mt-1 rounded-lg border px-2 py-1 ${diferencia > 0 ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-100 text-emerald-800'}`}>
+                                <p className="flex items-center gap-1 font-semibold whitespace-nowrap">
+                                  {diferencia > 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                                  {diferencia > 0 ? 'Subió' : 'Bajó'} {variacion.toLocaleString('es-AR', { maximumFractionDigits: 2 })}%
+                                </p>
+                                <p>{diferencia > 0 ? '+' : '−'}{formatoCosto(Math.abs(diferencia))} por {item.unidad_medida}</p>
+                              </div>
+                            ) : <p className="mt-1 text-slate-600">Sin cambios de precio</p>
+                              : <p className="text-slate-500">{!ingrediente ? 'Sin precio anterior' : !mismaUnidad ? 'Revisá la unidad para comparar' : costoAnterior <= 0 ? 'Sin costo anterior registrado' : 'Ingresá el costo para comparar'}</p>}
+                          </div>
                         </td>
                         <td className="py-3 px-3 align-top">
                           <select
@@ -2185,7 +2347,8 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    );
+                    })}
                   </tbody>
                 </table>
                 {compraDraft.items.length === 0 && (
@@ -2207,9 +2370,9 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 {compraDraft.items.length} productos · Total: <span className="font-bold text-slate-800">${compraTotal.toLocaleString()}</span>
               </div>
               <div className="flex gap-3">
-                <button onClick={() => setShowCompra(false)} className="px-4 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm">Cancelar</button>
+                <button onClick={() => { setConfirmacionCosto(null); setShowCompra(false); }} className="px-4 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm">Cancelar</button>
                 <button
-                  onClick={registrarCompra}
+                  onClick={intentarRegistrarCompra}
                   disabled={!compraDraft.items.length || compraTieneErrores || isProcesandoCompra}
                   className="px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-semibold disabled:opacity-50 hover:bg-emerald-400 flex items-center justify-center gap-2"
                 >
@@ -2298,6 +2461,12 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 Descargar historial
               </button>
               <button
+                onClick={() => abrirComboDesdeInsumo(selectedIngrediente)}
+                className="px-4 py-2.5 border border-amber-200 text-amber-800 rounded-xl text-sm font-semibold hover:bg-amber-50 transition-colors"
+              >
+                {comboDelInsumo(loadProductos(), selectedIngrediente.id) ? 'Editar combo' : 'Agregar a combo'}
+              </button>
+              <button
                 onClick={() => setSelectedIngId(null)}
                 className="px-4 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 transition-colors"
               >
@@ -2308,117 +2477,207 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
         </div>
       )}
 
-      {impactoCompra && (
+      {comboIng && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-start justify-between p-6 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-800 text-lg">
+                  {comboExistente ? 'Editar combo' : 'Agregar a combo'}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  {comboExistente
+                    ? `${comboIng.nombre} ya se vende suelto. Podés cambiar el nombre, la cantidad o el precio.`
+                    : `Vas a crear un combo de ${comboIng.nombre} para venderlo solo. Al cobrarlo se descuenta del stock.`}
+                </p>
+              </div>
+              <button onClick={() => setComboIng(null)} className="text-slate-400 hover:text-slate-600" aria-label="Cerrar">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre en el menú</label>
+                <input
+                  value={comboNombre}
+                  onChange={e => setComboNombre(e.target.value)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                  placeholder="Ej: Tortilla"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Cantidad por venta</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    value={comboCantidad}
+                    onChange={e => setComboCantidad(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-right outline-none focus:border-amber-400"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">{comboIng.unidad_medida}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Precio de venta</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={comboPrecio}
+                    onChange={e => setComboPrecio(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-right outline-none focus:border-amber-400"
+                    placeholder="0"
+                  />
+                  {comboPrecioSugerido > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setComboPrecio(String(comboPrecioSugerido))}
+                      className="text-xs font-semibold text-amber-600 mt-1 hover:text-amber-700"
+                    >
+                      Sugerido {pesos(comboPrecioSugerido)}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-sm text-slate-600">
+                Costo {pesos(comboCosto)} por {comboCantidadNum || 0} {comboIng.unidad_medida}
+              </div>
+              {comboError && (
+                <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-sm text-amber-700">
+                  {comboError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={() => setComboIng(null)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={guardarComboDesdeInsumo}
+                className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400"
+              >
+                {comboExistente ? 'Guardar combo' : 'Agregar a combo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmacionCosto && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[70] p-0 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col">
             <div className="flex items-start gap-3 p-6 border-b border-slate-100">
-              <div className="w-11 h-11 bg-red-100 rounded-xl flex items-center justify-center shrink-0">
-                <TrendingUp size={20} className="text-red-600" />
+              <div className="w-11 h-11 bg-amber-100 rounded-xl flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} className="text-amber-600" />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-slate-800 text-lg">Subieron los costos</h3>
-                <p className="text-sm text-slate-500">
-                  {impactoCompra.insumos.length} {impactoCompra.insumos.length === 1 ? 'insumo aumentó' : 'insumos aumentaron'} y {impactoCompra.productos.length} {impactoCompra.productos.length === 1 ? 'combo quedó' : 'combos quedaron'} con menos margen. Revisá los precios de venta.
+                <h3 className="font-bold text-slate-800 text-lg">
+                  {confirmacionCosto.length === 1
+                    ? `¿Actualizar el precio de costo de ${confirmacionCosto[0].nombre}?`
+                    : '¿Actualizar precios de costo?'}
+                </h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  {confirmacionCosto.length === 1
+                    ? `Hoy la tenés a ${pesos(confirmacionCosto[0].costoAnterior)} y esta compra sale ${pesos(confirmacionCosto[0].costoNuevo)}. Si es una compra de urgencia, dejá el costo.`
+                    : 'Marcá solo los que sí querés actualizar. Los que dejes sin marcar mantienen el costo actual, por si alguno fue de urgencia.'}
                 </p>
               </div>
               <button
-                onClick={() => cerrarImpactoCompra(false)}
-                aria-label="Cerrar aviso de costos"
+                onClick={() => { setConfirmacionCosto(null); setCostosElegidos({}); }}
+                aria-label="Volver a la compra"
                 className="text-slate-400 hover:text-slate-600"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="p-6 space-y-5 overflow-y-auto">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-700 mb-2">Insumos que aumentaron</h4>
-                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
-                  {impactoCompra.insumos.map(insumo => (
-                    <div key={insumo.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{insumo.nombre}</p>
-                        <p className="text-xs text-slate-500">
-                          {pesos(insumo.costoAnterior)} → <span className="font-semibold text-red-600">{pesos(insumo.costoNuevo)}</span> por {insumo.unidad}
-                        </p>
-                      </div>
-                      <span className="text-sm font-bold text-red-600 shrink-0">+{insumo.variacion.toFixed(1)}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <h4 className="text-sm font-semibold text-slate-700">Combos afectados</h4>
+            <div className="p-6 overflow-y-auto space-y-3">
+              {confirmacionCosto.length > 1 && (
+                <div className="flex justify-end">
                   <button
+                    type="button"
                     onClick={() => {
-                      const marcarTodos = !todosLosPreciosElegidos;
-                      setPreciosElegidos(Object.fromEntries(
-                        impactoCompra.productos.map(item => [item.producto.id, marcarTodos && item.precioSugerido > 0]),
+                      const marcarTodos = !todosLosCostosElegidos;
+                      setCostosElegidos(Object.fromEntries(
+                        confirmacionCosto.map(insumo => [insumo.id, marcarTodos]),
                       ));
                     }}
                     className="text-xs font-semibold text-amber-600 hover:text-amber-700"
                   >
-                    {todosLosPreciosElegidos ? 'No actualizar ninguno' : 'Actualizar todos'}
+                    {todosLosCostosElegidos ? 'Desmarcar todos' : 'Marcar todos'}
                   </button>
                 </div>
-
-                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
-                  {impactoCompra.productos.map(item => (
-                    <div key={item.producto.id} className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] gap-3 p-3">
+              )}
+              <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                {confirmacionCosto.map(insumo => {
+                  const contenido = (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-slate-800 truncate">{insumo.nombre}</p>
+                        <p className="text-xs text-slate-500">
+                          Costo actual {pesos(insumo.costoAnterior)} →{' '}
+                          <span className={`font-semibold ${insumo.variacion > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                            {pesos(insumo.costoNuevo)}
+                          </span>
+                          {' '}por {insumo.unidad}
+                        </p>
+                      </div>
+                      <span className={`text-sm font-bold shrink-0 ${insumo.variacion > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                        {insumo.variacion > 0 ? '+' : ''}{insumo.variacion.toFixed(1)}%
+                      </span>
+                    </>
+                  );
+                  return confirmacionCosto.length > 1 ? (
+                    <label
+                      key={insumo.id}
+                      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50"
+                    >
                       <input
                         type="checkbox"
-                        checked={preciosElegidos[item.producto.id] || false}
-                        onChange={e => setPreciosElegidos(prev => ({ ...prev, [item.producto.id]: e.target.checked }))}
-                        aria-label={`Actualizar el precio de ${item.producto.nombre}`}
-                        className="mt-1 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                        checked={costosElegidos[insumo.id] || false}
+                        onChange={e => setCostosElegidos(prev => ({ ...prev, [insumo.id]: e.target.checked }))}
+                        aria-label={`Actualizar el costo de ${insumo.nombre}`}
+                        className="rounded border-slate-300 text-amber-500 focus:ring-amber-400"
                       />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800 truncate">{item.producto.nombre}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Costo {pesos(item.costoAnterior)} → <span className="font-semibold text-red-600">{pesos(item.costoNuevo)}</span>
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Margen <span className={`font-semibold ${colorMargen(item.margenAnterior)}`}>{item.margenAnterior.toFixed(1)}%</span>
-                          {' → '}
-                          <span className={`font-semibold ${colorMargen(item.margenNuevo)}`}>{item.margenNuevo.toFixed(1)}%</span>
-                        </p>
-                      </div>
-                      <div className="col-span-2 sm:col-span-1 sm:w-40">
-                        <p className="text-xs text-slate-400 mb-1">Precio actual {pesos(item.producto.precio_venta)}</p>
-                        <input
-                          type="number"
-                          value={preciosNuevos[item.producto.id] ?? ''}
-                          onChange={e => setPreciosNuevos(prev => ({ ...prev, [item.producto.id]: e.target.value }))}
-                          min="0"
-                          aria-label={`Precio nuevo de ${item.producto.nombre}`}
-                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-right outline-none focus:border-amber-400"
-                        />
-                        <p className="text-[11px] text-slate-400 mt-1 text-right">
-                          Sugerido para mantener el {item.margenAnterior.toFixed(0)}%
-                        </p>
-                      </div>
+                      {contenido}
+                    </label>
+                  ) : (
+                    <div key={insumo.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                      {contenido}
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 p-6 border-t border-slate-100">
               <button
-                onClick={() => cerrarImpactoCompra(false)}
+                onClick={() => registrarCompra(new Set())}
                 className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
               >
-                Dejar los precios como están
+                {confirmacionCosto.length === 1
+                  ? `Dejar el costo en ${pesos(confirmacionCosto[0].costoAnterior)}`
+                  : 'Dejar todos los costos'}
               </button>
               <button
-                onClick={() => cerrarImpactoCompra(true)}
-                disabled={preciosParaAplicar === 0}
-                className="flex-1 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-emerald-500 flex items-center justify-center gap-2"
+                onClick={() => registrarCompra(new Set(
+                  confirmacionCosto.length === 1
+                    ? confirmacionCosto.map(insumo => insumo.id)
+                    : costosMarcados,
+                ))}
+                disabled={confirmacionCosto.length > 1 && costosMarcados.length === 0}
+                className="flex-1 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-semibold hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-emerald-500"
               >
-                <Check size={16} />
-                {preciosParaAplicar === 1 ? 'Actualizar 1 precio' : `Actualizar ${preciosParaAplicar} precios`}
+                {confirmacionCosto.length === 1
+                  ? `Pasar el costo a ${pesos(confirmacionCosto[0].costoNuevo)}`
+                  : costosMarcados.length === 1
+                    ? 'Actualizar 1 costo marcado'
+                    : `Actualizar ${costosMarcados.length} costos marcados`}
               </button>
             </div>
           </div>

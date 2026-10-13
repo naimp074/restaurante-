@@ -23,8 +23,19 @@ export const saveDemoIngredientes = (ingredientes: Ingrediente[]) =>
 export const useIngredientes = () => useStore(ingredientesUpdatedEvent, loadDemoIngredientes);
 
 export const loadDemoMovimientosStock = () => readStore<MovimientoStock[]>(demoMovimientosStockStorageKey, []);
+/**
+ * Cada movimiento traía una copia completa del insumo que nadie lee: con meses de ventas
+ * era lo que más espacio ocupaba del navegador. Se guarda solo ingrediente_id.
+ */
+const sinCopiaDeInsumo = (movimiento: MovimientoStock): MovimientoStock => {
+  if (!movimiento.ingrediente) return movimiento;
+  const compacto = { ...movimiento };
+  delete compacto.ingrediente;
+  return compacto;
+};
+
 export const saveDemoMovimientosStock = (movimientos: MovimientoStock[]) =>
-  writeStore(demoMovimientosStockStorageKey, movimientos, movimientosStockUpdatedEvent);
+  writeStore(demoMovimientosStockStorageKey, movimientos.map(sinCopiaDeInsumo), movimientosStockUpdatedEvent);
 export const useMovimientosStock = () => useStore(movimientosStockUpdatedEvent, loadDemoMovimientosStock);
 
 export const loadDemoProducciones = () => readStore<ProduccionPreparada[]>(demoProduccionesStorageKey, []);

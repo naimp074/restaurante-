@@ -3,6 +3,7 @@ import { Save, Store, Bell, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { limpiarDatosLocales } from '../lib/resetDatos';
 import { readStore, writeStore } from '../lib/storeSync';
+import { horaCortePorDefecto } from '../lib/fechas';
 
 export const configStorageKey = 'restaurant-config-local';
 export const configUpdatedEvent = 'restaurant-config-local-updated';
@@ -12,9 +13,11 @@ type ConfigLocal = {
   direccion: string;
   telefono: string;
   iva: string;
+  /** Hora (0 a 12) en la que termina la jornada comercial. Ver fechas.ts. */
+  hora_corte: number;
 };
 
-const configPorDefecto: ConfigLocal = { nombre: '', direccion: '', telefono: '', iva: '21' };
+const configPorDefecto: ConfigLocal = { nombre: '', direccion: '', telefono: '', iva: '21', hora_corte: horaCortePorDefecto };
 
 const loadConfig = (): ConfigLocal => ({
   ...configPorDefecto,
@@ -28,13 +31,20 @@ export default function Configuracion() {
   const [localDireccion, setLocalDireccion] = useState(configInicial.direccion);
   const [localTelefono, setLocalTelefono] = useState(configInicial.telefono);
   const [iva, setIva] = useState(configInicial.iva);
+  const [horaCorte, setHoraCorte] = useState(String(configInicial.hora_corte));
   const [saved, setSaved] = useState(false);
   const [confirmarReinicio, setConfirmarReinicio] = useState(false);
 
   const handleSave = () => {
     writeStore(
       configStorageKey,
-      { nombre: localNombre, direccion: localDireccion, telefono: localTelefono, iva },
+      {
+        nombre: localNombre,
+        direccion: localDireccion,
+        telefono: localTelefono,
+        iva,
+        hora_corte: Math.min(12, Math.max(0, Math.round(Number(horaCorte) || 0))),
+      },
       configUpdatedEvent,
     );
     setSaved(true);
@@ -93,6 +103,23 @@ export default function Configuracion() {
                 type="number" min="0" max="100"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Fin de la jornada</label>
+            <select
+              value={horaCorte}
+              onChange={e => setHoraCorte(e.target.value)}
+              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
+            >
+              {Array.from({ length: 13 }, (_, hora) => (
+                <option key={hora} value={hora}>
+                  {hora === 0 ? 'Medianoche (día calendario)' : `${String(hora).padStart(2, '0')}:00 del día siguiente`}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500 mt-1.5">
+              Las ventas y la caja abiertas después de medianoche siguen contando para el día anterior hasta esta hora.
+            </p>
           </div>
         </div>
       </div>

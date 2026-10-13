@@ -3,10 +3,11 @@ import { BookOpen, Plus, Search, X, Pencil, Wallet } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { ajustarCuenta, guardarClienteCuenta, mediosCobroCuenta, registrarPagoCuenta, revertirConsumoCuenta, saldoCliente, useCuentaCorriente } from '../lib/cuentaCorrienteStore';
 import type { ClienteCuenta, MedioCobroCuenta } from '../lib/cuentaCorrienteStore';
+import { nuevoId } from '../lib/ids';
 
 const money = (value: number) => value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
 const inputClass = 'w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-amber-400';
-const emptyCliente = (): ClienteCuenta => ({ id: crypto.randomUUID(), nombre: '', telefono: '', nota: '', tipo_documento: 'DNI', numero_documento: '', condicion_iva: 'Consumidor final', domicilio: '' });
+const emptyCliente = (): ClienteCuenta => ({ id: nuevoId(), nombre: '', telefono: '', nota: '', tipo_documento: 'DNI', numero_documento: '', condicion_iva: 'Consumidor final', domicilio: '' });
 
 export default function CuentaCorriente() {
   const { user, hasRole } = useAuth();
@@ -44,7 +45,7 @@ export default function CuentaCorriente() {
     finally { submitting.current = false; setBusy(false); }
   };
   const abrirOperacion = (tipo: 'pago' | 'ajuste') => {
-    operationId.current = crypto.randomUUID(); setOperacion(tipo); setMonto(''); setMotivo(''); setError(''); setMensaje(''); setSentido('restar');
+    operationId.current = nuevoId(); setOperacion(tipo); setMonto(''); setMotivo(''); setError(''); setMensaje(''); setSentido('restar');
   };
 
   return <div className="space-y-6">

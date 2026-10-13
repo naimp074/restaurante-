@@ -18,14 +18,15 @@ import {
 import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
 import { descontarStockPorVenta, reponerStockPorVenta } from '../lib/ventasStock';
 import { dayKey } from '../lib/fechas';
-import { writeStore } from '../lib/storeSync';
+import { withStoreTransaction, writeStore } from '../lib/storeSync';
 import { calcularAjusteLista, useListasPrecios } from '../lib/listasPreciosStore';
-import { saveCajasDiarias, useCajas } from '../lib/cajaStore';
-import { savePagos, usePagos } from '../lib/pagosStore';
+import { loadCajasDiarias, saveCajasDiarias, useCajas } from '../lib/cajaStore';
+import { loadPagos, savePagos, usePagos } from '../lib/pagosStore';
 import { useGastos } from '../lib/gastosStore';
 import { sincronizarEstadoMesa } from '../lib/mesasStore';
 import { descuentaStock } from '../lib/costosReceta';
 import { loadProductos } from '../lib/productosStore';
+import { nuevoId } from '../lib/ids';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -144,6 +145,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const cajas = useCajas();
   const [apartadosCaja, setApartadosCaja] = useState<ApartadoCaja[]>(loadApartadosCaja);
   const [montoInicial, setMontoInicial] = useState('');
+  const [aperturaError, setAperturaError] = useState('');
   const [montoCierreEfectivo, setMontoCierreEfectivo] = useState('');
   const [showCierreCaja, setShowCierreCaja] = useState(false);
   const [nuevoApartadoNombre, setNuevoApartadoNombre] = useState('');
@@ -235,8 +237,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
   const abrirCaja = () => {
     const inicial = parseFloat(montoInicial) || 0;
+    setAperturaError('');
+    if (!Number.isFinite(inicial) || inicial < 0) { setAperturaError('El monto inicial debe ser cero o mayor.'); return; }
+    if (loadCajasDiarias().some(caja => caja.fecha === todayKey() && caja.estado === 'abierta')) { setAperturaError('Ya hay una caja abierta para hoy.'); return; }
     const nuevaCaja: CajaDiaria = {
-      id: `caja-${Date.now()}`,
+      id: nuevoId('caja'),
       fecha: todayKey(),
       cajero_id: user?.id,
       cajero_nombre: user ? `${user.nombre} ${user.apellido}` : 'Cajero',
@@ -250,10 +255,24 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       opened_at: new Date().toISOString(),
     };
 
-    saveCajasDiarias([nuevaCaja, ...cajas.filter(caja => !(caja.fecha === nuevaCaja.fecha && caja.estado === 'abierta'))]);
+    try {
+      withStoreTransaction(() => {
+        saveCajasDiarias([nuevaCaja, ...loadCajasDiarias()]);
+        transferirEntreCuentas({
+          cuenta_origen_id: cuentaCajaGrandeId,
+          cuenta_destino_id: cuentaCajaDiaId,
+          monto: inicial,
+          descripcion: 'Apertura de caja: fondo inicial del día',
+          fecha: nuevaCaja.fecha,
+        });
+      });
+    } catch (error) {
+      setAperturaError(error instanceof Error ? error.message : 'No se pudo abrir la caja.');
+      return;
+    }
     setApartadosCaja(prev => [
       {
-        id: `apartado-${Date.now()}`,
+        id: nuevoId('apartado'),
         fecha: nuevaCaja.fecha,
         nombre: 'Caja del día',
         monto: inicial,
@@ -261,14 +280,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       },
       ...prev.filter(apartado => apartado.fecha !== nuevaCaja.fecha),
     ]);
-    // El fondo de cambio sale de la caja grande y pasa al mostrador.
-    transferirEntreCuentas({
-      cuenta_origen_id: cuentaCajaGrandeId,
-      cuenta_destino_id: cuentaCajaDiaId,
-      monto: inicial,
-      descripcion: 'Apertura de caja: fondo inicial del día',
-      fecha: nuevaCaja.fecha,
-    });
     setCuentasDinero(loadCuentasDinero());
     setMovimientosFinancieros(loadMovimientosFinancieros());
     setMontoInicial('');
@@ -300,7 +311,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     const nombre = nuevoApartadoNombre.trim() || `Apartado ${apartadosHoy.length + 1}`;
 
     const nuevoApartado: ApartadoCaja = {
-      id: `apartado-${Date.now()}`,
+      id: nuevoId('apartado'),
       fecha: todayKey(),
       nombre,
       monto: parseFloat(nuevoApartadoMonto) || 0,
@@ -376,7 +387,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setClienteError('');
 
     const nuevoCliente: ClienteFrecuente = {
-      id: `cli-${Date.now()}`,
+      id: nuevoId('cli'),
       ...clienteDraft,
       numero_documento: clienteDraft.numero_documento.trim(),
       nombre: clienteDraft.nombre.trim(),
@@ -533,18 +544,26 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     if (!selectedPedido || !cajaAbierta) return;
     const actual = loadDemoPedidos().find(p => p.id === selectedPedido.id);
     if (!actual || ['cobrado', 'cuenta_corriente', 'cancelado'].includes(actual.estado)) { setPagoError('La comanda ya está cerrada.'); return; }
+    if (JSON.stringify(actual) !== JSON.stringify(selectedPedido)) { setSelectedPedido(actual); setPagoError('La comanda cambió. Revisá los importes antes de cobrar.'); return; }
+    if (!loadCajasDiarias().some(caja => caja.id === cajaAbierta.id && caja.estado === 'abierta')) { setPagoError('La caja ya está cerrada.'); return; }
+    if (!(actual.items || []).some(item => item.estado !== 'cancelado')) { setPagoError('La comanda no tiene productos para cobrar.'); return; }
     const total = calcTotal();
     const mixtoEfectivo = parseFloat(montoMixtoEfectivo) || 0;
     const mixtoTransferencia = parseFloat(montoMixtoTransferencia) || 0;
     const mixtoDebito = parseFloat(montoMixtoDebito) || 0;
     const mixtoCredito = parseFloat(montoMixtoCredito) || 0;
     const totalMixto = mixtoEfectivo + mixtoTransferencia + mixtoDebito + mixtoCredito;
+    if (![total, descuento, recargo].every(valor => Number.isFinite(valor) && valor >= 0)
+      || (metodoPago === 'mixto' && ![mixtoEfectivo, mixtoTransferencia, mixtoDebito, mixtoCredito].every(valor => Number.isFinite(valor) && valor >= 0))) {
+      setPagoError('Revisá los importes: no pueden ser negativos ni inválidos.');
+      return;
+    }
     const cantidadMetodosMixtos = [mixtoEfectivo, mixtoTransferencia, mixtoDebito, mixtoCredito].filter(valor => valor > 0).length;
     if (metodoPago === 'mixto' && (Math.abs(totalMixto - total) > 0.009 || cantidadMetodosMixtos < 2)) {
       setPagoError(`Distribuí el total de $${total.toLocaleString()} entre por lo menos dos medios de pago.`);
       return;
     }
-    if (metodoPago === 'efectivo' && (parseFloat(montoEfectivo) || total) < total) {
+    if (metodoPago === 'efectivo' && montoEfectivo.trim() !== '' && (!Number.isFinite(Number(montoEfectivo)) || Number(montoEfectivo) < total)) {
       setPagoError('El monto recibido en efectivo no alcanza para completar el cobro.');
       return;
     }
@@ -560,7 +579,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     cobroEnProceso.current = true;
     const pedidoCobrado = selectedPedido;
     const pago: Pago = {
-      id: `pago-${Date.now()}`,
+      id: nuevoId('pago'),
       pedido_id: pedidoCobrado.id,
       cajero_id: user?.id,
       comprador_nombre: selectedCliente?.nombre || getCompradorName(compradorNombre),
@@ -582,31 +601,38 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       pedido: pedidoCobrado,
     };
     const breakdown = getPagoBreakdown(pago);
-    savePagos([pago, ...pagosRegistrados]);
-    const pedidoCerrado: Pedido = {
-      ...pedidoCobrado,
-      estado: 'cobrado',
-      total, descuento, recargo,
-      hora_cierre: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    setPedidos(prev => prev.filter(pedido => pedido.id !== pedidoCerrado.id));
-    saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoCerrado.id ? pedidoCerrado : pedido));
-    sincronizarEstadoMesa(pedidoCerrado.mesa_id);
-    descontarStockPorVenta(pedidoCerrado);
-    saveCajasDiarias(cajas.map(caja => (
-      caja.id === cajaAbierta.id
-        ? {
-            ...caja,
-            efectivo: caja.efectivo + breakdown.efectivo,
-            tarjeta: caja.tarjeta + breakdown.tarjeta,
-            transferencia: caja.transferencia + breakdown.transferencia,
-            total_ventas: caja.total_ventas + pago.total_cobrado,
-            monto_esperado_efectivo: caja.monto_esperado_efectivo + breakdown.efectivo,
-          }
-        : caja
-    )));
-    registrarCobroEnCuentas(pago, breakdown, 1);
+    try {
+      withStoreTransaction(() => {
+        savePagos([pago, ...loadPagos()]);
+        const pedidoCerrado: Pedido = {
+          ...pedidoCobrado,
+          estado: 'cobrado',
+          total, descuento, recargo,
+          hora_cierre: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoCerrado.id ? pedidoCerrado : pedido));
+        sincronizarEstadoMesa(pedidoCerrado.mesa_id);
+        descontarStockPorVenta(pedidoCerrado);
+        saveCajasDiarias(loadCajasDiarias().map(caja => (
+          caja.id === cajaAbierta.id
+            ? {
+                ...caja,
+                efectivo: caja.efectivo + breakdown.efectivo,
+                tarjeta: caja.tarjeta + breakdown.tarjeta,
+                transferencia: caja.transferencia + breakdown.transferencia,
+                total_ventas: caja.total_ventas + pago.total_cobrado,
+                monto_esperado_efectivo: caja.monto_esperado_efectivo + breakdown.efectivo,
+              }
+            : caja
+        )));
+        registrarCobroEnCuentas(pago, breakdown, 1);
+      });
+    } catch (error) {
+      setPagoError(error instanceof Error ? error.message : 'No se pudo guardar el cobro.');
+      cobroEnProceso.current = false;
+      return;
+    }
     setLastPago(pago);
     setTicketError('');
     setShowTicket(true);
@@ -931,6 +957,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             <Unlock size={18} />
             Abrir caja
           </button>
+          {aperturaError && <p role="alert" className="mt-3 text-sm text-red-600">{aperturaError}</p>}
         </div>
 
       </div>

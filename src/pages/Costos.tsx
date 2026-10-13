@@ -3,7 +3,8 @@ import { Calculator, TrendingUp, DollarSign, Plus, Trash2, ChevronDown, AlertCir
 import type { Producto, RecetaItem, Ingrediente, ProduccionPreparada } from '../lib/types';
 import { saveProductos, useProductos } from '../lib/productosStore';
 import { useIngredientes, useProducciones } from '../lib/demoStore';
-import { calcularCostoProducto, costoUnitarioProduccion } from '../lib/costosReceta';
+import { calcularCostoProducto, costoUnitarioProduccion, margenPorcentaje } from '../lib/costosReceta';
+import { nuevoId } from '../lib/ids';
 
 interface RecetaCalc {
   receta: (RecetaItem & { ingrediente: Ingrediente })[];
@@ -50,15 +51,15 @@ function calcularReceta(
     .filter((item): item is RecetaItem & { ingrediente: Ingrediente } => item !== null);
   const costoTotal = calcularCostoProducto({ receta } as Producto, costoInsumo, producciones);
   const ganancia = precio - costoTotal;
-  const margenPct = precio > 0 ? (ganancia / precio) * 100 : 0;
+  const margenPct = margenPorcentaje(precio, costoTotal);
   return {
     receta: items as (RecetaItem & { ingrediente: Ingrediente })[],
     costoTotal,
     margenBruto: ganancia,
     margenPct,
     ganancia,
-    precioMinimo: costoTotal * 1.3,
-    precioIdeal: costoTotal * 2.5,
+    precioMinimo: costoTotal * 1.5,
+    precioIdeal: costoTotal * 2,
   };
 }
 
@@ -72,7 +73,7 @@ export default function Costos() {
   const [addIngId, setAddIngId] = useState('');
   const [addCantidad, setAddCantidad] = useState('');
   const [showProductSelector, setShowProductSelector] = useState(false);
-  const [margenObjetivo, setMargenObjetivo] = useState(50);
+  const [margenObjetivo, setMargenObjetivo] = useState(100);
 
   const calc = useMemo(
     () => calcularReceta(recetaItems, precioVenta, insumos, producciones),
@@ -99,7 +100,7 @@ export default function Costos() {
     const ing = insumos.find(i => i.id === addIngId);
     if (!ing) return;
     const newItem: RecetaItem = {
-      id: `rec-${Date.now()}`,
+      id: nuevoId('rec'),
       producto_id: selectedProducto.id,
       ingrediente_id: addIngId,
       cantidad: parseFloat(addCantidad),
@@ -133,19 +134,19 @@ export default function Costos() {
   };
 
   const precioParaMargen = (margen: number) => {
-    if (margen >= 100) return 0;
-    return calc.costoTotal / (1 - margen / 100);
+    if (margen <= 0) return 0;
+    return calc.costoTotal * (1 + margen / 100);
   };
 
   const margenColor = (pct: number) => {
-    if (pct >= 50) return 'text-emerald-600';
-    if (pct >= 35) return 'text-amber-600';
+    if (pct >= 100) return 'text-emerald-600';
+    if (pct >= 50) return 'text-amber-600';
     return 'text-red-600';
   };
 
   const margenBg = (pct: number) => {
-    if (pct >= 50) return 'bg-emerald-50 border-emerald-200';
-    if (pct >= 35) return 'bg-amber-50 border-amber-200';
+    if (pct >= 100) return 'bg-emerald-50 border-emerald-200';
+    if (pct >= 50) return 'bg-amber-50 border-amber-200';
     return 'bg-red-50 border-red-200';
   };
 
@@ -211,7 +212,7 @@ export default function Costos() {
                   value={margenObjetivo}
                   onChange={e => setMargenObjetivo(parseFloat(e.target.value) || 0)}
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                  min="1" max="99"
+                  min="1" max="999"
                 />
               </div>
             </div>
@@ -332,15 +333,15 @@ export default function Costos() {
             <div className="mt-3 h-3 bg-slate-200 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${
-                  calc.margenPct >= 50 ? 'bg-emerald-500' : calc.margenPct >= 35 ? 'bg-amber-500' : 'bg-red-500'
+                  calc.margenPct >= 100 ? 'bg-emerald-500' : calc.margenPct >= 50 ? 'bg-amber-500' : 'bg-red-500'
                 }`}
-                style={{ width: `${Math.min(100, Math.max(0, calc.margenPct))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, calc.margenPct / 2))}%` }}
               />
             </div>
             <div className="flex justify-between text-xs text-slate-400 mt-1">
               <span>0%</span>
               <span className="font-medium text-amber-600">Objetivo: {margenObjetivo}%</span>
-              <span>100%</span>
+              <span>200%</span>
             </div>
           </div>
 
@@ -353,7 +354,7 @@ export default function Costos() {
               <div className="p-3 bg-slate-50 rounded-xl">
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="text-xs text-slate-500">Precio mínimo (30% margen)</p>
+                    <p className="text-xs text-slate-500">Precio mínimo (50% sobre costo)</p>
                     <p className="text-lg font-bold text-slate-700">${calc.precioMinimo.toFixed(0)}</p>
                   </div>
                   <div className="text-right">
@@ -365,7 +366,7 @@ export default function Costos() {
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="text-xs text-amber-600">Precio ideal (60% margen)</p>
+                    <p className="text-xs text-amber-600">Precio ideal (100% sobre costo)</p>
                     <p className="text-lg font-bold text-amber-700">${calc.precioIdeal.toFixed(0)}</p>
                   </div>
                   <div className="text-right">
@@ -407,13 +408,13 @@ export default function Costos() {
             </div>
           </div>
 
-          {calc.margenPct < 35 && (
+          {calc.margenPct < 50 && (
             <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex gap-3">
               <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm font-medium text-red-700">Margen muy bajo</p>
                 <p className="text-xs text-red-600 mt-0.5">
-                  El margen actual es de {calc.margenPct.toFixed(1)}%. Se recomienda un mínimo del 35% para cubrir costos operativos.
+                  El recargo sobre el costo es de {calc.margenPct.toFixed(1)}%. Se recomienda al menos 50% (costo 100 → venta 150).
                 </p>
               </div>
             </div>
@@ -438,7 +439,7 @@ export default function Costos() {
             <tbody className="divide-y divide-slate-50">
               {productos.map(prod => {
                 const costo = calcularCostoProducto(prod, id => insumos.find(i => i.id === id)?.costo_por_unidad || 0, producciones);
-                const m = prod.precio_venta > 0 ? ((prod.precio_venta - costo) / prod.precio_venta) * 100 : 0;
+                const m = margenPorcentaje(prod.precio_venta, costo);
                 const gan = prod.precio_venta - costo;
                 return (
                   <tr key={prod.id} className="hover:bg-slate-50">
@@ -452,8 +453,8 @@ export default function Costos() {
                     <td className="py-2.5 px-3">
                       <div className="h-2 bg-slate-100 rounded-full overflow-hidden w-24">
                         <div
-                          className={`h-full rounded-full ${m >= 50 ? 'bg-emerald-500' : m >= 35 ? 'bg-amber-500' : 'bg-red-500'}`}
-                          style={{ width: `${Math.min(100, m)}%` }}
+                          className={`h-full rounded-full ${m >= 100 ? 'bg-emerald-500' : m >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                          style={{ width: `${Math.min(100, m / 2)}%` }}
                         />
                       </div>
                     </td>

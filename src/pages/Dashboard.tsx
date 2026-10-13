@@ -6,6 +6,7 @@ import { calcularCostoProducto } from '../lib/costosReceta';
 import { estadoOperativoMesa, useMesas } from '../lib/mesasStore';
 import { useProductos } from '../lib/productosStore';
 import { useUsuarios } from '../lib/usuariosStore';
+import { dayKey } from '../lib/fechas';
 
 const estadoColors: Record<string, string> = {
   libre: 'bg-emerald-100 text-emerald-700',
@@ -29,14 +30,8 @@ const estadoLabels: Record<string, string> = {
 
 const nombresDias = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
 
-const esMismoDia = (fecha: string, referencia: Date) => {
-  const d = new Date(fecha);
-  return (
-    d.getDate() === referencia.getDate() &&
-    d.getMonth() === referencia.getMonth() &&
-    d.getFullYear() === referencia.getFullYear()
-  );
-};
+/** Misma jornada comercial (las ventas después de medianoche cuentan para el día que abrió). */
+const esMismoDia = (fecha: string, referencia: Date) => dayKey(fecha) === dayKey(referencia);
 
 const esVenta = (pedido: Pedido) => pedido.estado === 'cobrado' || pedido.estado === 'cuenta_corriente';
 

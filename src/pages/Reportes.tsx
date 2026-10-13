@@ -8,6 +8,7 @@ import { categoriasIniciales } from '../lib/mockData';
 import { useProductos } from '../lib/productosStore';
 import { useUsuarios } from '../lib/usuariosStore';
 import { saldoCliente, useCuentaCorriente } from '../lib/cuentaCorrienteStore';
+import { inicioJornada } from '../lib/fechas';
 
 type Periodo = 'dia' | 'semana' | 'mes';
 
@@ -16,11 +17,8 @@ const colores = ['#f59e0b', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899
 
 const esVenta = (pedido: Pedido) => pedido.estado === 'cobrado' || pedido.estado === 'cuenta_corriente';
 
-const inicioDelDia = (fecha: Date) => {
-  const d = new Date(fecha);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
+/** Agrupa por jornada comercial: lo cobrado a la 1 de la mañana va al día anterior. */
+const inicioDelDia = (fecha: Date) => inicioJornada(fecha);
 
 export default function Reportes() {
   const [periodo, setPeriodo] = useState<Periodo>('semana');
@@ -37,7 +35,7 @@ export default function Reportes() {
   const pedidos = useMemo(() => {
     const desde = inicioDelDia(new Date());
     desde.setDate(desde.getDate() - (diasDelPeriodo - 1));
-    return todosLosPedidos.filter(p => new Date(p.hora_cierre || p.created_at) >= desde);
+    return todosLosPedidos.filter(p => inicioDelDia(new Date(p.hora_cierre || p.created_at)) >= desde);
   }, [todosLosPedidos, diasDelPeriodo]);
 
   const datosVentas = useMemo(() => {
@@ -54,7 +52,7 @@ export default function Reportes() {
       }));
 
       pedidos.forEach(pedido => {
-        const fecha = new Date(pedido.hora_cierre || pedido.created_at);
+        const fecha = inicioDelDia(new Date(pedido.hora_cierre || pedido.created_at));
         const indice = semanas.reduce((acc, semana, i) => (fecha >= semana.desde ? i : acc), 0);
         semanas[indice].valor += pedido.total;
         semanas[indice].pedidos += 1;

@@ -1,4 +1,4 @@
-import { emitStoreEvent, readStore } from '../storeSync';
+import { applyStoreLocally, emitStoreEvent, readStore } from '../storeSync';
 
 export const syncEstadoEvent = 'restaurant-sync-estado-updated';
 
@@ -32,6 +32,6 @@ export const loadColaSync = (): string[] => {
 
 export const saveColaSync = (cola: string[]) => {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(colaStorageKey, JSON.stringify(cola));
+  applyStoreLocally(colaStorageKey, cola, syncEstadoEvent);
   setEstadoSync({ pendiente: cola.length });
 };

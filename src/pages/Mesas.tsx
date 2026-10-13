@@ -13,6 +13,7 @@ import {
   type SectorOption,
 } from '../lib/mesasStore';
 import { usePedidos } from '../lib/demoStore';
+import { nuevoId } from '../lib/ids';
 
 const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: string; bg: string }> = {
   libre: { label: 'Libre', color: 'text-emerald-700', dot: 'bg-emerald-500', bg: 'bg-emerald-50 border-emerald-200' },
@@ -120,7 +121,7 @@ export default function Mesas() {
 
     const ahora = new Date().toISOString();
     const nuevaMesa: Mesa = {
-      id: `mesa-${Date.now()}`,
+      id: nuevoId('mesa'),
       numero: mesas.reduce((mayor, m) => Math.max(mayor, m.numero), 0) + 1,
       capacidad: 4,
       estado: 'libre',
@@ -141,8 +142,8 @@ export default function Mesas() {
     const label = newSectorName.trim();
     if (!label) return;
 
-    const baseId = createSectorId(label) || `apartado-${Date.now()}`;
-    const id = sectores.some(s => s.id === baseId) ? `${baseId}-${Date.now()}` : baseId;
+    const baseId = createSectorId(label) || nuevoId('sector');
+    const id = sectores.some(s => s.id === baseId) ? nuevoId(baseId) : baseId;
 
     setSectores(prev => {
       const next = [...prev, { id, label }];
