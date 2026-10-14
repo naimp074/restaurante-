@@ -1,3 +1,13 @@
+Pedidos y PedidosYa — 14/10/2026
+
+- Se agregó el apartado Ventas → Pedidos, con pedidos para llevar, delivery propio y PedidosYa. Pasan por la Cocina, y los que se cobran en el local se cobran en Caja → Cobros.
+- PedidosYa entra solo, por la integración oficial de Delivery Hero (función `supabase/functions/pedidosya`). Los pedidos se aceptan y se rechazan desde el sistema, y un aviso sonoro se repite hasta que alguien los atiende.
+- Lo pagado en la app no entra en la caja del día. Queda en la cuenta "PedidosYa (a cobrar)", ya descontada la comisión.
+- Pasos pendientes: pedir el alta a PedidosYa, aplicar `20261014000000_pedidosya.sql`, publicar la función y cargar los secretos. El paso a paso está en `supabase/functions/pedidosya/LEEME.md`.
+- Verificación: 82 pruebas (`npm test`, 20 de ellas de PedidosYa, una con el token de ejemplo de la documentación oficial) y 10 en Chrome (`npm run test:e2e`). No se probó contra PedidosYa real: hacen falta las credenciales que entregan ellos.
+
+---
+
 Mejoras — 13/10/2026
 
 Pasos pendientes en Supabase (sin esto, la versión nueva no sincroniza):

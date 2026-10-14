@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react';
 import { Clock, Check, ChefHat, Bell, AlertCircle } from 'lucide-react';
 import type { Pedido, EstadoItem } from '../lib/types';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
+import { canalDe, etiquetaPedido } from '../lib/pedidosCanal';
+
+const colorCanal: Record<string, string> = {
+  mostrador: 'bg-violet-100 text-violet-700',
+  delivery: 'bg-sky-100 text-sky-700',
+  pedidosya: 'bg-rose-100 text-rose-700',
+};
 
 const estadoConfig: Record<string, { label: string; color: string; bg: string; action: string; next: EstadoItem }> = {
   pendiente: { label: 'Nuevo', color: 'text-yellow-700', bg: 'bg-yellow-100', action: 'Iniciar', next: 'en_preparacion' },
@@ -136,8 +143,11 @@ export default function Cocina() {
                   activeItems.some(i => i.estado === 'listo') ? 'bg-emerald-50' : total > 900 ? 'bg-red-50' : 'bg-slate-50'
                 }`}>
                   <div>
-                    <span className="font-bold text-slate-800">Mesa {pedido.mesa?.numero}</span>
-                    <span className="text-sm text-slate-500 ml-2">{pedido.empleado?.nombre}</span>
+                    <span className="font-bold text-slate-800">{etiquetaPedido(pedido)}</span>
+                    {canalDe(pedido) === 'salon'
+                      ? <span className="text-sm text-slate-500 ml-2">{pedido.empleado?.nombre}</span>
+                      : <span className={`text-[11px] font-semibold ml-2 px-1.5 py-0.5 rounded ${colorCanal[canalDe(pedido)]}`}>{pedido.externo?.tipo_entrega === 'delivery_plataforma' ? 'Lo retira PedidosYa' : pedido.direccion_entrega ? 'Delivery' : 'Retira en el local'}</span>}
+                    {pedido.observaciones && <p className="text-xs text-amber-700 mt-0.5">* {pedido.observaciones}</p>}
                   </div>
                   <div className={`flex items-center gap-1.5 font-mono font-bold text-sm ${timerColor}`}>
                     <Clock size={14} />

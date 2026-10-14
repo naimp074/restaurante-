@@ -11,6 +11,7 @@ export const rolesPorPagina: Record<PageId, Rol[]> = {
   dashboard: caja,
   ventas: ['admin', 'encargado', 'moza', 'cajero'],
   pedidos: ['admin', 'encargado', 'moza', 'cajero'],
+  pedidos_delivery: ['admin', 'encargado', 'moza', 'cajero'],
   mesas: ['admin', 'encargado', 'moza', 'cajero'],
   cocina: ['admin', 'encargado', 'cocina'],
   caja,

@@ -9,6 +9,7 @@ import { registrarSalidaCuenta } from './finance';
 import { sincronizarEstadoMesa } from './mesasStore';
 import { dayKey } from './fechas';
 import { writeStore } from './storeSync';
+import { etiquetaPedido } from './pedidosCanal';
 
 export interface ClienteCuenta {
   id: string;
@@ -151,7 +152,7 @@ export const pasarPedidoACuenta = (args: {
   const cerrado: Pedido = { ...pedido, cliente_id: cliente.id, estado: 'cuenta_corriente',
     descuento: dinero(args.descuento), recargo: dinero(args.recargo), total, hora_cierre: ahora, updated_at: ahora };
   const consumo: MovimientoCuenta = { id: `consumo-${pedido.id}`, cliente_id: cliente.id, tipo: 'consumo',
-    monto: total, descripcion: `Consumo · ${pedido.mesa?.nombre || (pedido.mesa?.numero ? `Mesa ${pedido.mesa.numero}` : 'Comanda')}`,
+    monto: total, descripcion: `Consumo · ${etiquetaPedido(pedido)}`,
     created_at: ahora, responsable: args.responsable, pedido: cerrado, caja_id: caja.id };
   const nuevos = [consumo];
   descontarStockPorVenta(cerrado);
@@ -164,7 +165,7 @@ export const pasarPedidoACuenta = (args: {
   }
   save({ ...data, movimientos: [...data.movimientos, ...nuevos] });
   saveDemoPedidos(pedidos.map(p => p.id === pedido.id ? cerrado : p));
-  if (!pedidos.some(p => p.id !== pedido.id && p.mesa_id === pedido.mesa_id && !['cobrado', 'cuenta_corriente', 'cancelado'].includes(p.estado))) {
+  if (pedido.mesa_id && !pedidos.some(p => p.id !== pedido.id && p.mesa_id === pedido.mesa_id && !['cobrado', 'cuenta_corriente', 'cancelado'].includes(p.estado))) {
     saveMesas(loadMesas().map(m => m.id === pedido.mesa_id ? { ...m, estado: 'libre', empleado_id: undefined, updated_at: ahora } : m));
   }
   return { cliente, pendiente: dinero(total - anticipo), saldo: saldoCliente(cliente.id) };

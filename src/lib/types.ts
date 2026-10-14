@@ -180,6 +180,36 @@ export interface Pedido {
   mesa?: Mesa;
   empleado?: Profile;
   items?: PedidoItem[];
+  /** Sin canal es una comanda de salón (los pedidos guardados antes de existir los canales). */
+  canal?: CanalPedido;
+  cliente_nombre?: string;
+  cliente_telefono?: string;
+  direccion_entrega?: string;
+  costo_envio?: number;
+  /** 'plataforma': lo pagó el cliente en la app; no pasa por la caja del día. */
+  cobro?: 'caja' | 'plataforma';
+  externo?: PedidoExterno;
+}
+
+export type CanalPedido = 'salon' | 'mostrador' | 'delivery' | 'pedidosya';
+export type EstadoPlataforma = 'pendiente' | 'aceptado' | 'rechazado' | 'cancelado' | 'listo' | 'retirado';
+
+/** Datos de un pedido que entró por PedidosYa (ver supabase/functions/pedidosya/mapeo.ts). */
+export interface PedidoExterno {
+  plataforma: 'pedidosya';
+  token: string;
+  codigo: string;
+  codigo_corto: string;
+  tipo_entrega: 'retiro' | 'delivery_plataforma' | 'delivery_local';
+  pagado_online: boolean;
+  estado_plataforma: EstadoPlataforma;
+  vence_at: string;
+  entrega_estimada: string;
+  total_plataforma: number;
+  prueba: boolean;
+  /** Productos que no se encontraron en el catálogo: se cobran pero no descuentan stock. */
+  sin_reconocer: string[];
+  acciones: { aceptar: boolean; rechazar: boolean; listo: boolean; retirado: boolean };
 }
 
 export interface PedidoItem {
@@ -399,6 +429,7 @@ export type PageId =
   | 'dashboard'
   | 'mesas'
   | 'pedidos'
+  | 'pedidos_delivery'
   | 'cocina'
   | 'caja'
   | 'caja_dia'

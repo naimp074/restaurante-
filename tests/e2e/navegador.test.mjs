@@ -52,7 +52,7 @@ test('todas las pantallas abren sin errores para el administrador', async () => 
   await entrar(page, 'Admin');
   const paginas = ['dashboard', 'ventas', 'mesas', 'cocina', 'caja', 'caja_arqueos', 'cobros', 'cuenta_corriente', 'productos',
     'combos', 'lista_precios', 'diferentes_listas', 'stock_insumos', 'stock_consumos', 'stock_produccion', 'proveedores',
-    'gastos', 'gastos_pagos', 'gastos_traspasos', 'costos', 'reportes', 'usuarios', 'configuracion'];
+    'gastos', 'gastos_pagos', 'gastos_traspasos', 'costos', 'reportes', 'usuarios', 'configuracion', 'pedidos_delivery'];
   for (const pagina of paginas) {
     await page.goto(`${BASE}/#/${pagina}`);
     await page.waitForSelector('header h1');
@@ -152,5 +152,111 @@ test('sin conexión abre una pantalla que todavía no se había visitado', async
   await page.goto(`${BASE}/#/proveedores`);
   await page.waitForSelector('header h1', { timeout: 8000 });
   assert.equal(await titulo(page), 'Proveedores');
+  await context.close();
+});
+
+const sembrarCarta = async page => {
+  const ahora = new Date().toISOString();
+  await page.goto(BASE);
+  await page.evaluate(ahora => {
+    const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+    set('restaurant-demo-ingredientes', [{ id: 'ing-pan', nombre: 'Pan', unidad_medida: 'unidad', stock_actual: 10, stock_minimo: 2,
+      costo_por_unidad: 100, activo: true, created_at: ahora, updated_at: ahora }]);
+    set('restaurant-productos', [{ id: 'prod-burger', codigo: 'BURGER', nombre: 'Hamburguesa', descripcion: '', precio_venta: 5000,
+      costo_produccion: 100, margen_ganancia: 0, disponible: true, agotado: false, tiempo_preparacion: 10, activo: true,
+      created_at: ahora, updated_at: ahora,
+      receta: [{ id: 'rec-1', producto_id: 'prod-burger', tipo: 'stock', ingrediente_id: 'ing-pan', cantidad: 1, unidad_medida: 'unidad',
+        costo_calculado: 100, created_at: ahora }] }]);
+  }, ahora);
+};
+
+test('pedido para llevar: se carga, pasa por cocina y se cobra en caja', async () => {
+  const { context, page, errores } = await sesion();
+  await sembrarCarta(page);
+  await entrar(page, 'Admin');
+  await page.goto(`${BASE}/#/caja`);
+  await page.getByPlaceholder('Ej: 20000').fill('5000');
+  await page.getByRole('button', { name: /Abrir caja/ }).click();
+
+  await page.goto(`${BASE}/#/pedidos_delivery`);
+  await page.getByRole('button', { name: /Nuevo pedido/ }).click();
+  await page.getByPlaceholder('Nombre del cliente').fill('Juan');
+  await page.getByRole('button', { name: /^Hamburguesa [$]/ }).click();
+  await page.getByRole('button', { name: /^Hamburguesa [$]/ }).click();
+  await page.getByRole('button', { name: 'Crear y mandar a cocina' }).click();
+  await page.getByText('Para llevar · Juan').waitFor();
+
+  await page.goto(`${BASE}/#/cocina`);
+  await page.getByText('Para llevar · Juan').waitFor();
+
+  await page.goto(`${BASE}/#/cobros`);
+  await page.getByRole('button', { name: /Para llevar · Juan/ }).click();
+  await page.getByRole('button', { name: /^Cobrar / }).click();
+  await page.waitForTimeout(400);
+  const pedido = await page.evaluate(() => JSON.parse(localStorage.getItem('restaurant-demo-pedidos'))[0]);
+  assert.equal(pedido.canal, 'mostrador');
+  assert.equal(pedido.estado, 'cobrado');
+  assert.equal(pedido.total, 10000);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test('pedido de PedidosYa: aviso en el encabezado y cierre como saldo a cobrar, sin pasar por caja', async () => {
+  const { context, page, errores } = await sesion();
+  await sembrarCarta(page);
+  const ahora = new Date().toISOString();
+  const vence = new Date(Date.now() + 10 * 60_000).toISOString();
+  await page.evaluate(({ ahora, vence }) => {
+    localStorage.setItem('restaurant-demo-pedidos', JSON.stringify([{
+      id: 'ped-pya-t1', mesa_id: '', canal: 'pedidosya', cantidad_personas: 1, estado: 'abierto', subtotal: 10000, descuento: 0,
+      recargo: 0, total: 10000, observaciones: 'Sin cebolla', cobro: 'plataforma', cliente_nombre: 'Ana Gómez',
+      cliente_telefono: '+54 11 5555', direccion_entrega: '', hora_apertura: ahora, created_at: ahora, updated_at: ahora,
+      items: [{ id: 'i1', pedido_id: 'ped-pya-t1', producto_id: 'prod-burger', cantidad: 2, precio_unitario: 5000, subtotal: 10000,
+        observaciones: 'Extra cheddar', estado: 'pendiente', created_at: ahora, updated_at: ahora, producto: { id: 'prod-burger', nombre: 'Hamburguesa' } }],
+      externo: { plataforma: 'pedidosya', token: 't1', codigo: 'ab12', codigo_corto: '42', tipo_entrega: 'delivery_plataforma',
+        pagado_online: true, estado_plataforma: 'pendiente', vence_at: vence, entrega_estimada: '', total_plataforma: 10000,
+        prueba: false, sin_reconocer: [], acciones: { aceptar: true, rechazar: true, listo: true, retirado: true } },
+    }]));
+  }, { ahora, vence });
+  await entrar(page, 'Admin');
+  await page.goto(`${BASE}/#/caja`);
+  await page.getByPlaceholder('Ej: 20000').fill('5000');
+  await page.getByRole('button', { name: /Abrir caja/ }).click();
+
+  // Aviso en cualquier pantalla mientras está sin aceptar.
+  await page.goto(`${BASE}/#/dashboard`);
+  await page.getByRole('link', { name: '1 pedido de PedidosYa sin aceptar' }).click();
+  await page.waitForTimeout(300);
+  assert.match(page.url(), /#\/pedidos_delivery$/);
+  await page.getByText(/Vence \d\d:\d\d/).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Aceptar' }).count(), 1);
+
+  // Lo pagado en la app no aparece para cobrar en caja.
+  await page.goto(`${BASE}/#/cobros`);
+  await page.getByText('No hay pedidos por cobrar').waitFor();
+  assert.equal(await page.getByText(/PedidosYa #42/).count(), 0);
+
+  // Ya aceptado (en demo no hay servidor): se finaliza como saldo de PedidosYa.
+  await page.evaluate(() => {
+    const pedidos = JSON.parse(localStorage.getItem('restaurant-demo-pedidos'));
+    pedidos[0].externo.estado_plataforma = 'aceptado';
+    pedidos[0].estado = 'en_preparacion';
+    localStorage.setItem('restaurant-demo-pedidos', JSON.stringify(pedidos));
+  });
+  await page.goto(`${BASE}/#/pedidos_delivery`);
+  await page.reload();
+  await page.getByRole('button', { name: 'Finalizar pedido' }).click();
+  await page.getByRole('button', { name: 'Confirmar' }).click();
+  await page.waitForTimeout(300);
+
+  const estado = await page.evaluate(() => ({
+    pedido: JSON.parse(localStorage.getItem('restaurant-demo-pedidos'))[0],
+    pan: JSON.parse(localStorage.getItem('restaurant-demo-ingredientes'))[0].stock_actual,
+    cuenta: JSON.parse(localStorage.getItem('restaurant-cuentas-dinero')).find(c => c.id === 'cuenta-pedidosya'),
+  }));
+  assert.equal(estado.pedido.estado, 'cobrado');
+  assert.equal(estado.pan, 8);
+  assert.equal(estado.cuenta.saldo, 10000);
+  assert.deepEqual(errores, []);
   await context.close();
 });

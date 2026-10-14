@@ -4,11 +4,13 @@ import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useEstadoSync } from '../../lib/sync/useEstadoSync';
 import { useUsoAlmacenamientoLocal } from '../../lib/espacioLocal';
+import { usePedidosYaPendientes } from '../../lib/avisoPedidos';
 
 const pageTitles: Record<PageId, string> = {
   dashboard: 'Dashboard',
   mesas: 'Gestión de Mesas',
   pedidos: 'Comandas',
+  pedidos_delivery: 'Pedidos para llevar, delivery y PedidosYa',
   cocina: 'Pantalla de Cocina',
   caja: 'Caja',
   caja_dia: 'Caja del Día',
@@ -43,6 +45,7 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
   const { user, modoDemo } = useAuth();
   const sync = useEstadoSync();
   const usoLocal = useUsoAlmacenamientoLocal();
+  const pendientesPedidosYa = usePedidosYaPendientes(user?.rol === 'admin' || user?.rol === 'encargado' || user?.rol === 'cajero');
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -89,6 +92,17 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
         <p className="text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 max-w-[260px] truncate" title={sync.error}>
           {sync.error}
         </p>
+      )}
+      {pendientesPedidosYa > 0 && currentPage !== 'pedidos_delivery' && (
+        <a
+          href="#/pedidos_delivery"
+          className="text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg px-2.5 py-1.5 animate-pulse whitespace-nowrap"
+        >
+          <span className="sm:hidden">PedidosYa ({pendientesPedidosYa})</span>
+          <span className="hidden sm:inline">
+            {pendientesPedidosYa === 1 ? '1 pedido de PedidosYa sin aceptar' : `${pendientesPedidosYa} pedidos de PedidosYa sin aceptar`}
+          </span>
+        </a>
       )}
       {usoLocal >= 0.8 && (
         <p

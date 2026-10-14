@@ -65,6 +65,8 @@ export const ocuparMesa = (mesaId: string, empleadoId?: string) => {
 };
 
 export const sincronizarEstadoMesa = (mesaId?: string) => {
+  // Para llevar, delivery y PedidosYa no tienen mesa: sin esto se recalculaban todas.
+  if (mesaId === '') return;
   const pedidos = loadDemoPedidos();
   const ahora = new Date().toISOString();
   saveMesas(loadMesas().map(mesa => {

@@ -3,7 +3,7 @@ import {
   LayoutDashboard, UtensilsCrossed, ClipboardList, ChefHat,
   CreditCard, Package, Boxes, Calculator, BarChart3, Users,
   Settings, LogOut, Truck, PanelLeftClose, PanelLeftOpen, ReceiptText,
-  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet
+  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet, ShoppingBag
 } from 'lucide-react';
 import type { PageId, Rol } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -40,7 +40,7 @@ interface SidebarProps {
 export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, mobileOpen, onClose }: SidebarProps) {
   const { user, signOut, hasRole } = useAuth();
   const [showVentasMenu, setShowVentasMenu] = useState(
-    currentPage === 'cuenta_corriente' || currentPage === 'ventas' || currentPage === 'pedidos' || currentPage === 'mesas' || currentPage === 'cocina' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'cobros'
+    currentPage === 'pedidos_delivery' || currentPage === 'cuenta_corriente' || currentPage === 'ventas' || currentPage === 'pedidos' || currentPage === 'mesas' || currentPage === 'cocina' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'cobros'
   );
   const [showCajaMenu, setShowCajaMenu] = useState(false);
   const [showProductosMenu, setShowProductosMenu] = useState(false);
@@ -51,7 +51,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
 
   const compact = collapsed && !mobileOpen;
   const visibleItems = navItems.filter(item => hasRole(...item.roles));
-  const ventasActive = currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'cocina' || currentPage === 'pedidos';
+  const ventasActive = currentPage === 'pedidos_delivery' || currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'cocina' || currentPage === 'pedidos';
   const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
   const stockActive = currentPage === 'stock' || currentPage === 'stock_insumos' || currentPage === 'stock_consumos' || currentPage === 'stock_produccion';
   const gastosActive = currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos';
@@ -234,6 +234,17 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                       >
                         <ClipboardList size={13} />
                         Comandas
+                      </button>
+                    )}
+                    {hasRole('admin', 'encargado', 'moza', 'cajero') && (
+                      <button
+                        onClick={() => onNavigate('pedidos_delivery')}
+                        className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                          currentPage === 'pedidos_delivery' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                        }`}
+                      >
+                        <ShoppingBag size={13} />
+                        Pedidos
                       </button>
                     )}
                     {hasRole('admin', 'encargado', 'cocina') && (

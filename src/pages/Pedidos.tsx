@@ -8,6 +8,7 @@ import { estadoOperativoMesa, loadMesas, mesaTienePedidoAbierto, ocuparMesa, use
 import { useMozas } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import { nuevoId } from '../lib/ids';
+import { esDeSalon } from '../lib/pedidosCanal';
 
 const estadoItemColors: Record<string, string> = {
   pendiente: 'bg-yellow-100 text-yellow-700',
@@ -23,12 +24,13 @@ const estadoItemLabels: Record<string, string> = {
   entregado: 'Entregado',
   cancelado: 'Cancelado',
 };
-const pedidoAbierto = (pedido: Pedido) => !['cobrado', 'cuenta_corriente', 'cancelado'].includes(pedido.estado);
+// Esta pantalla es del salón: los pedidos para llevar, delivery y PedidosYa tienen su apartado.
+const pedidoAbierto = (pedido: Pedido) => esDeSalon(pedido) && !['cobrado', 'cuenta_corriente', 'cancelado'].includes(pedido.estado);
 
 export default function Pedidos() {
   const { user } = useAuth();
   const pedidos = usePedidos();
-  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos().find(p => !['cobrado', 'cuenta_corriente', 'cancelado'].includes(p.estado)) || null);
+  const [selectedPedido, setSelectedPedido] = useState<Pedido | null>(() => loadDemoPedidos().find(pedidoAbierto) || null);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todos');
   const [busqueda, setBusqueda] = useState('');

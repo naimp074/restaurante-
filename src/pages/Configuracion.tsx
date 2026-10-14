@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { limpiarDatosLocales } from '../lib/resetDatos';
 import { readStore, writeStore } from '../lib/storeSync';
 import { horaCortePorDefecto } from '../lib/fechas';
+import ConfigPedidosYa from '../components/ConfigPedidosYa';
 
 export const configStorageKey = 'restaurant-config-local';
 export const configUpdatedEvent = 'restaurant-config-local-updated';
@@ -25,7 +26,7 @@ const loadConfig = (): ConfigLocal => ({
 });
 
 export default function Configuracion() {
-  const { hasRole } = useAuth();
+  const { hasRole, modoDemo } = useAuth();
   const configInicial = loadConfig();
   const [localNombre, setLocalNombre] = useState(configInicial.nombre);
   const [localDireccion, setLocalDireccion] = useState(configInicial.direccion);
@@ -147,6 +148,8 @@ export default function Configuracion() {
           ))}
         </div>
       </div>
+
+      {hasRole('admin') && !modoDemo && <ConfigPedidosYa />}
 
       {hasRole('admin') && <div className="bg-white rounded-2xl border border-red-100 p-6">
         <div className="flex items-center gap-3 mb-3">

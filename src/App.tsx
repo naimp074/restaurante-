@@ -11,6 +11,7 @@ import SyncProvider from './lib/sync/SyncProvider';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Mesas = lazy(() => import('./pages/Mesas'));
 const Pedidos = lazy(() => import('./pages/Pedidos'));
+const PedidosDelivery = lazy(() => import('./pages/PedidosDelivery'));
 const Cocina = lazy(() => import('./pages/Cocina'));
 const Caja = lazy(() => import('./pages/Caja'));
 const Cobros = lazy(() => import('./pages/Cobros'));
@@ -91,6 +92,7 @@ function AppContent() {
       case 'dashboard': return <Dashboard />;
       case 'mesas': return <Mesas />;
       case 'pedidos': return <Pedidos />;
+      case 'pedidos_delivery': return <PedidosDelivery />;
       case 'cocina': return <Cocina />;
       case 'caja': return <Caja />;
       case 'caja_dia': return <Caja apartadoInicial="dia" />;

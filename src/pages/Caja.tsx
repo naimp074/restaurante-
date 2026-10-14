@@ -25,6 +25,7 @@ import { loadPagos, savePagos, usePagos } from '../lib/pagosStore';
 import { useGastos } from '../lib/gastosStore';
 import { sincronizarEstadoMesa } from '../lib/mesasStore';
 import { descuentaStock } from '../lib/costosReceta';
+import { canalDe, cobraEnCaja, etiquetaPedido, nombresCanal } from '../lib/pedidosCanal';
 import { loadProductos } from '../lib/productosStore';
 import { nuevoId } from '../lib/ids';
 
@@ -74,10 +75,8 @@ const comprobantesConfig: Record<TipoComprobante, { label: string; descripcion: 
 const formatMoney = (value: number) =>
   `$${value.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-const getMesaLabel = (pedido?: Pedido) => {
-  if (!pedido?.mesa) return 'Mesa';
-  return pedido.mesa.nombre || `Mesa ${pedido.mesa.numero}`;
-};
+/** Mesa, para llevar, delivery o PedidosYa: el nombre sale del canal del pedido. */
+const getMesaLabel = (pedido?: Pedido) => etiquetaPedido(pedido);
 
 const getCompradorName = (value: string) => value.trim() || 'Consumidor final';
 
@@ -154,6 +153,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [movimientosFinancieros, setMovimientosFinancieros] = useState(loadMovimientosFinancieros);
   const listasPrecios = useListasPrecios();
 
+  // Lo pagado en la app de PedidosYa no pasa por esta caja (ver pedidosExternos.ts).
+  const pedidosPorCobrar = pedidos.filter(p => p.total > 0 && cobraEnCaja(p));
   const cajaAbierta = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
   const cajaDelDia = cajaAbierta || cajas.find(caja => caja.fecha === todayKey()) || null;
   const historialCajas = [...cajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -1014,11 +1015,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <>
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-3 border-b border-slate-100 flex items-center justify-between">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Mesas por Cobrar</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Por cobrar</p>
             <button title="Actualizar mesas" onClick={() => setPedidos(loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'))} className="text-slate-400 hover:text-amber-600"><RefreshCw size={14} /></button>
           </div>
           <div className="divide-y divide-slate-50">
-            {pedidos.filter(p => p.total > 0).map(pedido => (
+            {pedidosPorCobrar.map(pedido => (
               <button
                 key={pedido.id}
                 onClick={() => selectPedido(pedido)}
@@ -1037,8 +1038,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                 </div>
               </button>
             ))}
-            {pedidos.filter(p => p.total > 0).length === 0 && (
-              <div className="p-6 text-center text-slate-400 text-sm">No hay mesas por cobrar</div>
+            {pedidosPorCobrar.length === 0 && (
+              <div className="p-6 text-center text-slate-400 text-sm">No hay pedidos por cobrar</div>
             )}
           </div>
         </div>
@@ -1076,7 +1077,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-xl font-bold text-slate-800">{getMesaLabel(selectedPedido)}</h3>
-                  <p className="text-sm text-slate-500">{selectedPedido.empleado?.nombre} · {selectedPedido.cantidad_personas} personas</p>
+                  <p className="text-sm text-slate-500">
+                    {canalDe(selectedPedido) === 'salon'
+                      ? `${selectedPedido.empleado?.nombre || 'Sin moza'} · ${selectedPedido.cantidad_personas} personas`
+                      : [selectedPedido.cliente_telefono, selectedPedido.direccion_entrega, selectedPedido.costo_envio ? `Envío $${selectedPedido.costo_envio.toLocaleString('es-AR')}` : ''].filter(Boolean).join(' · ') || nombresCanal[canalDe(selectedPedido)]}
+                  </p>
                 </div>
                 <button
                   onClick={() => setSelectedPedido(null)}
