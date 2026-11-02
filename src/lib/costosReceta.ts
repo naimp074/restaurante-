@@ -57,7 +57,7 @@ export const crearComboDesdeInsumo = (
     codigo: existente?.codigo || `COMBO-${Date.now().toString().slice(-5)}`,
     nombre: (nombre || ingrediente.nombre).trim() || ingrediente.nombre,
     descripcion: existente?.descripcion || `Venta de ${ingrediente.nombre}`,
-    categoria_id: existente?.categoria_id || 'cat-6',
+    categoria_id: existente?.categoria_id || 's-cafeteria',
     precio_venta: precioVenta,
     costo_produccion: costo,
     margen_ganancia: margenPorcentaje(precioVenta, costo),

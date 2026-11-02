@@ -442,6 +442,7 @@ export type PageId =
   | 'ventas'
   | 'productos'
   | 'combos'
+  | 'cartas'
   | 'lista_precios'
   | 'diferentes_listas'
   | 'stock'

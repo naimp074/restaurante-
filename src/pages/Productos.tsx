@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload, BadgePercent } from 'lucide-react';
 import type { Ingrediente, ListaPrecio, MetodoListaPrecio, Producto, ProduccionPreparada, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
-import { categoriasIniciales } from '../lib/mockData';
-import { armarProductosCarta, cartaYaCargada } from '../lib/cartaInicial';
+import { loadCategorias, useCategorias } from '../lib/categoriasStore';
 import { loadProductos, saveProductos, useProductos } from '../lib/productosStore';
 import { actualizarCostosProductos, calcularCostoProducto, costoUnitarioProduccion, margenPorcentaje, precioPorMargen, productosSinDescuento, sugerirInsumoPara } from '../lib/costosReceta';
 import BuscadorInsumo from '../components/BuscadorInsumo';
@@ -120,7 +119,7 @@ const getRowValue = (row: Record<string, unknown>, aliases: string[]) => {
 const findCategoriaByName = (value: unknown) => {
   const normalized = normalizeText(String(value ?? ''));
   if (!normalized) return undefined;
-  return categoriasIniciales.find(cat => normalizeText(cat.nombre) === normalized || normalizeText(cat.nombre).includes(normalized));
+  return loadCategorias().find(cat => normalizeText(cat.nombre) === normalized || normalizeText(cat.nombre).includes(normalized));
 };
 
 const findIngredienteEnCatalogo = (catalogo: Ingrediente[], codigo?: string, nombre?: string) => {
@@ -183,6 +182,7 @@ interface ProductosProps {
 
 export default function Productos({ apartadoInicial }: ProductosProps) {
   const productos = useProductos();
+  const categorias = useCategorias();
   const setProductos = (actualizar: (actuales: Producto[]) => Producto[]) => {
     saveProductos(actualizar(loadProductos()));
   };
@@ -324,7 +324,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     const costoProduccion = receta.length > 0 ? costoReceta : editForm.costo_produccion || 0;
     const precioVenta = editForm.precio_venta || 0;
     const margenGanancia = margenPorcentaje(precioVenta, costoProduccion);
-    const categoria = categoriasIniciales.find(c => c.id === editForm.categoria_id);
+    const categoria = categorias.find(c => c.id === editForm.categoria_id);
 
     if (selectedProducto) {
       setProductos(prev => prev.map(p => p.id === selectedProducto.id ? {
@@ -356,24 +356,6 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       setProductos(prev => [newProd, ...prev]);
     }
     setShowForm(false);
-  };
-
-  /** Baja una copia del catálogo actual antes de reemplazarlo: el borrado llega a todos los dispositivos. */
-  const reemplazarPorCarta = () => {
-    const actuales = loadProductos();
-    const nuevos = armarProductosCarta();
-    if (!window.confirm(`Esto borra los ${actuales.length} combos actuales en todos los dispositivos y carga ${nuevos.length} de la carta. Se descarga una copia de los actuales. ¿Confirmar?`)) return;
-
-    if (actuales.length) {
-      const enlace = document.createElement('a');
-      enlace.href = URL.createObjectURL(new Blob([JSON.stringify(actuales, null, 2)], { type: 'application/json' }));
-      enlace.download = `copia-combos-${dayKey()}.json`;
-      enlace.click();
-      URL.revokeObjectURL(enlace.href);
-    }
-    saveProductos(nuevos);
-    setCategoriaFiltro('todos');
-    setImportResultado(`Se cargaron ${nuevos.length} combos de la carta.`);
   };
 
   const procesarPlanillaCombos = async (file: File) => {
@@ -457,7 +439,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
           codigo,
           nombre: nombre || codigo,
           descripcion: descripcion && normalizeText(descripcion) !== normalizeText(nombre) ? descripcion : '',
-          categoria_id: categoria?.id || 'cat-5',
+          categoria_id: categoria?.id || 's-cafeteria',
           precio_venta: precio,
           costo_total: costoTotal || undefined,
           tiempo_preparacion: tiempo || 10,
@@ -600,7 +582,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             : 0;
           const precioSugerido = precioPorMargen(costoProduccion, 100);
           const precioVenta = draft.precio_venta || existing?.precio_venta || precioSugerido || 0;
-          const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
+          const categoria = categorias.find(cat => cat.id === draft.categoria_id);
           const producto: Producto = {
             ...(existing || {}),
             id,
@@ -1144,14 +1126,6 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         </div>
         {apartado === 'combos' && (
           <div className="flex flex-wrap items-center gap-2">
-            {!cartaYaCargada(productos) && (
-              <button
-                onClick={reemplazarPorCarta}
-                className="bg-red-600 hover:bg-red-500 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
-              >
-                Reemplazar por la carta
-              </button>
-            )}
             <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button
                 onClick={() => setVista('catalogo')}
@@ -1365,7 +1339,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
             </button>
           </div>
           <div className="p-2 space-y-1">
-            {categoriasIniciales.map(cat => {
+            {categorias.map(cat => {
               const count = productos.filter(p => p.categoria_id === cat.id).length;
               return (
                 <button
@@ -1822,7 +1796,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                       <tbody className="divide-y divide-slate-50">
                         {importDrafts.map(draft => {
                           const costo = calcularCostoReceta(draft.receta, [...insumosCatalogo, ...importInsumos], producciones);
-                          const categoria = categoriasIniciales.find(cat => cat.id === draft.categoria_id);
+                          const categoria = categorias.find(cat => cat.id === draft.categoria_id);
                           return (
                             <tr key={draft.key}>
                               <td className="py-3 px-3">
@@ -1903,7 +1877,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
                   >
                     <option value="">Sin categoría</option>
-                    {categoriasIniciales.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                   </select>
                 </div>
                 <div>

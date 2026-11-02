@@ -4,7 +4,7 @@ import type { Pedido } from '../lib/types';
 import { useIngredientes, usePedidos, useProducciones } from '../lib/demoStore';
 import { useCajas } from '../lib/cajaStore';
 import { calcularCostoProducto } from '../lib/costosReceta';
-import { categoriasIniciales } from '../lib/mockData';
+import { loadCategorias } from '../lib/categoriasStore';
 import { useProductos } from '../lib/productosStore';
 import { useUsuarios } from '../lib/usuariosStore';
 import { saldoCliente, useCuentaCorriente } from '../lib/cuentaCorrienteStore';
@@ -121,7 +121,7 @@ export default function Reportes() {
         .forEach(item => {
           const producto = productos.find(p => p.id === item.producto_id) || item.producto;
           const categoria =
-            categoriasIniciales.find(c => c.id === producto?.categoria_id)?.nombre || 'Sin categoría';
+            loadCategorias().find(c => c.id === producto?.categoria_id)?.nombre || 'Sin categoría';
           acumulado.set(categoria, (acumulado.get(categoria) || 0) + item.subtotal);
         });
     });

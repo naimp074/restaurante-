@@ -100,7 +100,7 @@ export default function ConfigPedidosYa() {
         </label>
 
         <p className="text-xs text-slate-500 bg-slate-50 rounded-xl px-3 py-2">
-          Para que los productos descuenten stock, el código externo de cada producto en PedidosYa tiene que ser igual al código del producto en BurgerPOS.
+          Para que los productos descuenten stock, el código externo de cada producto en PedidosYa tiene que ser igual al código del producto en Aroma.
           Si no coincide, se busca por nombre.
         </p>
 

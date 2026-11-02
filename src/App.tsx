@@ -17,6 +17,7 @@ const Caja = lazy(() => import('./pages/Caja'));
 const Cobros = lazy(() => import('./pages/Cobros'));
 const CuentaCorriente = lazy(() => import('./pages/CuentaCorriente'));
 const Facturas = lazy(() => import('./pages/Facturas'));
+const Cartas = lazy(() => import('./pages/Cartas'));
 const Productos = lazy(() => import('./pages/Productos'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Proveedores = lazy(() => import('./pages/Proveedores'));
@@ -103,6 +104,7 @@ function AppContent() {
       case 'facturas': return <Facturas />;
       case 'ventas': return <Pedidos />;
       case 'productos': return <Productos />;
+      case 'cartas': return <Cartas />;
       case 'combos': return <Productos apartadoInicial="combos" />;
       case 'lista_precios': return <Productos apartadoInicial="precios" />;
       case 'diferentes_listas': return <Productos apartadoInicial="listas" />;

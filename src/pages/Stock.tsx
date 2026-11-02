@@ -33,6 +33,7 @@ import {
 } from '../lib/costosReceta';
 import type { InsumoEncarecido } from '../lib/costosReceta';
 import BuscadorInsumo from '../components/BuscadorInsumo';
+import { useAuth } from '../contexts/AuthContext';
 import { dayKey } from '../lib/fechas';
 import { loadCuentasDinero, registrarGastoCompra } from '../lib/finance';
 import { useStoredState, withStoreTransaction } from '../lib/storeSync';
@@ -243,6 +244,32 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [filtroConsumoHasta, setFiltroConsumoHasta] = useState('');
   const [producciones, setProducciones] = useStoredState(produccionesUpdatedEvent, loadDemoProducciones, saveDemoProducciones);
   const [registrosProduccion, setRegistrosProduccion] = useStoredState(registrosProduccionUpdatedEvent, loadDemoRegistrosProduccion, saveDemoRegistrosProduccion);
+  const { hasRole } = useAuth();
+
+  /** Deja el stock en blanco en todos los dispositivos. Antes baja una copia, porque no hay forma de deshacerlo. */
+  const vaciarStock = () => {
+    const copia = {
+      ingredientes: loadDemoIngredientes(),
+      producciones: loadDemoProducciones(),
+      movimientos: loadDemoMovimientosStock(),
+      registrosProduccion: loadDemoRegistrosProduccion(),
+    };
+    const respuesta = window.prompt(`Esto borra ${copia.ingredientes.length} insumos, ${copia.producciones.length} elaboraciones y ${copia.movimientos.length} movimientos en todos los dispositivos. Se descarga una copia. Escribí VACIAR para confirmar.`);
+    if (respuesta?.trim().toUpperCase() !== 'VACIAR') return;
+
+    const enlace = document.createElement('a');
+    enlace.href = URL.createObjectURL(new Blob([JSON.stringify(copia, null, 2)], { type: 'application/json' }));
+    enlace.download = `copia-stock-${dayKey()}.json`;
+    enlace.click();
+    URL.revokeObjectURL(enlace.href);
+
+    withStoreTransaction(() => {
+      saveDemoIngredientes([]);
+      saveDemoProducciones([]);
+      saveDemoMovimientosStock([]);
+      saveDemoRegistrosProduccion([]);
+    });
+  };
   const [showProduccionForm, setShowProduccionForm] = useState(false);
   const [showDefinicionProduccion, setShowDefinicionProduccion] = useState(false);
   const [definicionEditId, setDefinicionEditId] = useState<string | null>(null);
@@ -1782,6 +1809,14 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       <div className="flex items-center justify-between">
         <h2 className="font-semibold text-slate-800">Insumos y Materias Primas</h2>
         <div className="flex gap-2">
+          {hasRole('admin') && ingredientes.length > 0 && (
+            <button
+              onClick={vaciarStock}
+              className="bg-red-600 hover:bg-red-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition-colors"
+            >
+              Vaciar stock
+            </button>
+          )}
           <button
             onClick={descargarExcelStock}
             className="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium px-4 py-2 rounded-xl text-sm transition-colors"

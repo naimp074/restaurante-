@@ -36,6 +36,7 @@ import {
   descartarComprobante,
   emitirFactura,
   emitirNotaCredito,
+  letraSegunCondicion,
   nombreComprobante,
   numeroComprobante,
   receptorDesdeCliente,
@@ -45,6 +46,8 @@ import {
   type ReceptorFactura,
 } from '../lib/facturacion';
 import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
+import { loadCategorias } from '../lib/categoriasStore';
+import { lineasPorCategoria } from '../lib/lineasFiscales';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -83,8 +86,8 @@ const metodosConfig: Record<MetodoPago, { label: string; color: string; icon: st
 };
 
 const comprobantesConfig: Record<TipoComprobante, { label: string; descripcion: string }> = {
-  ticket: { label: 'Ticket', descripcion: 'No válido como factura' },
-  factura: { label: 'Factura', descripcion: 'Electrónica con CAE' },
+  ticket: { label: 'Ticket', descripcion: 'Para el cliente, con los productos' },
+  factura: { label: 'Factura', descripcion: 'ARCA, por categoría' },
   factura_x: { label: 'Ticket', descripcion: 'No válido como factura' },
   factura_b: { label: 'Ticket', descripcion: 'No válido como factura' },
   factura_a: { label: 'Ticket', descripcion: 'No válido como factura' },
@@ -445,12 +448,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
     const items = getActiveItems(pago.pedido);
     const fecha = new Date(pago.created_at);
-    const comprobante = comprobantesConfig[pago.tipo_comprobante || 'ticket'];
     const ticketHtml = `
       <!doctype html>
       <html>
         <head>
-          <title>${comprobante.label} ${getMesaLabel(pago.pedido)}</title>
+          <title>Ticket ${getMesaLabel(pago.pedido)}</title>
           <style>
             * { box-sizing: border-box; }
             body { margin: 0; padding: 12px; font-family: Arial, sans-serif; color: #111827; }
@@ -477,7 +479,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               <div class="muted">NO VÁLIDO COMO FACTURA</div>
             </div>
             <div class="line"></div>
-            <div class="row"><span>Comprobante</span><span>${comprobante.label}</span></div>
+            <div class="row"><span>Comprobante</span><span>Ticket</span></div>
             <div class="row"><span>${getMesaLabel(pago.pedido)}</span><span>${fecha.toLocaleDateString('es-AR')}</span></div>
             <div class="row"><span>Comprador</span><span>${pago.comprador_nombre || 'Consumidor final'}</span></div>
             <div class="row"><span>Moza: ${pago.pedido.empleado?.nombre || '-'}</span><span>${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span></div>
@@ -694,9 +696,15 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   };
 
   const eligioFactura = lastPago?.tipo_comprobante === 'factura';
+  const letraFactura = configFiscal ? letraSegunCondicion(configFiscal.condicion_emisor, receptor.condicion_iva) : '';
 
   const emitirDelCobro = async (pago: Pago): Promise<ComprobanteFiscal | null> => {
     if (factura?.estado === 'autorizado') return factura;
+    const nombreCliente = receptor.nombre.trim();
+    if (receptor.condicion_iva !== 5 && (!nombreCliente || nombreCliente === 'Consumidor final')) {
+      setFacturaError('Cargá el nombre o la razón social del cliente.');
+      return null;
+    }
     setEmitiendo(true);
     setFacturaError('');
     try {
@@ -726,7 +734,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         ventana.close();
         return;
       }
-      const lineas = lastPago.pedido ? getActiveItems(lastPago.pedido).map(item => ({ cantidad: item.cantidad, nombre: item.producto?.nombre || 'Producto', subtotal: item.subtotal })) : [];
+      const lineas = lineasPorCategoria(lastPago.pedido?.items || [], Number(comprobante.total), loadProductos(), loadCategorias());
       await imprimirComprobanteFiscal(ventana, comprobante, lineas);
       finalizarVenta();
       return;
@@ -736,6 +744,13 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       return;
     }
     finalizarVenta();
+  };
+
+  /** El ticket con el detalle para el cliente: no finaliza, así también se puede imprimir la factura. */
+  const imprimirTicketCliente = () => {
+    if (lastPago && !printTicket(lastPago)) {
+      setTicketError('No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.');
+    }
   };
 
   /** Si la factura ya quedó pendiente o rechazada, se cierra igual y sigue en Ventas → Facturas. */
@@ -1810,10 +1825,22 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                         id="factura-documento"
                         value={receptor.doc_nro === '0' ? '' : receptor.doc_nro}
                         onChange={e => setReceptor(prev => armarReceptor(prev.nombre, prev.condicion_iva, e.target.value))}
-                        placeholder="Opcional"
+                        placeholder={letraFactura === 'A' ? 'CUIT obligatorio' : 'Opcional'}
                         className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm"
                       />
                     </div>
+                    {receptor.condicion_iva !== 5 && (
+                      <div className="col-span-2">
+                        <label htmlFor="factura-nombre" className="block text-xs font-medium text-slate-600 mb-1">Nombre o razón social del cliente</label>
+                        <input
+                          id="factura-nombre"
+                          value={receptor.nombre === 'Consumidor final' ? '' : receptor.nombre}
+                          onChange={e => setReceptor(prev => ({ ...prev, nombre: e.target.value }))}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                        />
+                      </div>
+                    )}
+                    <p className="col-span-2 text-sm font-semibold text-amber-800 bg-amber-50 rounded-lg px-3 py-2">Se va a emitir: Factura {letraFactura}</p>
                   </div>
                 )}
                 {factura?.estado === 'autorizado' && (
@@ -1865,7 +1892,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   className="flex-1 py-2.5 bg-emerald-600 disabled:opacity-60 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-colors"
                 >
                   <Printer size={14} />
-                  {emitiendo ? 'Enviando a ARCA…' : factura && factura.estado !== 'autorizado' ? 'Reintentar e imprimir' : 'Imprimir y finalizar'}
+                  {emitiendo ? 'Enviando a ARCA…' : factura && factura.estado !== 'autorizado' ? 'Reintentar e imprimir' : eligioFactura ? 'Imprimir factura ARCA y finalizar' : 'Imprimir y finalizar'}
                 </button>
                 <button
                   onClick={() => void finalizarSinImprimir()}
@@ -1875,6 +1902,16 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   {factura && factura.estado !== 'autorizado' ? 'Finalizar y facturar después' : 'Finalizar sin imprimir'}
                 </button>
               </div>
+              {eligioFactura && (
+                <button
+                  onClick={imprimirTicketCliente}
+                  disabled={emitiendo}
+                  className="w-full py-2.5 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+                >
+                  <Printer size={14} />
+                  Imprimir ticket del cliente (con productos)
+                </button>
+              )}
               <button
                 onClick={() => void cancelarComprobante()}
                 disabled={emitiendo}

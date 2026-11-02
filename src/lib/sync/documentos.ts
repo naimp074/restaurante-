@@ -9,6 +9,7 @@ export const documentosSync: DocumentoSync[] = [
   { clave: 'restaurant-sectores-mesas', evento: 'restaurant-sectores-mesas-updated' },
   { clave: 'restaurant-demo-pedidos', evento: 'restaurant-pedidos-updated' },
   { clave: 'restaurant-productos', evento: 'restaurant-productos-updated' },
+  { clave: 'restaurant-categorias', evento: 'restaurant-categorias-updated' },
   { clave: 'restaurant-listas-precios', evento: 'restaurant-listas-precios-updated' },
   { clave: 'restaurant-demo-ingredientes', evento: 'restaurant-ingredientes-updated' },
   { clave: 'restaurant-demo-producciones', evento: 'restaurant-producciones-updated' },
