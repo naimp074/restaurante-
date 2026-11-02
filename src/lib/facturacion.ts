@@ -51,6 +51,8 @@ export const condicionesIva = [
   { id: 5, label: 'Consumidor final' },
   { id: 1, label: 'Responsable inscripto' },
   { id: 6, label: 'Monotributista' },
+  { id: 13, label: 'Monotributista social' },
+  { id: 16, label: 'Monotributo trabajador independiente promovido' },
   { id: 4, label: 'Exento' },
 ];
 

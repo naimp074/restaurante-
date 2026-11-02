@@ -62,8 +62,15 @@ const json = (cuerpo: unknown, status = 200) =>
 
 const rolesQueFacturan = ['admin', 'encargado', 'cajero'];
 const codigoNumeroIncorrecto = 10016;
+const sinPermiso = 'Las credenciales de ARCA de ese CUIT no son de este local.';
+const otroAmbiente = 'Ese comprobante es de otro ambiente de ARCA (prueba o producción) y no se puede operar desde este.';
 
-export const crearManejador = (datos: Datos, arca: ClienteArca, ambiente: Ambiente, dormir = (ms: number) => new Promise(r => setTimeout(r, ms))) => {
+/** Cliente y ambiente de un CUIT. local: el único que puede usarlos; sin definir, cualquiera. */
+export type Entorno = { arca: ClienteArca; ambiente: Ambiente; local?: string };
+
+const localPermitido = (entorno: Entorno, localId: string) => entorno.local === undefined || entorno.local === localId;
+
+export const crearManejador = (datos: Datos, entornoDe: (cuit: string) => Entorno, dormir = (ms: number) => new Promise(r => setTimeout(r, ms))) => {
   const conTurno = async <T>(clave: string, trabajo: () => Promise<T>): Promise<T> => {
     for (let intento = 0; intento < 8; intento++) {
       if (await datos.tomarTurno(clave, 150)) {
@@ -90,7 +97,7 @@ export const crearManejador = (datos: Datos, arca: ClienteArca, ambiente: Ambien
   /** Si se cortó justo después de pedir el CAE, puede estar autorizado aunque no nos enteramos. */
   const recuperarSiYaSeEmitio = async (c: Comprobante) => {
     if (!c.numero) return null;
-    const emitido = await arca.consultar(c.emisor.cuit, c.punto_venta, c.cbte_tipo, c.numero);
+    const emitido = await entornoDe(c.emisor.cuit).arca.consultar(c.emisor.cuit, c.punto_venta, c.cbte_tipo, c.numero);
     if (!emitido || emitido.resultado !== 'A') return null;
     const esEste = emitido.docNro === c.doc_nro && Math.abs(emitido.total - Number(c.total)) < 0.005;
     if (!esEste || await datos.autorizadoConNumero(c, c.numero)) return null;
@@ -98,6 +105,7 @@ export const crearManejador = (datos: Datos, arca: ClienteArca, ambiente: Ambien
   };
 
   const pedirCAE = async (c: Comprobante): Promise<Comprobante> => {
+    const { arca } = entornoDe(c.emisor.cuit);
     const asociado = c.asociado_id ? await datos.buscarPorId(c.asociado_id) : null;
     if (c.asociado_id && (!asociado?.numero || !asociado.fecha)) throw new Error('No encontré la factura que hay que anular.');
 
@@ -129,7 +137,7 @@ export const crearManejador = (datos: Datos, arca: ClienteArca, ambiente: Ambien
   const procesar = async (c: Comprobante): Promise<Comprobante> => {
     if (c.estado === 'autorizado' || c.estado === 'descartado') return c;
     try {
-      return await conTurno(`${ambiente}:${c.emisor.cuit}:${c.punto_venta}:${c.cbte_tipo}`, async () => {
+      return await conTurno(`${entornoDe(c.emisor.cuit).ambiente}:${c.emisor.cuit}:${c.punto_venta}:${c.cbte_tipo}`, async () => {
         const actual = await datos.buscarPorId(c.id) || c;
         if (actual.estado === 'autorizado') return actual;
         return await recuperarSiYaSeEmitio(actual) || await pedirCAE(actual);
@@ -162,24 +170,27 @@ export const crearManejador = (datos: Datos, arca: ClienteArca, ambiente: Ambien
   const emitir = async (localId: string, cuerpo: { pago_id?: string; total?: number; receptor?: Receptor }) => {
     const config = await datos.config(localId);
     if (!config?.activo) return json({ error: 'La facturación no está activa para este local.' }, 400);
+    const entorno = entornoDe(config.cuit);
+    if (!localPermitido(entorno, localId)) return json({ error: sinPermiso }, 403);
     const total = Math.round(Number(cuerpo.total) * 100) / 100;
     if (!cuerpo.pago_id || !(total > 0) || !cuerpo.receptor) return json({ error: 'Faltan datos del cobro.' }, 400);
     const problema = problemaDelReceptor(cuerpo.receptor, config.condicion_emisor, total, Number(config.umbral_identificacion));
     if (problema) return json({ error: problema }, 400);
 
     const existente = await datos.buscarPorPago(localId, cuerpo.pago_id, 'factura');
+    if (existente && existente.ambiente !== entornoDe(existente.emisor.cuit).ambiente) return json({ error: otroAmbiente }, 409);
     if (existente?.estado === 'autorizado') return json({ comprobante: existente });
     if (existente?.estado === 'descartado') return json({ error: 'Ese comprobante fue descartado.' }, 409);
     // Un pendiente pudo haber llegado a ARCA con estos datos: solo un rechazado admite corregirlos.
     if (existente?.estado === 'pendiente') return json({ comprobante: await procesar(existente) });
     if (existente) {
-      const corregido = await datos.actualizar(existente.id, { ...camposDeFactura(config, cuerpo.receptor, total), estado: 'pendiente', numero: null, error: null });
+      const corregido = await datos.actualizar(existente.id, { ...camposDeFactura(config, cuerpo.receptor, total), ambiente: entorno.ambiente, estado: 'pendiente', numero: null, error: null });
       return json({ comprobante: await procesar(corregido) });
     }
 
     const nuevo = await datos.crear({
       ...camposDeFactura(config, cuerpo.receptor, total),
-      local_id: localId, pago_id: cuerpo.pago_id, clase: 'factura', asociado_id: null, ambiente,
+      local_id: localId, pago_id: cuerpo.pago_id, clase: 'factura', asociado_id: null, ambiente: entorno.ambiente,
       estado: 'pendiente', numero: null, fecha: null, cae: null, cae_vencimiento: null, qr_url: null, error: null,
     });
     return json({ comprobante: await procesar(nuevo) });
@@ -212,6 +223,12 @@ export const crearManejador = (datos: Datos, arca: ClienteArca, ambiente: Ambien
 
     const comprobante = cuerpo.id ? await datos.buscarPorId(cuerpo.id) : null;
     if (!comprobante || comprobante.local_id !== perfil.local_id) return json({ error: 'No encontré ese comprobante.' }, 404);
+    // Un comprobante de prueba reintentado o anulado en producción sería una operación fiscal real.
+    if (accion !== 'descartar') {
+      const entorno = entornoDe(comprobante.emisor.cuit);
+      if (!localPermitido(entorno, perfil.local_id)) return json({ error: sinPermiso }, 403);
+      if (comprobante.ambiente !== entorno.ambiente) return json({ error: otroAmbiente }, 409);
+    }
     if (accion === 'nota-credito') return notaCredito(comprobante);
     if (accion === 'reintentar') {
       if (comprobante.estado === 'rechazado') {

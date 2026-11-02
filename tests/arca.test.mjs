@@ -31,15 +31,16 @@ const compilar = async entrada => {
   return mod.exports;
 };
 
-const { crearManejador, crearClienteArca, reglas, firmarConCertificado } = await compilar(`
+const { crearManejador, crearClienteArca, credencialesDe, reglas, firmarConCertificado } = await compilar(`
   export { crearManejador } from './supabase/functions/arca/manejador.ts';
   export { crearClienteArca } from './supabase/functions/arca/cliente.ts';
+  export { credencialesDe } from './supabase/functions/arca/credenciales.ts';
   export { firmarConCertificado } from './supabase/functions/arca/firma.ts';
   export * as reglas from './supabase/functions/arca/reglas.ts';
 `);
 
 const CUIT = '20111111112';
-let filas, config, ultimo, llamadas, comportamiento, turnoOcupado, handler;
+let filas, config, ultimo, llamadas, comportamiento, turnoOcupado, handler, cliente;
 
 const responder = xml => new Response(`<?xml version="1.0"?><soap:Envelope xmlns:soap="s"><soap:Body>${xml}</soap:Body></soap:Envelope>`, { status: 200 });
 const campo = (xml, nombre) => xml.match(new RegExp(`<${nombre}>([^<]*)</${nombre}>`))?.[1];
@@ -108,11 +109,11 @@ beforeEach(() => {
     condicion_emisor: 'responsable_inscripto', punto_venta: 3, alicuota: 21, concepto: 1, umbral_identificacion: 10000000, activo: true,
   };
   let token = null;
-  const cliente = crearClienteArca({
+  cliente = crearClienteArca({
     ambiente: 'homologacion', firmar: () => 'CMS', fetchApi: fetchFalso,
     tokens: { leer: async () => token, guardar: async (_, a) => { token = a; } },
   });
-  handler = crearManejador(datos, cliente, 'homologacion', async () => {});
+  handler = crearManejador(datos, () => ({ arca: cliente, ambiente: 'homologacion' }), async () => {});
 });
 
 test('Responsable inscripto a consumidor final: Factura B con condición de IVA e importes que cierran', async () => {
@@ -260,6 +261,74 @@ test('No se anula lo que no está autorizado y solo se descarta lo rechazado', a
   const { comprobante } = await pedir('emitir', { pago_id: 'p1', total: 1000, receptor: cf });
   assert.equal((await pedir('nota-credito', { id: comprobante.id })).status, 400);
   assert.equal((await pedir('descartar', { id: comprobante.id })).status, 400);
+});
+
+test('Un comprobante de otro ambiente no llega a ARCA', async () => {
+  await pedir('emitir', { pago_id: 'p1', total: 1000, receptor: cf });
+  const pendiente = filas[0];
+  pendiente.ambiente = 'produccion';
+  pendiente.estado = 'pendiente';
+  llamadas = [];
+  assert.equal((await pedir('reintentar', { id: pendiente.id })).status, 409);
+  assert.equal((await pedir('emitir', { pago_id: 'p1', total: 1000, receptor: cf })).status, 409);
+  pendiente.estado = 'autorizado';
+  assert.equal((await pedir('nota-credito', { id: pendiente.id })).status, 409);
+  assert.equal(llamadas.length, 0);
+  assert.equal(filas.length, 1);
+});
+
+test('Las credenciales propias de un CUIT solo sirven para su local', async () => {
+  handler = crearManejador(datos, () => ({ arca: cliente, ambiente: 'homologacion', local: 'OTRO' }), async () => {});
+  const r = await pedir('emitir', { pago_id: 'p1', total: 1000, receptor: cf });
+  assert.equal(r.status, 403);
+  assert.equal(llamadas.length, 0);
+  assert.equal(filas.length, 0);
+
+  handler = crearManejador(datos, () => ({ arca: cliente, ambiente: 'homologacion', local: 'L1' }), async () => {});
+  assert.equal((await pedir('emitir', { pago_id: 'p1', total: 1000, receptor: cf })).comprobante.estado, 'autorizado');
+});
+
+test('Cada CUIT factura con su ambiente y su propio cliente', async () => {
+  const usados = [];
+  handler = crearManejador(datos, cuit => {
+    usados.push(cuit);
+    return { arca: cliente, ambiente: cuit === CUIT ? 'produccion' : 'homologacion', local: 'L1' };
+  }, async () => {});
+  const { comprobante } = await pedir('emitir', { pago_id: 'p1', total: 1000, receptor: cf });
+  assert.equal(comprobante.ambiente, 'produccion');
+  assert.ok(usados.every(cuit => cuit === CUIT));
+});
+
+test('Credenciales: las propias del CUIT tienen prioridad y fallan cerradas', () => {
+  const secretos = {
+    ARCA_CERTIFICADO: 'GENERAL', ARCA_CLAVE_PRIVADA: 'K', ARCA_AMBIENTE: 'homologacion',
+    ARCA_CERTIFICADO_30718654919: 'PROPIO', ARCA_CLAVE_PRIVADA_30718654919: 'KP', ARCA_AMBIENTE_30718654919: 'produccion',
+  };
+  const propias = credencialesDe('30718654919', n => secretos[n]);
+  assert.equal(propias.certificado, 'PROPIO');
+  assert.equal(propias.ambiente, 'produccion');
+  assert.equal(propias.local, '');
+  const generales = credencialesDe('20295325799', n => secretos[n]);
+  assert.equal(generales.certificado, 'GENERAL');
+  assert.equal(generales.id, '');
+  assert.equal(generales.ambiente, 'homologacion');
+  assert.equal(generales.local, undefined);
+  delete secretos.ARCA_AMBIENTE_30718654919;
+  assert.equal(credencialesDe('30718654919', n => secretos[n]).ambiente, 'homologacion');
+});
+
+test('Consulta puntos de venta y tipos de comprobante', async () => {
+  const anterior = comportamiento;
+  comportamiento = {
+    solicitar: cuerpo => {
+      if (cuerpo.includes('FEParamGetPtosVenta')) return responder('<R><ResultGet><PtoVenta><Nro>9</Nro><EmisionTipo>RECE</EmisionTipo><Bloqueado>N</Bloqueado><FchBaja>NULL</FchBaja></PtoVenta></ResultGet></R>');
+      if (cuerpo.includes('FEParamGetTiposCbte')) return responder('<R><ResultGet><CbteTipo><Id>1</Id><Desc>Factura A</Desc></CbteTipo></ResultGet></R>');
+      return null;
+    },
+  };
+  assert.deepEqual(await cliente.puntosDeVenta(CUIT), [{ numero: 9, tipo: 'RECE', bloqueado: 'N', baja: 'NULL' }]);
+  assert.deepEqual(await cliente.tiposDeComprobante(CUIT), [{ id: 1, nombre: 'Factura A' }]);
+  comportamiento = anterior;
 });
 
 test('Permisos: otro rol u otro local no pueden facturar', async () => {

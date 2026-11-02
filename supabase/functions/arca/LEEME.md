@@ -76,7 +76,18 @@ Antes de pasar a producción, verificá que el QR impreso abra la página de ARC
 
 ## Si facturás para otros CUIT
 
-Se usa un solo certificado: cada contribuyente delega el servicio `wsfe` al CUIT dueño del certificado en Administrador de Relaciones, y carga su CUIT en Configuración.
+**Con certificado propio (recomendado).** Cada empresa usa su CUIT en estos secretos y solo su local puede usarlos:
+
+| Secreto | Valor |
+| --- | --- |
+| `ARCA_CERTIFICADO_<CUIT>` | Contenido de su `.crt` |
+| `ARCA_CLAVE_PRIVADA_<CUIT>` | Contenido de su `.key` |
+| `ARCA_AMBIENTE_<CUIT>` | `homologacion` o `produccion` (sin definir: `homologacion`) |
+| `ARCA_LOCAL_<CUIT>` | `id` de su local en la tabla `locales` (sin definir: no puede facturar) |
+
+Antes de activarla, verificala sin emitir nada: `node scripts/arca-consultar.cjs <nombre> <cuit>`. Lee `arca-<nombre>.crt` y `arca-<nombre>.key`, y deja el acceso de 12 horas en `arca-<nombre>.token.sql`: cargalo en el SQL Editor antes de usar la función.
+
+**Con delegación.** Sin esos secretos se usan los generales: el contribuyente delega `wsfe` al CUIT dueño del certificado en Administrador de Relaciones y carga su CUIT en Configuración.
 
 ## Lo que no está hecho
 
