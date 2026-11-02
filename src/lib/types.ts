@@ -13,7 +13,8 @@ export type EstadoPedido = 'abierto' | 'en_preparacion' | 'listo' | 'entregado' 
 export type EstadoItem = 'pendiente' | 'en_preparacion' | 'listo' | 'entregado' | 'cancelado';
 export type MetodoPago = 'efectivo' | 'transferencia' | 'tarjeta' | 'debito' | 'credito' | 'mixto';
 export type MetodoListaPrecio = Exclude<MetodoPago, 'mixto'>;
-export type TipoComprobante = 'ticket' | 'factura_x' | 'factura_b' | 'factura_a';
+// factura_x, factura_b y factura_a: cobros viejos, de cuando se imprimían sin CAE.
+export type TipoComprobante = 'ticket' | 'factura' | 'factura_x' | 'factura_b' | 'factura_a';
 export type EstadoCajaDiaria = 'abierta' | 'cerrada';
 export type CategoriaGasto = 'sueldo' | 'fijo' | 'variable' | 'extra';
 export type AlcanceGasto = 'caja_dia' | 'general';
@@ -38,6 +39,8 @@ export interface Profile {
   activo: boolean;
   avatar_url?: string;
   local_id?: string;
+  /** Pantallas que puede abrir. Sin lista, las de su rol. */
+  paginas?: PageId[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -426,6 +429,7 @@ export interface PagoProveedor {
 
 export type PageId =
   | 'cuenta_corriente'
+  | 'facturas'
   | 'dashboard'
   | 'mesas'
   | 'pedidos'

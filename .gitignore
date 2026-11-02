@@ -22,3 +22,8 @@ dist-ssr
 *.sln
 *.sw?
 .env
+arca.key
+arca.crt
+arca.csr
+arca-token.sql
+supabase/.temp/
