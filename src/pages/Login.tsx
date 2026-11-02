@@ -51,7 +51,7 @@ export default function Login() {
           <div className="w-16 h-16 bg-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-amber-500/30">
             <UtensilsCrossed size={28} className="text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white">BurgerPOS</h1>
+          <h1 className="text-3xl font-bold text-white">Aroma</h1>
           <p className="text-slate-400 mt-1">Sistema de Gestión de Restaurante</p>
         </div>
 
@@ -74,7 +74,7 @@ export default function Login() {
                   type="email"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  placeholder="usuario@burger.com"
+                  placeholder="usuario@aroma.com"
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-white placeholder-slate-500 outline-none focus:border-amber-500/50 focus:bg-white/8 transition-colors text-sm"
                   required
                 />

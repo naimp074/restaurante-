@@ -22,6 +22,7 @@ export const rolesPorPagina: Record<PageId, Rol[]> = {
   facturas: caja,
   productos: gestion,
   combos: gestion,
+  cartas: gestion,
   lista_precios: gestion,
   diferentes_listas: gestion,
   stock: gestion,
@@ -61,7 +62,7 @@ export const pantallasElegibles: { label: string; paginas: PageId[]; roles?: Rol
   { label: 'Cuenta corriente', paginas: ['cuenta_corriente'] },
   // Supabase solo le muestra los comprobantes a estos roles.
   { label: 'Facturas', paginas: ['facturas'], roles: caja },
-  { label: 'Productos y combos', paginas: ['productos', 'combos', 'lista_precios', 'diferentes_listas'] },
+  { label: 'Productos y combos', paginas: ['productos', 'combos', 'cartas', 'lista_precios', 'diferentes_listas'] },
   { label: 'Stock', paginas: ['stock', 'stock_insumos', 'stock_consumos', 'stock_produccion'] },
   { label: 'Proveedores', paginas: ['proveedores'] },
   { label: 'Gastos', paginas: ['gastos', 'gastos_pagos', 'gastos_traspasos'] },

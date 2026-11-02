@@ -236,7 +236,7 @@ export default function Usuarios() {
                     value={(editUser as { email?: string }).email || ''}
                     onChange={e => setEditUser(u => ({ ...u, email: e.target.value }))}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                    placeholder="usuario@burger.com"
+                    placeholder="usuario@aroma.com"
                   />
                 </div>
               )}

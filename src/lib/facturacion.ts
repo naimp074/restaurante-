@@ -56,6 +56,12 @@ export const condicionesIva = [
   { id: 4, label: 'Exento' },
 ];
 
+/** Misma regla que letraSegun() en la función arca: el servidor es quien decide al emitir. */
+export const letraSegunCondicion = (emisor: CondicionEmisor, condicionReceptor: number) => {
+  if (emisor === 'monotributo') return 'C';
+  return [1, 6, 13, 16].includes(condicionReceptor) ? 'A' : 'B';
+};
+
 const condicionDesdeTexto = (texto: string) => {
   const t = texto.toLowerCase();
   if (t.includes('inscripto')) return 1;

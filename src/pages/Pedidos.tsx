@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed } from 'lucide-react';
 import type { Mesa, Pedido, PedidoItem, Producto } from '../lib/types';
-import { categoriasIniciales } from '../lib/mockData';
+import { useCategorias } from '../lib/categoriasStore';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { useProductos } from '../lib/productosStore';
 import { estadoOperativoMesa, loadMesas, mesaTienePedidoAbierto, ocuparMesa, useMesas } from '../lib/mesasStore';
@@ -42,6 +42,7 @@ export default function Pedidos() {
   const [pedidoError, setPedidoError] = useState('');
 
   const catalogoProductos = useProductos();
+  const categorias = useCategorias();
   const mesasDisponibles = useMesas();
   const mozas = useMozas();
   const mesasLibres = mesasDisponibles.filter(m => estadoOperativoMesa(m, pedidos) === 'libre');
@@ -397,7 +398,7 @@ export default function Pedidos() {
                       onClick={() => setCategoriaFiltro('todos')}
                       className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${categoriaFiltro === 'todos' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                     >Todos</button>
-                    {categoriasIniciales.map(cat => (
+                    {[...categorias].sort((a, b) => a.orden - b.orden).map(cat => (
                       <button
                         key={cat.id}
                         onClick={() => setCategoriaFiltro(cat.id)}

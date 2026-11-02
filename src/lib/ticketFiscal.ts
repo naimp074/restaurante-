@@ -2,7 +2,7 @@ import QRCode from 'qrcode';
 import type { ComprobanteFiscal } from './facturacion';
 import { condicionesIva, nombreComprobante, numeroComprobante } from './facturacion';
 
-export type LineaTicket = { cantidad: number; nombre: string; subtotal: number };
+export type LineaTicket = { nombre: string; subtotal: number };
 
 const escapar = (texto: unknown) => String(texto ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -74,7 +74,7 @@ export const imprimirComprobanteFiscal = async (ventana: Window, c: ComprobanteF
     <div class="row"><span>${c.condicion_iva_receptor === 5 ? 'A CONSUMIDOR FINAL' : escapar(c.receptor_nombre)}</span></div>
     ${documento(c) ? `<div class="row"><span>${escapar(documento(c))}</span></div>` : ''}
     ${c.condicion_iva_receptor !== 5 ? `<div class="row"><span>${escapar(condicion)}</span></div>` : ''}
-    ${lineas.length ? `<div class="line"></div>${lineas.map(l => `<div class="row"><span>${escapar(l.cantidad)}x ${escapar(l.nombre)}</span><span>${dinero(l.subtotal)}</span></div>`).join('')}` : ''}
+    ${lineas.length ? `<div class="line"></div>${lineas.map(l => `<div class="row"><span>${escapar(l.nombre)}</span><span>${dinero(l.subtotal)}</span></div>`).join('')}` : ''}
     <div class="line"></div>
     ${esA ? `<div class="row"><span>Neto gravado</span><span>${dinero(c.neto)}</span></div><div class="row"><span>IVA ${c.alicuota}%</span><span>${dinero(c.iva)}</span></div>` : ''}
     <div class="grand-total">Total: ${dinero(c.total)}</div>

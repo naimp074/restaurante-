@@ -21,6 +21,7 @@ const pageTitles: Record<PageId, string> = {
   ventas: 'Comandas',
   productos: 'Productos',
   combos: 'Combos',
+  cartas: 'Cartas',
   lista_precios: 'Lista de Precio',
   diferentes_listas: 'Diferentes Listas',
   stock: 'Stock e Insumos',

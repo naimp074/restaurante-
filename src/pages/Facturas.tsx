@@ -13,6 +13,9 @@ import {
 } from '../lib/facturacion';
 import { loadPagos } from '../lib/pagosStore';
 import { abrirVentanaTicket, imprimirComprobanteFiscal, type LineaTicket } from '../lib/ticketFiscal';
+import { loadCategorias } from '../lib/categoriasStore';
+import { lineasPorCategoria } from '../lib/lineasFiscales';
+import { loadProductos } from '../lib/productosStore';
 
 const estados: Record<EstadoComprobante, { label: string; color: string }> = {
   autorizado: { label: 'Autorizado', color: 'bg-emerald-100 text-emerald-700' },
@@ -21,11 +24,9 @@ const estados: Record<EstadoComprobante, { label: string; color: string }> = {
   descartado: { label: 'Descartado', color: 'bg-slate-100 text-slate-500' },
 };
 
-const lineasDelPago = (pagoId: string): LineaTicket[] => {
-  const pedido = loadPagos().find(p => p.id === pagoId)?.pedido;
-  return (pedido?.items || [])
-    .filter(item => item.estado !== 'cancelado')
-    .map(item => ({ cantidad: item.cantidad, nombre: item.producto?.nombre || 'Producto', subtotal: item.subtotal }));
+const lineasDelComprobante = (c: ComprobanteFiscal): LineaTicket[] => {
+  const pedido = loadPagos().find(p => p.id === c.pago_id)?.pedido;
+  return lineasPorCategoria(pedido?.items || [], Number(c.total), loadProductos(), loadCategorias());
 };
 
 export default function Facturas() {
@@ -69,7 +70,7 @@ export default function Facturas() {
       setError('No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.');
       return;
     }
-    void imprimirComprobanteFiscal(ventana, c, lineasDelPago(c.pago_id));
+    void imprimirComprobanteFiscal(ventana, c, lineasDelComprobante(c));
   };
 
   const tieneNota = (c: ComprobanteFiscal) => comprobantes.some(n => n.asociado_id === c.id && n.estado !== 'descartado');

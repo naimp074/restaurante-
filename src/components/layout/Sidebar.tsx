@@ -55,7 +55,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
   const ve = (pagina: PageId) => Boolean(user && perfilVePagina(user, pagina));
   const visibleItems = navItems.filter(item => (item.id === 'ventas' ? paginasVentas : [item.id]).some(ve));
   const ventasActive = currentPage === 'pedidos_delivery' || currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'facturas' || currentPage === 'cocina' || currentPage === 'pedidos';
-  const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
+  const productosActive = currentPage === 'productos' || currentPage === 'cartas' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
   const stockActive = currentPage === 'stock' || currentPage === 'stock_insumos' || currentPage === 'stock_consumos' || currentPage === 'stock_produccion';
   const gastosActive = currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos';
 
@@ -72,7 +72,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
           </div>
           {!compact && (
           <div className="min-w-0">
-            <p className="font-bold text-white text-sm leading-tight truncate">BurgerPOS</p>
+            <p className="font-bold text-white text-sm leading-tight truncate">Aroma</p>
             <p className="text-slate-400 text-xs truncate">Sistema de Gestión</p>
           </div>
           )}
@@ -311,6 +311,15 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
 
                 {!compact && showProductosMenu && (
                   <div className="ml-6 mt-1 space-y-0.5 rounded-xl bg-slate-800/60 p-1">
+                    <button
+                      onClick={() => onNavigate('cartas')}
+                      className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                        currentPage === 'cartas' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                      }`}
+                    >
+                      <BookOpen size={13} />
+                      Cartas
+                    </button>
                     <button
                       onClick={() => onNavigate('combos')}
                       className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
