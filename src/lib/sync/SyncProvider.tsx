@@ -13,6 +13,8 @@ import {
 } from './cliente';
 import { loadColaSync, setEstadoSync } from './estado';
 
+const intervaloRespaldoMs = 20_000;
+
 export default function SyncProvider({ children }: { children: ReactNode }) {
   const { user, loading, modoDemo } = useAuth();
 
@@ -80,12 +82,20 @@ export default function SyncProvider({ children }: { children: ReactNode }) {
             }]);
           },
         )
-        .subscribe();
+        // Al suscribirse o reconectarse: lo que pasó mientras el canal estaba caído no llega solo.
+        .subscribe(estado => {
+          if (estado === 'SUBSCRIBED' && !cancelado) void hidratarDesdeRemoto();
+        });
     };
 
     void iniciar();
+    // Una pantalla fija, como la de cocina, nunca cambia de pestaña: si el canal falla en silencio, esto la pone al día.
+    const respaldo = window.setInterval(() => {
+      if (navigator.onLine && document.visibilityState === 'visible') void hidratarDesdeRemoto();
+    }, intervaloRespaldoMs);
     return () => {
       cancelado = true;
+      window.clearInterval(respaldo);
       resetLocalIdSync();
       if (channel) void client.removeChannel(channel);
     };
