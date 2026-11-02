@@ -5,6 +5,7 @@ import { limpiarDatosLocales } from '../lib/resetDatos';
 import { readStore, writeStore } from '../lib/storeSync';
 import { horaCortePorDefecto } from '../lib/fechas';
 import ConfigPedidosYa from '../components/ConfigPedidosYa';
+import ConfigFacturacion from '../components/ConfigFacturacion';
 
 export const configStorageKey = 'restaurant-config-local';
 export const configUpdatedEvent = 'restaurant-config-local-updated';
@@ -148,6 +149,8 @@ export default function Configuracion() {
           ))}
         </div>
       </div>
+
+      {hasRole('admin') && !modoDemo && <ConfigFacturacion />}
 
       {hasRole('admin') && !modoDemo && <ConfigPedidosYa />}
 

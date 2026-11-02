@@ -4,7 +4,7 @@ import Layout from './components/layout/Layout';
 import Login from './pages/Login';
 import type { PageId } from './lib/types';
 import { dayKey } from './lib/fechas';
-import { hashDePagina, paginaDesdeHash, paginaInicial, puedeVerPagina } from './lib/paginas';
+import { hashDePagina, paginaDesdeHash, paginaInicialDe, perfilVePagina } from './lib/paginas';
 import SyncProvider from './lib/sync/SyncProvider';
 
 // Cada pantalla se descarga la primera vez que se abre.
@@ -16,6 +16,7 @@ const Cocina = lazy(() => import('./pages/Cocina'));
 const Caja = lazy(() => import('./pages/Caja'));
 const Cobros = lazy(() => import('./pages/Cobros'));
 const CuentaCorriente = lazy(() => import('./pages/CuentaCorriente'));
+const Facturas = lazy(() => import('./pages/Facturas'));
 const Productos = lazy(() => import('./pages/Productos'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Proveedores = lazy(() => import('./pages/Proveedores'));
@@ -83,9 +84,9 @@ function AppContent() {
     return <Login />;
   }
 
-  const solicitada = currentPage ?? paginaInicial(user.rol);
-  const permitida = puedeVerPagina(user.rol, solicitada) ? solicitada : paginaInicial(user.rol);
-  const effectivePage: PageId = user.rol === 'cajero' && !hasOpenCajaToday() ? 'caja' : permitida;
+  const solicitada = currentPage ?? paginaInicialDe(user);
+  const permitida = perfilVePagina(user, solicitada) ? solicitada : paginaInicialDe(user);
+  const effectivePage: PageId = user.rol === 'cajero' && perfilVePagina(user, 'caja') && !hasOpenCajaToday() ? 'caja' : permitida;
 
   const renderPage = () => {
     switch (effectivePage) {
@@ -99,6 +100,7 @@ function AppContent() {
       case 'caja_arqueos': return <Caja apartadoInicial="arqueos" />;
       case 'cobros': return <Cobros />;
       case 'cuenta_corriente': return <CuentaCorriente />;
+      case 'facturas': return <Facturas />;
       case 'ventas': return <Pedidos />;
       case 'productos': return <Productos />;
       case 'combos': return <Productos apartadoInicial="combos" />;

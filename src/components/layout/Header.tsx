@@ -17,6 +17,7 @@ const pageTitles: Record<PageId, string> = {
   caja_arqueos: 'Arqueos',
   cobros: 'Cobros',
   cuenta_corriente: 'Cuenta corriente',
+  facturas: 'Facturas',
   ventas: 'Comandas',
   productos: 'Productos',
   combos: 'Combos',

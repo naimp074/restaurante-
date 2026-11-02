@@ -28,6 +28,23 @@ import { descuentaStock } from '../lib/costosReceta';
 import { canalDe, cobraEnCaja, etiquetaPedido, nombresCanal } from '../lib/pedidosCanal';
 import { loadProductos } from '../lib/productosStore';
 import { nuevoId } from '../lib/ids';
+import { readStore } from '../lib/storeSync';
+import {
+  armarReceptor,
+  cargarConfigFacturacion,
+  condicionesIva,
+  descartarComprobante,
+  emitirFactura,
+  emitirNotaCredito,
+  nombreComprobante,
+  numeroComprobante,
+  receptorDesdeCliente,
+  reintentarComprobante,
+  type ComprobanteFiscal,
+  type ConfigFacturacion,
+  type ReceptorFactura,
+} from '../lib/facturacion';
+import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -66,10 +83,11 @@ const metodosConfig: Record<MetodoPago, { label: string; color: string; icon: st
 };
 
 const comprobantesConfig: Record<TipoComprobante, { label: string; descripcion: string }> = {
-  ticket: { label: 'Ticket', descripcion: 'Comprobante simple' },
-  factura_x: { label: 'Factura X', descripcion: 'No fiscal' },
-  factura_b: { label: 'Factura B', descripcion: 'Consumidor final' },
-  factura_a: { label: 'Factura A', descripcion: 'Responsable inscripto' },
+  ticket: { label: 'Ticket', descripcion: 'No válido como factura' },
+  factura: { label: 'Factura', descripcion: 'Electrónica con CAE' },
+  factura_x: { label: 'Ticket', descripcion: 'No válido como factura' },
+  factura_b: { label: 'Ticket', descripcion: 'No válido como factura' },
+  factura_a: { label: 'Ticket', descripcion: 'No válido como factura' },
 };
 
 const formatMoney = (value: number) =>
@@ -108,7 +126,7 @@ const getPagoBreakdown = (pago: Pago) => {
 
 export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaProps) {
   const gastos = useGastos();
-  const { user } = useAuth();
+  const { user, modoDemo } = useAuth();
   const [pedidos, setPedidos] = useState<Pedido[]>(
     () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
   );
@@ -141,6 +159,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [showTicket, setShowTicket] = useState(false);
   const [ticketError, setTicketError] = useState('');
   const [lastPago, setLastPago] = useState<Pago | null>(null);
+  const [configFiscal, setConfigFiscal] = useState<ConfigFacturacion | null>(null);
+  const [receptor, setReceptor] = useState<ReceptorFactura>(() => armarReceptor('', 5, ''));
+  const [factura, setFactura] = useState<ComprobanteFiscal | null>(null);
+  const [emitiendo, setEmitiendo] = useState(false);
+  const [facturaError, setFacturaError] = useState('');
   const cajas = useCajas();
   const [apartadosCaja, setApartadosCaja] = useState<ApartadoCaja[]>(loadApartadosCaja);
   const [montoInicial, setMontoInicial] = useState('');
@@ -152,6 +175,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [cuentasDinero, setCuentasDinero] = useState(loadCuentasDinero);
   const [movimientosFinancieros, setMovimientosFinancieros] = useState(loadMovimientosFinancieros);
   const listasPrecios = useListasPrecios();
+
+  useEffect(() => {
+    if (modoDemo) return;
+    // Sin configuración (o sin la migración aplicada) la caja sigue con tickets.
+    cargarConfigFacturacion().then(config => setConfigFiscal(config?.activo ? config : null)).catch(() => setConfigFiscal(null));
+  }, [modoDemo]);
 
   // Lo pagado en la app de PedidosYa no pasa por esta caja (ver pedidosExternos.ts).
   const pedidosPorCobrar = pedidos.filter(p => p.total > 0 && cobraEnCaja(p));
@@ -444,8 +473,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <body>
           <div class="ticket">
             <div class="center">
-              <p class="title">Restaurante</p>
-              <div class="muted">${comprobante.label} de consumo</div>
+              <p class="title">${readStore<{ nombre?: string }>('restaurant-config-local', {}).nombre || 'Restaurante'}</p>
+              <div class="muted">NO VÁLIDO COMO FACTURA</div>
             </div>
             <div class="line"></div>
             <div class="row"><span>Comprobante</span><span>${comprobante.label}</span></div>
@@ -584,7 +613,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       pedido_id: pedidoCobrado.id,
       cajero_id: user?.id,
       comprador_nombre: selectedCliente?.nombre || getCompradorName(compradorNombre),
-      tipo_comprobante: 'ticket',
+      tipo_comprobante: configFiscal ? 'factura' : 'ticket',
       metodo_pago: metodoPago,
       monto: total,
       monto_efectivo: metodoPago === 'efectivo' ? total : metodoPago === 'mixto' ? mixtoEfectivo : 0,
@@ -635,6 +664,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       return;
     }
     setLastPago(pago);
+    setReceptor(receptorDesdeCliente(selectedCliente, compradorNombre));
+    setFactura(null);
+    setFacturaError('');
     setTicketError('');
     setShowTicket(true);
     setSelectedPedido(null);
@@ -657,10 +689,48 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setLastPago(null);
     setShowTicket(false);
     setTicketError('');
+    setFactura(null);
+    setFacturaError('');
   };
 
-  const imprimirYFinalizar = () => {
+  const eligioFactura = lastPago?.tipo_comprobante === 'factura';
+
+  const emitirDelCobro = async (pago: Pago): Promise<ComprobanteFiscal | null> => {
+    if (factura?.estado === 'autorizado') return factura;
+    setEmitiendo(true);
+    setFacturaError('');
+    try {
+      const comprobante = await emitirFactura(pago.id, pago.total_cobrado, receptor);
+      setFactura(comprobante);
+      if (comprobante.estado === 'pendiente') setFacturaError(`Quedó pendiente: ${comprobante.error || 'ARCA no respondió.'} Podés reintentar o resolverlo después en Facturas.`);
+      if (comprobante.estado === 'rechazado') setFacturaError(`ARCA la rechazó: ${comprobante.error || 'sin motivo.'} Corregí los datos y reintentá, o resolvelo después en Facturas.`);
+      return comprobante;
+    } catch (error) {
+      setFacturaError(error instanceof Error ? error.message : 'No se pudo emitir la factura.');
+      return null;
+    } finally {
+      setEmitiendo(false);
+    }
+  };
+
+  const imprimirYFinalizar = async () => {
     if (!lastPago) return;
+    if (eligioFactura) {
+      const ventana = abrirVentanaTicket();
+      if (!ventana) {
+        setTicketError('No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.');
+        return;
+      }
+      const comprobante = await emitirDelCobro(lastPago);
+      if (comprobante?.estado !== 'autorizado') {
+        ventana.close();
+        return;
+      }
+      const lineas = lastPago.pedido ? getActiveItems(lastPago.pedido).map(item => ({ cantidad: item.cantidad, nombre: item.producto?.nombre || 'Producto', subtotal: item.subtotal })) : [];
+      await imprimirComprobanteFiscal(ventana, comprobante, lineas);
+      finalizarVenta();
+      return;
+    }
     if (!printTicket(lastPago)) {
       setTicketError('No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.');
       return;
@@ -668,7 +738,52 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     finalizarVenta();
   };
 
-  const cancelarComprobante = () => {
+  /** Si la factura ya quedó pendiente o rechazada, se cierra igual y sigue en Ventas → Facturas. */
+  const finalizarSinImprimir = async () => {
+    if (lastPago && eligioFactura && !factura) {
+      const comprobante = await emitirDelCobro(lastPago);
+      if (comprobante?.estado !== 'autorizado') return;
+    }
+    finalizarVenta();
+  };
+
+  /** Lo autorizado por ARCA no se borra: se anula con nota de crédito. Devuelve false si no se pudo. */
+  const anularFactura = async () => {
+    if (!factura) return true;
+    setEmitiendo(true);
+    setFacturaError('');
+    try {
+      let actual = factura;
+      if (actual.estado === 'pendiente') {
+        actual = await reintentarComprobante(actual.id);
+        setFactura(actual);
+      }
+      if (actual.estado === 'pendiente') {
+        setFacturaError('ARCA todavía no respondió por esta factura. No se puede anular el cobro hasta saber si se autorizó.');
+        return false;
+      }
+      if (actual.estado === 'rechazado') {
+        await descartarComprobante(actual.id);
+        return true;
+      }
+      const nota = await emitirNotaCredito(actual.id);
+      if (nota.estado !== 'autorizado') {
+        setFacturaError(`No se pudo emitir la nota de crédito: ${nota.error || 'sin respuesta de ARCA.'} El cobro sigue registrado.`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      setFacturaError(error instanceof Error ? error.message : 'No se pudo anular la factura.');
+      return false;
+    } finally {
+      setEmitiendo(false);
+    }
+  };
+
+  const cancelarComprobante = async () => {
+    if (!await anularFactura()) return;
+    setFactura(null);
+    setFacturaError('');
     if (lastPago?.pedido) {
       const breakdown = getPagoBreakdown(lastPago);
       registrarCobroEnCuentas(lastPago, breakdown, -1);
@@ -1660,10 +1775,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               <div className="pb-3">
                 <h4 className="text-sm font-semibold text-slate-700 mb-3">Elegí qué querés imprimir</h4>
                 <div className="grid grid-cols-2 gap-2">
-                  {(Object.keys(comprobantesConfig) as TipoComprobante[]).map(tipo => (
+                  {(configFiscal ? ['ticket', 'factura'] as TipoComprobante[] : ['ticket'] as TipoComprobante[]).map(tipo => (
                     <button
                       key={tipo}
                       onClick={() => updateLastPagoComprobante(tipo)}
+                      disabled={emitiendo || Boolean(factura && factura.estado !== 'rechazado')}
                       className={`p-3 rounded-xl border-2 text-left transition-all ${
                         (lastPago.tipo_comprobante || 'ticket') === tipo
                           ? 'bg-amber-50 border-amber-400 text-amber-800 shadow-sm'
@@ -1675,6 +1791,36 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     </button>
                   ))}
                 </div>
+                {eligioFactura && (!factura || factura.estado === 'rechazado') && (
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div>
+                      <label htmlFor="factura-condicion" className="block text-xs font-medium text-slate-600 mb-1">Condición de IVA</label>
+                      <select
+                        id="factura-condicion"
+                        value={receptor.condicion_iva}
+                        onChange={e => setReceptor(prev => ({ ...prev, condicion_iva: Number(e.target.value) }))}
+                        className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm bg-white"
+                      >
+                        {condicionesIva.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="factura-documento" className="block text-xs font-medium text-slate-600 mb-1">CUIT o DNI</label>
+                      <input
+                        id="factura-documento"
+                        value={receptor.doc_nro === '0' ? '' : receptor.doc_nro}
+                        onChange={e => setReceptor(prev => armarReceptor(prev.nombre, prev.condicion_iva, e.target.value))}
+                        placeholder="Opcional"
+                        className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+                {factura?.estado === 'autorizado' && (
+                  <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mt-3">
+                    {nombreComprobante(factura)} {numeroComprobante(factura)} · CAE {factura.cae}
+                  </p>
+                )}
               </div>
 
               <div className="text-center">
@@ -1709,26 +1855,32 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               {ticketError && (
                 <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{ticketError}</p>
               )}
+              {facturaError && (
+                <p role="alert" className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{facturaError}</p>
+              )}
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
-                  onClick={imprimirYFinalizar}
-                  className="flex-1 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-colors"
+                  onClick={() => void imprimirYFinalizar()}
+                  disabled={emitiendo}
+                  className="flex-1 py-2.5 bg-emerald-600 disabled:opacity-60 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-colors"
                 >
                   <Printer size={14} />
-                  Imprimir y finalizar
+                  {emitiendo ? 'Enviando a ARCA…' : factura && factura.estado !== 'autorizado' ? 'Reintentar e imprimir' : 'Imprimir y finalizar'}
                 </button>
                 <button
-                  onClick={finalizarVenta}
-                  className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                  onClick={() => void finalizarSinImprimir()}
+                  disabled={emitiendo}
+                  className="flex-1 py-2.5 border border-slate-200 disabled:opacity-60 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
                 >
-                  Finalizar sin imprimir
+                  {factura && factura.estado !== 'autorizado' ? 'Finalizar y facturar después' : 'Finalizar sin imprimir'}
                 </button>
               </div>
               <button
-                onClick={cancelarComprobante}
-                className="w-full py-2 text-xs font-medium text-red-600 hover:text-red-700 hover:underline"
+                onClick={() => void cancelarComprobante()}
+                disabled={emitiendo}
+                className="w-full py-2 text-xs font-medium text-red-600 hover:text-red-700 hover:underline disabled:opacity-60"
               >
-                Anular cobro y devolver el stock
+                {factura && factura.estado !== 'rechazado' ? 'Anular con nota de crédito y devolver el stock' : 'Anular cobro y devolver el stock'}
               </button>
             </div>
           </div>

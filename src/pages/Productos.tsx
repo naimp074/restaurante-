@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, CreditCard as Edit2, Eye, EyeOff, Search, X, Check, AlertTriangle, Grid3X3, List, MoreHorizontal, Download, Upload, BadgePercent } from 'lucide-react';
 import type { Ingrediente, ListaPrecio, MetodoListaPrecio, Producto, ProduccionPreparada, RecetaItem, TipoComponenteReceta, UnidadMedida } from '../lib/types';
 import { categoriasIniciales } from '../lib/mockData';
+import { armarProductosCarta, cartaYaCargada } from '../lib/cartaInicial';
 import { loadProductos, saveProductos, useProductos } from '../lib/productosStore';
 import { actualizarCostosProductos, calcularCostoProducto, costoUnitarioProduccion, margenPorcentaje, precioPorMargen, productosSinDescuento, sugerirInsumoPara } from '../lib/costosReceta';
 import BuscadorInsumo from '../components/BuscadorInsumo';
@@ -355,6 +356,24 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
       setProductos(prev => [newProd, ...prev]);
     }
     setShowForm(false);
+  };
+
+  /** Baja una copia del catálogo actual antes de reemplazarlo: el borrado llega a todos los dispositivos. */
+  const reemplazarPorCarta = () => {
+    const actuales = loadProductos();
+    const nuevos = armarProductosCarta();
+    if (!window.confirm(`Esto borra los ${actuales.length} combos actuales en todos los dispositivos y carga ${nuevos.length} de la carta. Se descarga una copia de los actuales. ¿Confirmar?`)) return;
+
+    if (actuales.length) {
+      const enlace = document.createElement('a');
+      enlace.href = URL.createObjectURL(new Blob([JSON.stringify(actuales, null, 2)], { type: 'application/json' }));
+      enlace.download = `copia-combos-${dayKey()}.json`;
+      enlace.click();
+      URL.revokeObjectURL(enlace.href);
+    }
+    saveProductos(nuevos);
+    setCategoriaFiltro('todos');
+    setImportResultado(`Se cargaron ${nuevos.length} combos de la carta.`);
   };
 
   const procesarPlanillaCombos = async (file: File) => {
@@ -1125,6 +1144,14 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         </div>
         {apartado === 'combos' && (
           <div className="flex flex-wrap items-center gap-2">
+            {!cartaYaCargada(productos) && (
+              <button
+                onClick={reemplazarPorCarta}
+                className="bg-red-600 hover:bg-red-500 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+              >
+                Reemplazar por la carta
+              </button>
+            )}
             <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button
                 onClick={() => setVista('catalogo')}

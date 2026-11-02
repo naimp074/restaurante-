@@ -5,6 +5,7 @@ import { loadUsuarios, saveUsuarios, useUsuarios } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import CuentasAcceso from '../components/CuentasAcceso';
 import { nuevoId } from '../lib/ids';
+import { pantallasElegibles } from '../lib/paginas';
 
 const rolConfig: Record<Rol, { label: string; color: string; desc: string }> = {
   admin: { label: 'Administrador', color: 'bg-red-100 text-red-700', desc: 'Acceso completo al sistema' },
@@ -98,7 +99,7 @@ export default function Usuarios() {
                 className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-white font-medium px-3 py-2 rounded-xl text-sm transition-colors"
               >
                 <Plus size={14} />
-                Nuevo Usuario
+                {modoDemo ? 'Nuevo Usuario' : 'Personal sin cuenta'}
               </button>
             </div>
             <table className="w-full">
@@ -127,7 +128,9 @@ export default function Usuarios() {
                   .filter(u => !selectedRol || u.rol === selectedRol)
                   .map(u => {
                     const cfg = rolConfig[u.rol];
-                    const perms = rolesPermissions[u.rol];
+                    const modulos = u.paginas && u.rol !== 'admin'
+                      ? pantallasElegibles.filter(p => p.paginas.some(pagina => u.paginas?.includes(pagina))).length
+                      : rolesPermissions[u.rol].length;
                     return (
                       <tr key={u.id} className={`hover:bg-slate-50 transition-colors ${!u.activo ? 'opacity-50' : ''}`}>
                         <td className="py-3 px-4">
@@ -154,7 +157,7 @@ export default function Usuarios() {
                           </button>
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <span className="text-xs text-slate-400">{perms.length} módulos</span>
+                          <span className="text-xs text-slate-400">{modulos} módulos</span>
                         </td>
                         <td className="py-3 px-4 text-center">
                           <button
@@ -225,7 +228,7 @@ export default function Usuarios() {
                   />
                 </div>
               </div>
-              {!editId && (
+              {!editId && modoDemo && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
                   <input

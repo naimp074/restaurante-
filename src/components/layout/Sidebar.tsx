@@ -3,29 +3,31 @@ import {
   LayoutDashboard, UtensilsCrossed, ClipboardList, ChefHat,
   CreditCard, Package, Boxes, Calculator, BarChart3, Users,
   Settings, LogOut, Truck, PanelLeftClose, PanelLeftOpen, ReceiptText,
-  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet, ShoppingBag
+  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet, ShoppingBag, FileCheck2
 } from 'lucide-react';
-import type { PageId, Rol } from '../../lib/types';
+import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
+import { perfilVePagina } from '../../lib/paginas';
 
 interface NavItem {
   id: PageId;
   label: string;
   icon: React.ElementType;
-  roles: Rol[];
   badge?: number;
 }
 
+const paginasVentas: PageId[] = ['mesas', 'caja_dia', 'cobros', 'cuenta_corriente', 'facturas', 'ventas', 'pedidos_delivery', 'cocina'];
+
 const navItems: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'encargado', 'cajero'] },
-  { id: 'ventas', label: 'Ventas', icon: ClipboardList, roles: ['admin', 'encargado', 'moza', 'cajero', 'cocina'] },
-  { id: 'stock', label: 'Stock', icon: Boxes, roles: ['admin', 'encargado'] },
-  { id: 'productos', label: 'Productos', icon: Package, roles: ['admin', 'encargado'] },
-  { id: 'proveedores', label: 'Proveedores', icon: Truck, roles: ['admin', 'encargado'] },
-  { id: 'gastos', label: 'Gastos', icon: ReceiptText, roles: ['admin', 'encargado'] },
-  { id: 'costos', label: 'Costos y Recetas', icon: Calculator, roles: ['admin', 'encargado'] },
-  { id: 'reportes', label: 'Reportes', icon: BarChart3, roles: ['admin', 'encargado'] },
-  { id: 'usuarios', label: 'Usuarios', icon: Users, roles: ['admin'] },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'ventas', label: 'Ventas', icon: ClipboardList },
+  { id: 'stock', label: 'Stock', icon: Boxes },
+  { id: 'productos', label: 'Productos', icon: Package },
+  { id: 'proveedores', label: 'Proveedores', icon: Truck },
+  { id: 'gastos', label: 'Gastos', icon: ReceiptText },
+  { id: 'costos', label: 'Costos y Recetas', icon: Calculator },
+  { id: 'reportes', label: 'Reportes', icon: BarChart3 },
+  { id: 'usuarios', label: 'Usuarios', icon: Users },
 ];
 
 interface SidebarProps {
@@ -38,9 +40,9 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, mobileOpen, onClose }: SidebarProps) {
-  const { user, signOut, hasRole } = useAuth();
+  const { user, signOut, modoDemo } = useAuth();
   const [showVentasMenu, setShowVentasMenu] = useState(
-    currentPage === 'pedidos_delivery' || currentPage === 'cuenta_corriente' || currentPage === 'ventas' || currentPage === 'pedidos' || currentPage === 'mesas' || currentPage === 'cocina' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'cobros'
+    currentPage === 'pedidos_delivery' || currentPage === 'cuenta_corriente' || currentPage === 'facturas' || currentPage === 'ventas' || currentPage === 'pedidos' || currentPage === 'mesas' || currentPage === 'cocina' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'cobros'
   );
   const [showCajaMenu, setShowCajaMenu] = useState(false);
   const [showProductosMenu, setShowProductosMenu] = useState(false);
@@ -50,8 +52,9 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
   );
 
   const compact = collapsed && !mobileOpen;
-  const visibleItems = navItems.filter(item => hasRole(...item.roles));
-  const ventasActive = currentPage === 'pedidos_delivery' || currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'cocina' || currentPage === 'pedidos';
+  const ve = (pagina: PageId) => Boolean(user && perfilVePagina(user, pagina));
+  const visibleItems = navItems.filter(item => (item.id === 'ventas' ? paginasVentas : [item.id]).some(ve));
+  const ventasActive = currentPage === 'pedidos_delivery' || currentPage === 'ventas' || currentPage === 'mesas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'facturas' || currentPage === 'cocina' || currentPage === 'pedidos';
   const productosActive = currentPage === 'productos' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
   const stockActive = currentPage === 'stock' || currentPage === 'stock_insumos' || currentPage === 'stock_consumos' || currentPage === 'stock_produccion';
   const gastosActive = currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos';
@@ -155,7 +158,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
 
                 {!compact && showVentasMenu && (
                   <div className="ml-6 mt-1 space-y-0.5 rounded-xl bg-slate-800/60 p-1">
-                    {hasRole('admin', 'encargado', 'moza', 'cajero') && (
+                    {ve('mesas') && (
                       <button
                         onClick={() => onNavigate('mesas')}
                         className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
@@ -166,7 +169,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         Mesas
                       </button>
                     )}
-                    {hasRole('admin', 'encargado', 'cajero') && (
+                    {ve('caja_dia') && (
                       <div>
                         <button
                           onClick={() => setShowCajaMenu(prev => !prev)}
@@ -202,7 +205,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         )}
                       </div>
                     )}
-                    {hasRole('admin', 'encargado', 'cajero') && (
+                    {ve('cobros') && (
                       <button
                         onClick={() => onNavigate('cobros')}
                         className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
@@ -213,7 +216,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         Cobros
                       </button>
                     )}
-                    {hasRole('admin', 'encargado', 'cajero') && (
+                    {ve('cuenta_corriente') && (
                       <button
                         onClick={() => onNavigate('cuenta_corriente')}
                         aria-current={currentPage === 'cuenta_corriente' ? 'page' : undefined}
@@ -225,7 +228,19 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         Cuenta corriente
                       </button>
                     )}
-                    {hasRole('admin', 'encargado', 'moza', 'cajero') && (
+                    {ve('facturas') && !modoDemo && (
+                      <button
+                        onClick={() => onNavigate('facturas')}
+                        aria-current={currentPage === 'facturas' ? 'page' : undefined}
+                        className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                          currentPage === 'facturas' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                        }`}
+                      >
+                        <FileCheck2 size={13} />
+                        Facturas
+                      </button>
+                    )}
+                    {ve('ventas') && (
                       <button
                         onClick={() => onNavigate('ventas')}
                         className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
@@ -236,7 +251,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         Comandas
                       </button>
                     )}
-                    {hasRole('admin', 'encargado', 'moza', 'cajero') && (
+                    {ve('pedidos_delivery') && (
                       <button
                         onClick={() => onNavigate('pedidos_delivery')}
                         className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
@@ -247,7 +262,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                         Pedidos
                       </button>
                     )}
-                    {hasRole('admin', 'encargado', 'cocina') && (
+                    {ve('cocina') && (
                       <button
                         onClick={() => onNavigate('cocina')}
                         className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
@@ -481,7 +496,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
       </nav>
 
       <div className={`border-t border-slate-700/50 p-2 space-y-0.5`}>
-        {hasRole('admin', 'encargado') && (
+        {ve('configuracion') && (
         <button
           onClick={() => onNavigate('configuracion')}
           className={`w-full flex items-center gap-3 rounded-lg py-2.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors ${
