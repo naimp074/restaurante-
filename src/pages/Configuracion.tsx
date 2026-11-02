@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Save, Store, Bell, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { limpiarDatosLocales } from '../lib/resetDatos';
+import { copiaAntesDeEmpezar, empezarDeCero } from '../lib/empezarDeCero';
 import { readStore, writeStore } from '../lib/storeSync';
-import { horaCortePorDefecto } from '../lib/fechas';
+import { dayKey, horaCortePorDefecto } from '../lib/fechas';
 import ConfigPedidosYa from '../components/ConfigPedidosYa';
 import ConfigFacturacion from '../components/ConfigFacturacion';
 
@@ -35,7 +35,7 @@ export default function Configuracion() {
   const [iva, setIva] = useState(configInicial.iva);
   const [horaCorte, setHoraCorte] = useState(String(configInicial.hora_corte));
   const [saved, setSaved] = useState(false);
-  const [confirmarReinicio, setConfirmarReinicio] = useState(false);
+  const [reiniciado, setReiniciado] = useState(false);
 
   const handleSave = () => {
     writeStore(
@@ -53,9 +53,19 @@ export default function Configuracion() {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  /** Baja una copia antes: el borrado llega a todos los dispositivos y no se puede deshacer. */
   const reiniciarDatos = () => {
-    limpiarDatosLocales();
-    window.location.reload();
+    const respuesta = window.prompt('Esto borra ventas, caja, cobros, cuenta corriente, stock, gastos y proveedores en todos los dispositivos, y pone las cuentas de dinero en cero. La carta queda. Se descarga una copia. Escribí EMPEZAR para confirmar.');
+    if (respuesta?.trim().toUpperCase() !== 'EMPEZAR') return;
+
+    const enlace = document.createElement('a');
+    enlace.href = URL.createObjectURL(new Blob([JSON.stringify(copiaAntesDeEmpezar(), null, 2)], { type: 'application/json' }));
+    enlace.download = `copia-antes-de-empezar-${dayKey()}.json`;
+    enlace.click();
+    URL.revokeObjectURL(enlace.href);
+
+    empezarDeCero();
+    setReiniciado(true);
   };
 
   return (
@@ -162,33 +172,17 @@ export default function Configuracion() {
           <h3 className="font-semibold text-slate-800">Empezar de cero</h3>
         </div>
         <p className="text-sm text-slate-500 mb-4">
-          Borra todo lo cargado en este dispositivo: productos, insumos, mesas, comandas, cajas,
-          gastos y personal. No se puede deshacer.
+          Borra ventas, comandas, caja, cobros, cuenta corriente, stock, gastos y proveedores en todos los
+          dispositivos, y pone las cuentas de dinero en cero. Quedan la carta, las categorías, los usuarios, las
+          mesas, las listas de precios y la configuración. No se puede deshacer.
         </p>
-        {confirmarReinicio ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-slate-700">¿Seguro que querés borrar todo?</span>
-            <button
-              onClick={reiniciarDatos}
-              className="bg-red-500 hover:bg-red-400 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
-            >
-              Sí, borrar todo
-            </button>
-            <button
-              onClick={() => setConfirmarReinicio(false)}
-              className="border border-slate-200 text-slate-600 text-sm font-medium px-4 py-2 rounded-xl"
-            >
-              Cancelar
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setConfirmarReinicio(true)}
-            className="border border-red-200 text-red-600 hover:bg-red-50 text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
-          >
-            Reiniciar todos los datos
-          </button>
-        )}
+        {reiniciado && <p role="status" className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mb-3">Listo: el sistema empezó de cero y la carta quedó cargada.</p>}
+        <button
+          onClick={reiniciarDatos}
+          className="border border-red-200 text-red-600 hover:bg-red-50 text-sm font-semibold px-4 py-2 rounded-xl transition-colors"
+        >
+          Empezar de cero y conservar la carta
+        </button>
       </div>}
 
       <button
