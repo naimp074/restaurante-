@@ -1,15 +1,14 @@
 // Función de Supabase (Deno) que factura con ARCA.
 // Despliegue y configuración: ver supabase/functions/arca/LEEME.md
 import { createClient } from 'npm:@supabase/supabase-js@2.57.4';
-import { crearClienteArca, type Ambiente } from './cliente.ts';
-import { firmarConCertificado } from './firma.ts';
-import { crearManejador, type Comprobante, type ConfigFiscal, type Datos } from './manejador.ts';
+import { crearClienteArca } from './cliente.ts';
+import { credencialesDe } from './credenciales.ts';
+import { cuitDelCertificado, firmarConCertificado } from './firma.ts';
+import { crearManejador, type Comprobante, type ConfigFiscal, type Datos, type Entorno } from './manejador.ts';
 
 const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
   auth: { persistSession: false },
 });
-
-const ambiente: Ambiente = Deno.env.get('ARCA_AMBIENTE') === 'produccion' ? 'produccion' : 'homologacion';
 
 const fallo = (error: { message: string } | null) => {
   if (error) throw new Error(error.message);
@@ -71,20 +70,40 @@ const datos: Datos = {
   },
 };
 
-const arca = crearClienteArca({
-  ambiente,
-  firmar: texto => firmarConCertificado(Deno.env.get('ARCA_CERTIFICADO') || '', Deno.env.get('ARCA_CLAVE_PRIVADA') || '')(texto),
-  tokens: {
-    async leer(amb) {
-      const { data, error } = await supabase.from('arca_tokens').select('token, firma, vence').eq('ambiente', amb).maybeSingle();
-      fallo(error);
-      return data;
-    },
-    async guardar(amb, acceso) {
-      const { error } = await supabase.from('arca_tokens').upsert({ ambiente: amb, ...acceso });
-      fallo(error);
-    },
-  },
-});
+const clientes = new Map<string, Entorno>();
 
-Deno.serve(crearManejador(datos, arca, ambiente));
+const entornoDe = (cuit: string): Entorno => {
+  const credenciales = credencialesDe(cuit, nombre => Deno.env.get(nombre));
+  const guardado = clientes.get(credenciales.id);
+  if (guardado) return guardado;
+
+  const entorno: Entorno = {
+    ambiente: credenciales.ambiente,
+    local: credenciales.local,
+    arca: crearClienteArca({
+      ambiente: credenciales.ambiente,
+      firmar: texto => {
+        if (credenciales.id && cuitDelCertificado(credenciales.certificado) !== credenciales.id) {
+          throw new Error(`El certificado cargado no es del CUIT ${credenciales.id}.`);
+        }
+        return firmarConCertificado(credenciales.certificado, credenciales.clave)(texto);
+      },
+      tokens: {
+        async leer(amb) {
+          const { data, error } = await supabase.from('arca_tokens').select('token, firma, vence')
+            .eq('ambiente', amb).eq('cuit', credenciales.id).maybeSingle();
+          fallo(error);
+          return data;
+        },
+        async guardar(amb, acceso) {
+          const { error } = await supabase.from('arca_tokens').upsert({ ambiente: amb, cuit: credenciales.id, ...acceso });
+          fallo(error);
+        },
+      },
+    }),
+  };
+  clientes.set(credenciales.id, entorno);
+  return entorno;
+};
+
+Deno.serve(crearManejador(datos, entornoDe));

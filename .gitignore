@@ -26,4 +26,9 @@ arca.key
 arca.crt
 arca.csr
 arca-token.sql
+arca-prod.*
 supabase/.temp/
+arca-*.key
+arca-*.crt
+arca-*.csr
+arca-*.token.sql

@@ -124,6 +124,23 @@ export const crearClienteArca = (opciones: {
   };
 
   return {
+    async puntosDeVenta(cuit: string) {
+      const xml = await llamar(cuit, 'FEParamGetPtosVenta', '');
+      const fallas = errores(xml, 'Errors', 'Err');
+      // 602: el CUIT todavía no tiene ninguno.
+      if (fallas.length && !fallas.some(f => f.codigo === 602)) throw new Error(fallas.map(f => `${f.codigo}: ${f.mensaje}`).join(' · '));
+      return bloques(xml, 'PtoVenta').map(b => ({
+        numero: Number(valor(b, 'Nro')), tipo: valor(b, 'EmisionTipo'), bloqueado: valor(b, 'Bloqueado'), baja: valor(b, 'FchBaja'),
+      }));
+    },
+
+    async tiposDeComprobante(cuit: string) {
+      const xml = await llamar(cuit, 'FEParamGetTiposCbte', '');
+      const fallas = errores(xml, 'Errors', 'Err');
+      if (fallas.length) throw new Error(fallas.map(f => `${f.codigo}: ${f.mensaje}`).join(' · '));
+      return bloques(xml, 'CbteTipo').map(b => ({ id: Number(valor(b, 'Id')), nombre: valor(b, 'Desc') }));
+    },
+
     async ultimoNumero(cuit: string, puntoVenta: number, cbteTipo: number) {
       const xml = await llamar(cuit, 'FECompUltimoAutorizado', `<PtoVta>${puntoVenta}</PtoVta><CbteTipo>${cbteTipo}</CbteTipo>`);
       const fallas = errores(xml, 'Errors', 'Err');
