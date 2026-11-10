@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { EstadoPedido, Mesa } from './types';
+import type { EstadoPedido, Mesa, PlanoSector, Sector } from './types';
 import { loadDemoPedidos } from './demoStore';
-import { readStore, writeStore } from './storeSync';
+import { nuevoId } from './ids';
+import { readStore, useStore, writeStore } from './storeSync';
 
 export type SectorOption = {
   id: string;
   label: string;
+  /** Plano del apartado (paredes, cocina, medidas). Las mesas guardan su propia posición. */
+  plano?: PlanoSector;
 };
 
 export const sectoresStorageKey = 'restaurant-sectores-mesas';
@@ -39,6 +42,30 @@ export const loadSectores = (): SectorOption[] => {
 
 export const saveSectores = (sectores: SectorOption[]) =>
   writeStore(sectoresStorageKey, sectores, sectoresUpdatedEvent);
+
+/** Los apartados se actualizan solos si otro dispositivo los cambia (o guarda un plano). */
+export const useSectores = (): SectorOption[] => useStore(sectoresUpdatedEvent, loadSectores);
+
+/** Una mesa nueva, igual desde "Nueva mesa" que desde el editor del plano. */
+export const crearMesa = (numero: number, sector: string, datos: Partial<Mesa> = {}): Mesa => {
+  const ahora = new Date().toISOString();
+  return {
+    id: nuevoId('mesa'),
+    numero,
+    capacidad: 4,
+    estado: 'libre',
+    sector: sector as Sector,
+    posicion_x: Math.round(datos.plano?.x ?? 0),
+    posicion_y: Math.round(datos.plano?.y ?? 0),
+    activa: true,
+    created_at: ahora,
+    updated_at: ahora,
+    ...datos,
+  };
+};
+
+export const siguienteNumeroMesa = (mesas: Pick<Mesa, 'numero'>[]) =>
+  mesas.reduce((mayor, mesa) => Math.max(mayor, mesa.numero), 0) + 1;
 
 const pedidosCerrados: EstadoPedido[] = ['cobrado', 'cuenta_corriente', 'cancelado'];
 

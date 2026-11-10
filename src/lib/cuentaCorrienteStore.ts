@@ -22,7 +22,7 @@ export interface ClienteCuenta {
   domicilio: string;
 }
 
-export type MedioCobroCuenta = Exclude<MetodoPago, 'mixto'>;
+export type MedioCobroCuenta = Exclude<MetodoPago, 'mixto' | 'mercado_pago'>;
 export const mediosCobroCuenta: Record<MedioCobroCuenta, string> = {
   efectivo: 'Efectivo', transferencia: 'Transferencia', tarjeta: 'Tarjeta', debito: 'Débito', credito: 'Crédito',
 };

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bike, Check, Clock, Minus, Phone, Plus, Search, ShoppingBag, Store, Trash2, X, XCircle, AlertTriangle, MapPin } from 'lucide-react';
-import type { CanalPedido, Pedido, Producto } from '../lib/types';
+import type { CanalPedido, OpcionElegida, Pedido, Producto } from '../lib/types';
 import { usePedidos } from '../lib/demoStore';
 import { useProductos } from '../lib/productosStore';
 import { useAuth } from '../contexts/AuthContext';
 import { dayKey } from '../lib/fechas';
 import { canalDe, etiquetaPedido, nombresCanal } from '../lib/pedidosCanal';
+import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
+import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
+import { nuevoId } from '../lib/ids';
 import {
   avisarAPedidosYa,
   cancelarPedido,
@@ -18,6 +21,7 @@ import {
   type AccionPedidosYa,
   type LineaNueva,
 } from '../lib/pedidosExternos';
+import RelojItem from '../components/RelojItem';
 
 type Filtro = 'todos' | Exclude<CanalPedido, 'salon'>;
 
@@ -227,8 +231,9 @@ function TarjetaPedido({ pedido, ahora, comision, operaPlataforma }: { pedido: P
           {items.map(item => (
             <li key={item.id} className="text-sm">
               <span className="font-semibold text-slate-700">{item.cantidad}x</span>{' '}
-              <span className="text-slate-800">{item.producto?.nombre}</span>
-              {item.observaciones && <span className="block text-xs text-amber-700 ml-5">{item.observaciones}</span>}
+              <span className="text-slate-800">{item.producto?.nombre}</span>{' '}
+              <RelojItem item={item} className="ml-1 align-middle" />
+              <DetalleItem opciones={item.opciones} observaciones={item.observaciones} className="ml-5" />
             </li>
           ))}
         </ul>
@@ -380,18 +385,22 @@ function NuevoPedido({ onCerrar, empleadoId }: { onCerrar: () => void; empleadoI
   const [busqueda, setBusqueda] = useState('');
   const [lineas, setLineas] = useState<LineaNueva[]>([]);
   const [error, setError] = useState('');
+  const [eligiendo, setEligiendo] = useState<Producto | null>(null);
 
   const disponibles = productos.filter(p => p.disponible && !p.agotado && p.nombre.toLowerCase().includes(busqueda.toLowerCase()));
   const costoEnvio = canal === 'delivery' ? Math.max(0, Number(envio) || 0) : 0;
-  const total = lineas.reduce((s, l) => s + l.producto.precio_venta * l.cantidad, 0) + costoEnvio;
+  const precioLinea = (l: LineaNueva) => precioConOpciones(l.producto.precio_venta, l.opciones);
+  const total = lineas.reduce((s, l) => s + precioLinea(l) * l.cantidad, 0) + costoEnvio;
 
-  const agregar = (producto: Producto) => setLineas(prev => (
-    prev.some(l => l.producto.id === producto.id)
-      ? prev.map(l => (l.producto.id === producto.id ? { ...l, cantidad: l.cantidad + 1 } : l))
-      : [...prev, { producto, cantidad: 1, observaciones: '' }]
-  ));
-  const cambiar = (id: string, cambios: Partial<LineaNueva>) =>
-    setLineas(prev => prev.map(l => (l.producto.id === id ? { ...l, ...cambios } : l)).filter(l => l.cantidad > 0));
+  const sumar = (producto: Producto, opciones: OpcionElegida[] = [], observaciones = '') => setLineas(prev => {
+    const igual = prev.find(l => salenIgual({ producto_id: l.producto.id, opciones: l.opciones, observaciones: l.observaciones }, producto.id, opciones, observaciones));
+    return igual
+      ? prev.map(l => (l === igual ? { ...l, cantidad: l.cantidad + 1 } : l))
+      : [...prev, { id: nuevoId('linea'), producto, cantidad: 1, observaciones, opciones: opciones.length ? opciones : undefined }];
+  });
+  const agregar = (producto: Producto) => (tieneOpciones(producto) ? setEligiendo(producto) : sumar(producto));
+  const cambiar = (id: string | undefined, cambios: Partial<LineaNueva>) =>
+    setLineas(prev => prev.map(l => (l.id === id ? { ...l, ...cambios } : l)).filter(l => l.cantidad > 0));
 
   const crear = () => {
     setError('');
@@ -451,19 +460,22 @@ function NuevoPedido({ onCerrar, empleadoId }: { onCerrar: () => void; empleadoI
             <div className="border-t border-slate-100 pt-3 space-y-2">
               {lineas.length === 0 && <p className="text-sm text-slate-400">Elegí productos de la lista.</p>}
               {lineas.map(linea => (
-                <div key={linea.producto.id} className="bg-slate-50 rounded-xl p-2.5 space-y-1.5">
+                <div key={linea.id} className="bg-slate-50 rounded-xl p-2.5 space-y-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="flex-1 text-sm font-medium text-slate-800 truncate">{linea.producto.nombre}</span>
-                    <button onClick={() => cambiar(linea.producto.id, { cantidad: linea.cantidad - 1 })} className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center" aria-label="Quitar uno"><Minus size={10} /></button>
+                    <div className="flex-1 min-w-0">
+                      <span className="block text-sm font-medium text-slate-800 truncate">{linea.producto.nombre}</span>
+                      <DetalleItem opciones={linea.opciones} />
+                    </div>
+                    <button onClick={() => cambiar(linea.id, { cantidad: linea.cantidad - 1 })} className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center" aria-label="Quitar uno"><Minus size={10} /></button>
                     <span className="w-5 text-center text-sm font-bold">{linea.cantidad}</span>
-                    <button onClick={() => cambiar(linea.producto.id, { cantidad: linea.cantidad + 1 })} className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center" aria-label="Agregar uno"><Plus size={10} /></button>
-                    <span className="w-20 text-right text-sm font-semibold">{dinero(linea.producto.precio_venta * linea.cantidad)}</span>
-                    <button onClick={() => cambiar(linea.producto.id, { cantidad: 0 })} className="text-red-400 hover:text-red-600" aria-label="Quitar producto"><Trash2 size={14} /></button>
+                    <button onClick={() => cambiar(linea.id, { cantidad: linea.cantidad + 1 })} className="w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center" aria-label="Agregar uno"><Plus size={10} /></button>
+                    <span className="w-20 text-right text-sm font-semibold">{dinero(precioLinea(linea) * linea.cantidad)}</span>
+                    <button onClick={() => cambiar(linea.id, { cantidad: 0 })} className="text-red-400 hover:text-red-600" aria-label="Quitar producto"><Trash2 size={14} /></button>
                   </div>
                   <input
                     value={linea.observaciones}
-                    onChange={e => cambiar(linea.producto.id, { observaciones: e.target.value })}
-                    placeholder="Aclaración para cocina"
+                    onChange={e => cambiar(linea.id, { observaciones: e.target.value })}
+                    placeholder="Aclaración para cocina (ej: solo mayonesa)"
                     className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs"
                   />
                 </div>
@@ -513,6 +525,13 @@ function NuevoPedido({ onCerrar, empleadoId }: { onCerrar: () => void; empleadoI
           </div>
         </div>
       </div>
+      {eligiendo && (
+        <ElegirOpciones
+          producto={eligiendo}
+          onCerrar={() => setEligiendo(null)}
+          onConfirmar={(opciones, observaciones) => { sumar(eligiendo, opciones, observaciones); setEligiendo(null); }}
+        />
+      )}
     </div>
   );
 }

@@ -3,6 +3,10 @@ import { Clock, Check, ChefHat, Bell, AlertCircle } from 'lucide-react';
 import type { Pedido, EstadoItem } from '../lib/types';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { canalDe, etiquetaPedido } from '../lib/pedidosCanal';
+import { DetalleItem } from '../components/OpcionesProducto';
+import RelojItem from '../components/RelojItem';
+import { conEstado } from '../lib/tiempoItem';
+import { itemsParaCocina } from '../lib/cobroComanda';
 
 const colorCanal: Record<string, string> = {
   mostrador: 'bg-violet-100 text-violet-700',
@@ -46,10 +50,11 @@ export default function Cocina() {
       const items = p.items?.map(item => {
         if (item.id !== itemId) return item;
         const next = estadoConfig[item.estado]?.next || item.estado;
-        return { ...item, estado: next };
+        return conEstado(item, next);
       });
-      const allDone = items?.every(i => i.estado === 'entregado' || i.estado === 'cancelado');
-      const allReady = items?.every(i => i.estado === 'listo' || i.estado === 'entregado' || i.estado === 'cancelado');
+      const enviados = (items || []).filter(i => !i.sin_enviar);
+      const allDone = enviados.every(i => i.estado === 'entregado' || i.estado === 'cancelado');
+      const allReady = enviados.every(i => i.estado === 'listo' || i.estado === 'entregado' || i.estado === 'cancelado');
       return {
         ...p,
         items,
@@ -61,10 +66,11 @@ export default function Cocina() {
   const enCocina = pedidos.filter(p =>
     p.estado !== 'abierto' && p.estado !== 'entregado' && p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'
   );
-  const activeOrders = enCocina.filter(p => (p.items || []).some(i => i.estado !== 'entregado' && i.estado !== 'cancelado'));
-  const pendingItems = enCocina.flatMap(p => (p.items || []).filter(i => i.estado === 'pendiente')).length;
-  const inProgressItems = enCocina.flatMap(p => (p.items || []).filter(i => i.estado === 'en_preparacion')).length;
-  const readyItems = enCocina.flatMap(p => (p.items || []).filter(i => i.estado === 'listo')).length;
+  // Lo que la moza cargó y todavía no envió no aparece hasta que lo mande.
+  const activeOrders = enCocina.filter(p => itemsParaCocina(p).some(i => i.estado !== 'entregado'));
+  const pendingItems = enCocina.flatMap(p => itemsParaCocina(p).filter(i => i.estado === 'pendiente')).length;
+  const inProgressItems = enCocina.flatMap(p => itemsParaCocina(p).filter(i => i.estado === 'en_preparacion')).length;
+  const readyItems = enCocina.flatMap(p => itemsParaCocina(p).filter(i => i.estado === 'listo')).length;
 
   return (
     <div className="h-full flex flex-col space-y-4">
@@ -126,7 +132,7 @@ export default function Cocina() {
           {activeOrders.map(pedido => {
             const { min, sec, total } = getElapsed(pedido.hora_apertura);
             const timerColor = getTimerColor(total);
-            const activeItems = pedido.items?.filter(i => i.estado !== 'entregado' && i.estado !== 'cancelado') || [];
+            const activeItems = itemsParaCocina(pedido).filter(i => i.estado !== 'entregado');
 
             return (
               <div
@@ -156,7 +162,7 @@ export default function Cocina() {
                 </div>
 
                 <div className="p-4 space-y-2">
-                  {(pedido.items || []).filter(i => i.estado !== 'cancelado').map(item => {
+                  {itemsParaCocina(pedido).map(item => {
                     const cfg = estadoConfig[item.estado];
                     return (
                       <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-50">
@@ -167,10 +173,9 @@ export default function Cocina() {
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-slate-700">x{item.cantidad}</span>
                             <span className="text-sm font-medium text-slate-800 truncate">{item.producto?.nombre}</span>
+                            <RelojItem item={item} className="ml-auto shrink-0" />
                           </div>
-                          {item.observaciones && (
-                            <p className="text-xs text-amber-600 mt-0.5 truncate">* {item.observaciones}</p>
-                          )}
+                          <DetalleItem opciones={item.opciones} observaciones={item.observaciones} className="font-medium" />
                         </div>
                         {item.estado !== 'entregado' && (
                           <button

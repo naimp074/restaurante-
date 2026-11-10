@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { paginasPorDefecto, pantallasDelRol } from '../lib/paginas';
 import { loadUsuarios, saveUsuarios } from '../lib/usuariosStore';
+import { accesoDeCuenta, normalizarUsuario, usuarioValido } from '../lib/cuentaUsuario';
 
 type Cuenta = {
   id: string;
@@ -52,7 +53,13 @@ function SelectorPantallas({ rol, paginas, onChange }: { rol: Rol; paginas: Page
   );
 }
 
-const formularioVacio = { nombre: '', apellido: '', email: '', password: '', rol: 'moza' as Rol, paginas: paginasPorDefecto('moza') };
+// usuarioTocado: mientras no lo edite a mano, el usuario se arma solo con el nombre.
+const formularioVacio = { nombre: '', apellido: '', usuario: '', usuarioTocado: false, password: '', rol: 'moza' as Rol, paginas: paginasPorDefecto('moza') };
+
+/** Un usuario ("juan") o, si alguien prefiere, un email. */
+const accesoValido = (texto: string) => (texto.includes('@')
+  ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(texto.trim())
+  : usuarioValido(normalizarUsuario(texto)));
 
 /**
  * Cuentas con las que se inicia sesión (Supabase). El admin las crea desde acá; las que
@@ -107,7 +114,9 @@ export default function CuentasAcceso() {
     if (!supabase || !formulario) return;
     setErrorFormulario('');
     setCreando(true);
-    const { data, error: fallo } = await supabase.functions.invoke('usuarios/crear', { body: formulario });
+    const { usuario, nombre, apellido, password, rol, paginas } = formulario;
+    const acceso = usuario.includes('@') ? { email: usuario.trim() } : { usuario: normalizarUsuario(usuario) };
+    const { data, error: fallo } = await supabase.functions.invoke('usuarios/crear', { body: { ...acceso, nombre, apellido, password, rol, paginas } });
     if (fallo) {
       // La función explica el problema en el cuerpo de la respuesta.
       const respuesta = (fallo as { context?: Response }).context;
@@ -140,7 +149,7 @@ export default function CuentasAcceso() {
   const delLocal = cuentas.filter(cuenta => cuenta.local_id);
   const formularioCompleto = formulario
     && formulario.nombre.trim()
-    && formulario.email.trim()
+    && accesoValido(formulario.usuario)
     && formulario.password.length >= 8
     && (formulario.rol === 'admin' || formulario.paginas.length > 0);
 
@@ -179,7 +188,7 @@ export default function CuentasAcceso() {
               <div key={cuenta.id} className="flex flex-wrap items-center gap-3 bg-white border border-amber-100 rounded-xl p-3">
                 <div className="flex-1 min-w-[10rem]">
                   <p className="text-sm font-medium text-slate-800">{cuenta.nombre} {cuenta.apellido}</p>
-                  <p className="text-xs text-slate-500">{cuenta.email}</p>
+                  <p className="text-xs text-slate-500">{accesoDeCuenta(cuenta.email)}</p>
                 </div>
                 <select
                   value={rolElegido[cuenta.id] || 'moza'}
@@ -214,7 +223,7 @@ export default function CuentasAcceso() {
                   <p className="text-sm font-medium text-slate-800">
                     {cuenta.nombre} {cuenta.apellido} {esYo && <span className="text-xs text-slate-400">(vos)</span>}
                   </p>
-                  <p className="text-xs text-slate-500">{cuenta.email}</p>
+                  <p className="text-xs text-slate-500">Entra con: <span className="font-medium text-slate-600">{accesoDeCuenta(cuenta.email)}</span></p>
                 </div>
                 {cuenta.rol !== 'admin' && (
                   <button
@@ -279,7 +288,7 @@ export default function CuentasAcceso() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label htmlFor="cuenta-nombre" className="block text-sm font-medium text-slate-700 mb-1.5">Nombre *</label>
-                  <input id="cuenta-nombre" value={formulario.nombre} onChange={e => setFormulario({ ...formulario, nombre: e.target.value })} className={campo} />
+                  <input id="cuenta-nombre" value={formulario.nombre} onChange={e => setFormulario({ ...formulario, nombre: e.target.value, usuario: formulario.usuarioTocado ? formulario.usuario : normalizarUsuario(e.target.value) })} className={campo} />
                 </div>
                 <div>
                   <label htmlFor="cuenta-apellido" className="block text-sm font-medium text-slate-700 mb-1.5">Apellido</label>
@@ -287,8 +296,26 @@ export default function CuentasAcceso() {
                 </div>
               </div>
               <div>
-                <label htmlFor="cuenta-email" className="block text-sm font-medium text-slate-700 mb-1.5">Email *</label>
-                <input id="cuenta-email" type="email" autoComplete="off" value={formulario.email} onChange={e => setFormulario({ ...formulario, email: e.target.value })} className={campo} placeholder="nombre@gmail.com" />
+                <label htmlFor="cuenta-usuario" className="block text-sm font-medium text-slate-700 mb-1.5">Usuario para entrar *</label>
+                <input
+                  id="cuenta-usuario"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={formulario.usuario}
+                  onChange={e => setFormulario({ ...formulario, usuario: e.target.value, usuarioTocado: true })}
+                  className={campo}
+                  placeholder="Ej: juan"
+                />
+                {formulario.usuario.trim() && !accesoValido(formulario.usuario) ? (
+                  <p className="text-xs text-red-600 mt-1">De 3 a 30 letras o números, sin espacios raros (puede llevar punto o guion).</p>
+                ) : (
+                  <p className="text-xs text-slate-500 mt-1">
+                    No hace falta email. {formulario.usuario.trim() && !formulario.usuario.includes('@')
+                      ? <>Va a entrar escribiendo <strong>{normalizarUsuario(formulario.usuario)}</strong> y la contraseña.</>
+                      : 'Si preferís, también podés poner un email.'}
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor="cuenta-password" className="block text-sm font-medium text-slate-700 mb-1.5">Contraseña *</label>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { guardarClienteCuenta, pasarPedidoACuenta, saldoCliente, useCuentaCorriente, mediosCobroCuenta } from '../lib/cuentaCorrienteStore';
 import type { ClienteCuenta, MedioCobroCuenta } from '../lib/cuentaCorrienteStore';
-import { CreditCard, Check, X, Printer, Lock, Unlock, CalendarDays, Search, Plus, User, FileText, RefreshCw } from 'lucide-react';
+import { CreditCard, Check, X, Printer, Lock, Unlock, CalendarDays, Search, Plus, User, FileText, RefreshCw, BellRing, Undo2, AlertTriangle } from 'lucide-react';
 import type { CajaDiaria, Pedido, MetodoPago, Pago, TipoComprobante } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -24,6 +24,7 @@ import { loadCajasDiarias, saveCajasDiarias, useCajas } from '../lib/cajaStore';
 import { loadPagos, savePagos, usePagos } from '../lib/pagosStore';
 import { useGastos } from '../lib/gastosStore';
 import { sincronizarEstadoMesa } from '../lib/mesasStore';
+import { tomarPedidoACobrar } from '../lib/mesaAAbrir';
 import { descuentaStock } from '../lib/costosReceta';
 import { canalDe, cobraEnCaja, etiquetaPedido, nombresCanal } from '../lib/pedidosCanal';
 import { loadProductos } from '../lib/productosStore';
@@ -48,6 +49,13 @@ import {
 import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
 import { loadCategorias } from '../lib/categoriasStore';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
+import { DetalleItem } from '../components/OpcionesProducto';
+import { detalleTicket } from '../lib/opcionesProducto';
+import {
+  anularTicket, cobroEnCurso, conEvento, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
+  nombreMedio, pagoIdDeSolicitud, rechazarSolicitud, solicitudDesactualizada, type Actor,
+} from '../lib/cobroComanda';
+import PedirMotivo from '../components/PedirMotivo';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -82,6 +90,8 @@ const metodosConfig: Record<MetodoPago, { label: string; color: string; icon: st
   tarjeta: { label: 'Tarjeta', color: 'bg-indigo-100 text-indigo-700 border-indigo-200', icon: '💳' },
   debito: { label: 'Débito', color: 'bg-purple-100 text-purple-700 border-purple-200', icon: '💳' },
   credito: { label: 'Crédito', color: 'bg-orange-100 text-orange-700 border-orange-200', icon: '💳' },
+  // Entra al banco como una transferencia; el cobro queda registrado como Mercado Pago.
+  mercado_pago: { label: 'Mercado Pago', color: 'bg-sky-100 text-sky-700 border-sky-200', icon: 'MP' },
   mixto: { label: 'Pago Mixto', color: 'bg-slate-100 text-slate-700 border-slate-200', icon: '+' },
 };
 
@@ -178,6 +188,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [cuentasDinero, setCuentasDinero] = useState(loadCuentasDinero);
   const [movimientosFinancieros, setMovimientosFinancieros] = useState(loadMovimientosFinancieros);
   const listasPrecios = useListasPrecios();
+  const actor: Actor = { id: user?.id, nombre: user ? [user.nombre, user.apellido].filter(Boolean).join(' ') : 'Caja', rol: user?.rol };
+  const [devolviendo, setDevolviendo] = useState<'rechazar' | 'anular_ticket' | null>(null);
+  const [devolverError, setDevolverError] = useState('');
+  const [avisoSolicitud, setAvisoSolicitud] = useState('');
+  // Lo que dice el ticket impreso: mientras exista, el cobro tiene que ser exactamente eso.
+  const fijado = selectedPedido ? importeFijado(selectedPedido) : null;
 
   useEffect(() => {
     if (modoDemo) return;
@@ -186,7 +202,19 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   }, [modoDemo]);
 
   // Lo pagado en la app de PedidosYa no pasa por esta caja (ver pedidosExternos.ts).
-  const pedidosPorCobrar = pedidos.filter(p => p.total > 0 && cobraEnCaja(p));
+  // Lo que pidió cobrar el salón va primero, el más viejo arriba.
+  const pedidosPorCobrar = pedidos
+    .filter(p => p.total > 0 && cobraEnCaja(p))
+    .map((pedido, orden) => ({ pedido, orden }))
+    .sort((a, b) => {
+      const ea = cobroEnCurso(a.pedido) ? a.pedido.solicitud_cobro!.solicitada_at : '';
+      const eb = cobroEnCurso(b.pedido) ? b.pedido.solicitud_cobro!.solicitada_at : '';
+      if (ea && eb) return ea.localeCompare(eb);
+      if (ea || eb) return ea ? -1 : 1;
+      return a.orden - b.orden;
+    })
+    .map(({ pedido }) => pedido);
+  const solicitudesActivas = pedidosPorCobrar.filter(cobroEnCurso).length;
   const cajaAbierta = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
   const cajaDelDia = cajaAbierta || cajas.find(caja => caja.fecha === todayKey()) || null;
   const historialCajas = [...cajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -216,6 +244,14 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   }, [apartadosCaja]);
 
   useEffect(() => {
+    const ticket = selectedPedido ? importeFijado(selectedPedido) : null;
+    if (ticket) {
+      // Con ticket impreso no se recalcula nada: se cobra lo que dice el papel.
+      setMetodoPago(ticket.metodo_pago);
+      setDescuento(ticket.descuento);
+      setRecargo(ticket.recargo);
+      return;
+    }
     const monto = selectedPedido ? calcularAjusteLista(selectedPedido, listaPrecioSeleccionada) : 0;
     if (listaPrecioSeleccionada?.tipo_ajuste === 'recargo') {
       setDescuento(0);
@@ -232,11 +268,15 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       setPedidos(actualizados);
       setSelectedPedido(actual => actual ? actualizados.find(pedido => pedido.id === actual.id) || null : null);
     };
+    // 'storage': otra pestaña del mismo navegador (p. ej. Comandas abierta al lado) pidió un cobro.
+    const desdeOtraPestana = (evento: StorageEvent) => { if (evento.key === null || evento.key === 'restaurant-demo-pedidos') refrescarPedidos(); };
     window.addEventListener('restaurant-pedidos-updated', refrescarPedidos);
     window.addEventListener('focus', refrescarPedidos);
+    window.addEventListener('storage', desdeOtraPestana);
     return () => {
       window.removeEventListener('restaurant-pedidos-updated', refrescarPedidos);
       window.removeEventListener('focus', refrescarPedidos);
+      window.removeEventListener('storage', desdeOtraPestana);
     };
   }, []);
 
@@ -372,9 +412,98 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   };
 
   const selectPedido = (pedido: Pedido) => {
-    setACuenta(false); setAnticipoCuenta(''); setPagoError(''); setAvisoCuenta('');
+    setACuenta(false); setAnticipoCuenta(''); setPagoError(''); setAvisoCuenta(''); setAvisoSolicitud('');
+    // Arranca con el medio que eligió la moza; caja lo puede cambiar si el cliente paga distinto.
+    if (cobroEnCurso(pedido) && pedido.solicitud_cobro) setMetodoPago(pedido.solicitud_cobro.metodo_pago);
     setSelectedPedido(pedido);
   };
+
+  /** Cambios de la solicitud: sobre lo guardado, por si la moza o cocina la tocaron recién. */
+  const guardarSolicitud = (cambio: (pedido: Pedido) => Pedido): { pedido?: Pedido; error?: string } => {
+    if (!selectedPedido) return { error: 'Elegí una comanda.' };
+    const actuales = loadDemoPedidos();
+    const guardado = actuales.find(p => p.id === selectedPedido.id);
+    if (!guardado || ['cobrado', 'cuenta_corriente', 'cancelado'].includes(guardado.estado)) {
+      setPagoError('La comanda ya está cerrada.');
+      return { error: 'La comanda ya está cerrada.' };
+    }
+    try {
+      const final = cambio(guardado);
+      saveDemoPedidos(actuales.map(p => (p.id === final.id ? final : p)));
+      sincronizarEstadoMesa(final.mesa_id);
+      setSelectedPedido(final);
+      setPagoError('');
+      return { pedido: final };
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'No se pudo guardar.';
+      setPagoError(mensaje);
+      setSelectedPedido(guardado);
+      return { error: mensaje };
+    }
+  };
+
+  /** Ticket para que la moza se lo lleve al cliente. Es el ticket de siempre, sin CAE: la factura se elige al confirmar el pago. */
+  const emitirTicketSolicitud = () => {
+    if (!selectedPedido || !cobroEnCurso(selectedPedido)) return;
+    const actual = loadDemoPedidos().find(p => p.id === selectedPedido.id);
+    if (!actual || JSON.stringify(actual) !== JSON.stringify(selectedPedido)) {
+      if (actual) setSelectedPedido(actual);
+      setPagoError('La comanda cambió. Revisá los importes antes de imprimir.');
+      return;
+    }
+    if (metodoPago === 'mixto') {
+      setPagoError('Con pago mixto el ticket sale al confirmar el pago, cuando ya está repartido.');
+      return;
+    }
+    const total = calcTotal();
+    const previo: Pago = {
+      id: 'ticket-previo',
+      pedido_id: actual.id,
+      comprador_nombre: selectedCliente?.nombre || getCompradorName(compradorNombre),
+      tipo_comprobante: 'ticket',
+      metodo_pago: metodoPago,
+      monto: total,
+      monto_efectivo: 0, monto_transferencia: 0, monto_debito: 0, monto_credito: 0,
+      descuento_aplicado: descuento,
+      lista_precio_nombre: listaPrecioSeleccionada?.nombre,
+      recargo_aplicado: recargo,
+      total_cobrado: total,
+      vuelto: 0,
+      created_at: new Date().toISOString(),
+      pedido: actual,
+    };
+    if (!printTicket(previo)) {
+      setPagoError('No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.');
+      return;
+    }
+    if (actual.solicitud_cobro?.estado === 'ticket_emitido') return; // Reimpresión: no cambia nada.
+    if (guardarSolicitud(p => marcarTicketEmitido(p, { total, descuento, recargo, metodo_pago: metodoPago }, actor)).pedido) {
+      setAvisoSolicitud('Ticket impreso. Cuando la moza traiga el pago, confirmalo acá.');
+    }
+  };
+
+  const confirmarDevolucion = (motivo: string) => {
+    if (!devolviendo) return;
+    const accion = devolviendo;
+    const { pedido: final, error } = guardarSolicitud(p => (accion === 'anular_ticket' ? anularTicket(p, motivo, actor) : rechazarSolicitud(p, motivo, actor)));
+    if (!final) { setDevolverError(error || 'No se pudo guardar.'); return; }
+    setDevolviendo(null);
+    setDevolverError('');
+    if (accion === 'rechazar') {
+      setSelectedPedido(null);
+      setAvisoSolicitud(`${getMesaLabel(final)}: el cobro volvió a la moza para corregirlo.`);
+    } else {
+      setAvisoSolicitud('Ticket anulado. Ajustá el cobro e imprimí uno nuevo.');
+    }
+  };
+
+  // Llegó desde el plano de Mesas con "Cobrar": deja esa comanda elegida.
+  useEffect(() => {
+    if (vista !== 'cobros') return;
+    const pedidoId = tomarPedidoACobrar();
+    const pedido = pedidoId ? loadDemoPedidos().find(p => p.id === pedidoId && p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado') : undefined;
+    if (pedido) setSelectedPedido(pedido);
+  }, [vista]);
 
   const seleccionarCliente = (cliente: ClienteFrecuente) => {
     setSelectedCliente(cliente);
@@ -490,6 +619,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                 <span class="item-name">${item.cantidad}x ${item.producto?.nombre || 'Producto'}</span>
                 <span>${formatMoney(item.subtotal)}</span>
               </div>
+              ${detalleTicket(item.opciones, item.observaciones) ? `<div class="muted" style="font-size:11px;margin:-2px 0 4px 12px">${detalleTicket(item.opciones, item.observaciones)}</div>` : ''}
             `).join('')}
             <div class="line"></div>
             ${pago.descuento_aplicado > 0 ? `<div class="row"><span>Descuento${pago.lista_precio_nombre ? ` (${pago.lista_precio_nombre})` : ''}</span><span>-${formatMoney(pago.descuento_aplicado)}</span></div>` : ''}
@@ -579,7 +709,19 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     if (JSON.stringify(actual) !== JSON.stringify(selectedPedido)) { setSelectedPedido(actual); setPagoError('La comanda cambió. Revisá los importes antes de cobrar.'); return; }
     if (!loadCajasDiarias().some(caja => caja.id === cajaAbierta.id && caja.estado === 'abierta')) { setPagoError('La caja ya está cerrada.'); return; }
     if (!(actual.items || []).some(item => item.estado !== 'cancelado')) { setPagoError('La comanda no tiene productos para cobrar.'); return; }
+    // Si salió de una solicitud, el id del cobro es fijo: confirmarlo dos veces no lo duplica.
+    const solicitud = cobroEnCurso(actual) ? actual.solicitud_cobro : undefined;
+    const pagoId = solicitud ? pagoIdDeSolicitud(solicitud) : nuevoId('pago');
+    if (loadPagos().some(p => p.id === pagoId || p.pedido_id === actual.id)) {
+      setPagoError('Esta comanda ya tiene un cobro registrado. Revisá los últimos pagos antes de cobrar de nuevo.');
+      return;
+    }
     const total = calcTotal();
+    const ticket = importeFijado(actual);
+    if (ticket && (Math.abs(ticket.total - total) > 0.009 || ticket.metodo_pago !== metodoPago)) {
+      setPagoError(`El ticket impreso dice ${nombreMedio(ticket.metodo_pago)} por ${formatMoney(ticket.total)}. Para cobrar otra cosa, primero anulá el ticket.`);
+      return;
+    }
     const mixtoEfectivo = parseFloat(montoMixtoEfectivo) || 0;
     const mixtoTransferencia = parseFloat(montoMixtoTransferencia) || 0;
     const mixtoDebito = parseFloat(montoMixtoDebito) || 0;
@@ -611,7 +753,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     cobroEnProceso.current = true;
     const pedidoCobrado = selectedPedido;
     const pago: Pago = {
-      id: nuevoId('pago'),
+      id: pagoId,
       pedido_id: pedidoCobrado.id,
       cajero_id: user?.id,
       comprador_nombre: selectedCliente?.nombre || getCompradorName(compradorNombre),
@@ -619,7 +761,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       metodo_pago: metodoPago,
       monto: total,
       monto_efectivo: metodoPago === 'efectivo' ? total : metodoPago === 'mixto' ? mixtoEfectivo : 0,
-      monto_transferencia: metodoPago === 'transferencia' ? total : metodoPago === 'mixto' ? mixtoTransferencia : 0,
+      monto_transferencia: metodoPago === 'transferencia' || metodoPago === 'mercado_pago' ? total : metodoPago === 'mixto' ? mixtoTransferencia : 0,
       monto_tarjeta: metodoPago === 'tarjeta' ? total : 0,
       monto_debito: metodoPago === 'debito' ? total : metodoPago === 'mixto' ? mixtoDebito : 0,
       monto_credito: metodoPago === 'credito' ? total : metodoPago === 'mixto' ? mixtoCredito : 0,
@@ -636,13 +778,13 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     try {
       withStoreTransaction(() => {
         savePagos([pago, ...loadPagos()]);
-        const pedidoCerrado: Pedido = {
+        const pedidoCerrado: Pedido = marcarPagada({
           ...pedidoCobrado,
           estado: 'cobrado',
           total, descuento, recargo,
           hora_cierre: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        };
+        }, pago.id, actor);
         saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoCerrado.id ? pedidoCerrado : pedido));
         sincronizarEstadoMesa(pedidoCerrado.mesa_id);
         descontarStockPorVenta(pedidoCerrado);
@@ -802,7 +944,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     if (lastPago?.pedido) {
       const breakdown = getPagoBreakdown(lastPago);
       registrarCobroEnCuentas(lastPago, breakdown, -1);
-      const pedidoRestaurado: Pedido = { ...lastPago.pedido, estado: 'abierto', hora_cierre: undefined, updated_at: new Date().toISOString() };
+      // Vuelve como estaba antes de cobrar (entregada, con su solicitud), con la anulación anotada.
+      const previo = lastPago.pedido;
+      const pedidoRestaurado: Pedido = conEvento(
+        { ...previo, estado: previo.estado === 'cobrado' ? 'entregado' : previo.estado, hora_cierre: undefined, updated_at: new Date().toISOString() },
+        actor, 'pago_anulado', formatMoney(lastPago.total_cobrado),
+      );
       reponerStockPorVenta(pedidoRestaurado);
       saveDemoPedidos(loadDemoPedidos().map(pedido => pedido.id === pedidoRestaurado.id ? pedidoRestaurado : pedido));
       sincronizarEstadoMesa(pedidoRestaurado.mesa_id);
@@ -1099,6 +1246,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     <div className={vista === 'caja' ? 'space-y-6' : 'flex flex-col xl:flex-row gap-4 xl:gap-6 h-full'}>
       <div className={vista === 'caja' ? 'space-y-4' : 'w-full xl:w-72 flex-shrink-0 space-y-4'}>
         {avisoCuenta && <p role="status" className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800">{avisoCuenta}</p>}
+        {avisoSolicitud && <p role="status" className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">{avisoSolicitud}</p>}
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm space-y-2">
           <p>Ventas a cuenta: <strong>{formatMoney(cajaAbierta.ventas_cuenta_corriente || 0)}</strong></p>
           <p>Cobros de cuenta corriente: <strong>{formatMoney(cajaAbierta.cobros_cuenta_corriente || 0)}</strong></p>
@@ -1145,7 +1293,14 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <>
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-3 border-b border-slate-100 flex items-center justify-between">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Por cobrar</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-2">
+              Por cobrar
+              {solicitudesActivas > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold normal-case tracking-normal text-white animate-pulse">
+                  <BellRing size={11} />{solicitudesActivas === 1 ? '1 solicitud' : `${solicitudesActivas} solicitudes`}
+                </span>
+              )}
+            </p>
             <button title="Actualizar mesas" onClick={() => setPedidos(loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'))} className="text-slate-400 hover:text-amber-600"><RefreshCw size={14} /></button>
           </div>
           <div className="divide-y divide-slate-50">
@@ -1153,15 +1308,24 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               <button
                 key={pedido.id}
                 onClick={() => selectPedido(pedido)}
-                className={`w-full p-3 text-left hover:bg-slate-50 transition-colors ${selectedPedido?.id === pedido.id ? 'bg-amber-50 border-l-2 border-amber-500' : ''}`}
+                className={`w-full p-3 text-left hover:bg-slate-50 transition-colors ${selectedPedido?.id === pedido.id ? 'bg-amber-50 border-l-2 border-amber-500' : cobroEnCurso(pedido) ? 'bg-amber-50/40 border-l-2 border-amber-300' : ''}`}
               >
-                <div className="flex justify-between items-start">
+                <div className="flex justify-between items-start gap-2">
                   <span className="font-semibold text-slate-800 text-sm">{getMesaLabel(pedido)}</span>
-                  <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
-                    {pedido.estado === 'entregado' ? 'Por cobrar' : pedido.estado}
-                  </span>
+                  {pedido.solicitud_cobro ? (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium border whitespace-nowrap ${estadoCobroConfig[estadoCobro(pedido)].clase}`}>
+                      {estadoCobroConfig[estadoCobro(pedido)].label}
+                    </span>
+                  ) : (
+                    <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
+                      {pedido.estado === 'entregado' ? 'Por cobrar' : pedido.estado}
+                    </span>
+                  )}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">{pedido.empleado?.nombre}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {pedido.empleado?.nombre}
+                  {cobroEnCurso(pedido) && pedido.solicitud_cobro && ` · ${nombreMedio(pedido.solicitud_cobro.metodo_pago)} · ${new Date(pedido.solicitud_cobro.solicitada_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}
+                </div>
                 <div className="flex justify-between mt-1">
                   <span className="text-xs text-slate-400">{pedido.items?.length} items</span>
                   <span className="text-sm font-bold text-slate-800">${pedido.total.toLocaleString()}</span>
@@ -1223,12 +1387,81 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             </div>
 
             <div className="flex-1 overflow-y-auto p-6">
+              {selectedPedido.solicitud_cobro && cobroEnCurso(selectedPedido) && (() => {
+                const solicitud = selectedPedido.solicitud_cobro;
+                if (!solicitud) return null;
+                const estado = estadoCobro(selectedPedido);
+                return (
+                  <div className={`mb-6 rounded-2xl border p-4 ${estadoCobroConfig[estado].clase}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="flex items-center gap-2 font-semibold"><BellRing size={16} />{estadoCobroConfig[estado].label}</p>
+                      <span className="text-xs font-mono opacity-80">#{solicitud.id.replace(/^sol-/, '').slice(0, 8).toUpperCase()}</span>
+                    </div>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                      <dt className="opacity-75">Moza</dt><dd className="text-right font-medium">{solicitud.solicitada_por_nombre}</dd>
+                      <dt className="opacity-75">Medio elegido</dt><dd className="text-right font-medium">{nombreMedio(solicitud.metodo_pago)}</dd>
+                      <dt className="opacity-75">Pedido a las</dt>
+                      <dd className="text-right font-medium">{new Date(solicitud.solicitada_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</dd>
+                      <dt className="opacity-75">Importe pedido</dt><dd className="text-right font-bold">{formatMoney(solicitud.total)}</dd>
+                      {solicitud.ticket && (<>
+                        <dt className="opacity-75">Ticket impreso</dt>
+                        <dd className="text-right font-bold">{formatMoney(solicitud.ticket.total)} · {nombreMedio(solicitud.ticket.metodo_pago)}</dd>
+                      </>)}
+                    </dl>
+                    {solicitudDesactualizada(selectedPedido) && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg bg-white/70 p-2 text-xs font-medium text-red-700">
+                        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                        La comanda ya no suma lo que se pidió cobrar ({formatMoney(selectedPedido.total)}). Devolvela a la moza para que la revise.
+                      </p>
+                    )}
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={emitirTicketSolicitud}
+                        disabled={solicitudDesactualizada(selectedPedido)}
+                        className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+                      >
+                        <Printer size={15} />{estado === 'ticket_emitido' ? 'Reimprimir ticket' : 'Imprimir ticket'}
+                      </button>
+                      {estado === 'ticket_emitido' ? (
+                        <button
+                          type="button"
+                          onClick={() => { setDevolviendo('anular_ticket'); setDevolverError(''); }}
+                          className="flex items-center justify-center gap-2 rounded-xl border border-current bg-white/60 px-3 py-2.5 text-sm font-semibold hover:bg-white"
+                        >
+                          <Undo2 size={15} />Anular ticket
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => { setDevolviendo('rechazar'); setDevolverError(''); }}
+                          className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50"
+                        >
+                          <Undo2 size={15} />Devolver a la moza
+                        </button>
+                      )}
+                    </div>
+                    {estado === 'ticket_emitido' && (
+                      <button
+                        type="button"
+                        onClick={() => { setDevolviendo('rechazar'); setDevolverError(''); }}
+                        className="mt-2 w-full text-xs font-medium text-red-700 hover:underline"
+                      >
+                        Anular el ticket y devolver la comanda a la moza
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="space-y-2 mb-6">
                 <h4 className="text-sm font-semibold text-slate-700 mb-3">Detalle del pedido</h4>
                 {getActiveItems(selectedPedido).map(item => (
-                  <div key={item.id} className="flex justify-between text-sm">
-                    <span className="text-slate-600">{item.cantidad}x {item.producto?.nombre}</span>
-                    <span className="font-medium text-slate-800">${item.subtotal.toLocaleString()}</span>
+                  <div key={item.id} className="flex justify-between gap-3 text-sm">
+                    <div className="min-w-0">
+                      <span className="text-slate-600">{item.cantidad}x {item.producto?.nombre}</span>
+                      <DetalleItem opciones={item.opciones} observaciones={item.observaciones} />
+                    </div>
+                    <span className="font-medium text-slate-800 shrink-0">${item.subtotal.toLocaleString()}</span>
                   </div>
                 ))}
               </div>
@@ -1244,6 +1477,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     type="number"
                     value={descuento || ''}
                     onChange={e => setDescuento(parseFloat(e.target.value) || 0)}
+                    disabled={Boolean(fijado)}
                     className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-amber-400 text-emerald-600"
                     placeholder="0"
                     min="0"
@@ -1287,11 +1521,13 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     type="number"
                     value={recargo || ''}
                     onChange={e => setRecargo(parseFloat(e.target.value) || 0)}
+                    disabled={Boolean(fijado)}
                     className="flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-amber-400 text-orange-600"
                     placeholder="0"
                     min="0"
                   />
                 </div>
+                {fijado && <p className="text-xs text-blue-700">Importe fijado por el ticket impreso. Para cambiarlo, anulá el ticket.</p>}
                 <div className="flex justify-between font-bold text-xl text-slate-800 pt-2 border-t border-slate-200">
                   <span>TOTAL</span>
                   <span className="text-amber-600">${calcTotal().toLocaleString()}</span>
@@ -1383,6 +1619,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     <button
                       key={met}
                       onClick={() => { setACuenta(false); setMetodoPago(met); setPagoError(''); }}
+                      disabled={Boolean(fijado) && fijado?.metodo_pago !== met}
                       className={`py-2.5 px-3 rounded-xl border-2 text-sm font-medium transition-all ${
                         !aCuenta && metodoPago === met
                           ? metodosConfig[met].color + ' border-current shadow-sm'
@@ -1549,7 +1786,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                 className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-3 text-lg transition-all shadow-lg shadow-emerald-500/30"
               >
                 <Check size={22} />
-                {guardandoCuenta ? 'Guardando…' : aCuenta ? 'Confirmar consumo a cuenta' : `Cobrar ${calcTotal().toLocaleString()}`}
+                {guardandoCuenta ? 'Guardando…' : aCuenta ? 'Confirmar consumo a cuenta' : cobroEnCurso(selectedPedido) ? `Confirmar pago recibido $${calcTotal().toLocaleString()}` : `Cobrar ${calcTotal().toLocaleString()}`}
               </button>
             </div>
           </div>
@@ -1562,6 +1799,20 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </div>
         )}
       </div>
+      )}
+
+      {devolviendo && (
+        <PedirMotivo
+          titulo={devolviendo === 'anular_ticket' ? 'Anular ticket' : 'Devolver el cobro a la moza'}
+          descripcion={devolviendo === 'anular_ticket'
+            ? 'El ticket impreso deja de valer y la solicitud vuelve a quedar pendiente en caja para ajustarla.'
+            : 'La comanda vuelve a la moza para que la corrija y pida el cobro de nuevo. Queda registrado el motivo.'}
+          placeholder={devolviendo === 'anular_ticket' ? 'Ej: paga con tarjeta, se aplica descuento…' : 'Ej: falta cargar una bebida, cobran por separado…'}
+          textoConfirmar={devolviendo === 'anular_ticket' ? 'Anular ticket' : 'Devolver'}
+          error={devolverError}
+          onCerrar={() => setDevolviendo(null)}
+          onConfirmar={confirmarDevolucion}
+        />
       )}
 
       {showCierreCaja && (

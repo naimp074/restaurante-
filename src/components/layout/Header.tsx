@@ -5,6 +5,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useEstadoSync } from '../../lib/sync/useEstadoSync';
 import { useUsoAlmacenamientoLocal } from '../../lib/espacioLocal';
 import { usePedidosYaPendientes } from '../../lib/avisoPedidos';
+import { useAvisosMoza, useSolicitudesCobro } from '../../lib/avisoCobros';
+import { perfilVePagina } from '../../lib/paginas';
 
 const pageTitles: Record<PageId, string> = {
   dashboard: 'Dashboard',
@@ -48,6 +50,8 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
   const sync = useEstadoSync();
   const usoLocal = useUsoAlmacenamientoLocal();
   const pendientesPedidosYa = usePedidosYaPendientes(user?.rol === 'admin' || user?.rol === 'encargado' || user?.rol === 'cajero');
+  const solicitudesCobro = useSolicitudesCobro(Boolean(user && perfilVePagina(user, 'cobros')));
+  const { avisos: avisosCobro, descartar: descartarAviso } = useAvisosMoza(user?.id);
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -105,6 +109,34 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
             {pendientesPedidosYa === 1 ? '1 pedido de PedidosYa sin aceptar' : `${pendientesPedidosYa} pedidos de PedidosYa sin aceptar`}
           </span>
         </a>
+      )}
+      {solicitudesCobro > 0 && currentPage !== 'cobros' && (
+        <a
+          href="#/cobros"
+          className="text-xs font-semibold text-white bg-amber-500 hover:bg-amber-400 rounded-lg px-2.5 py-1.5 animate-pulse whitespace-nowrap"
+        >
+          <span className="sm:hidden">Cobros ({solicitudesCobro})</span>
+          <span className="hidden sm:inline">
+            {solicitudesCobro === 1 ? '1 mesa pidió cobrar' : `${solicitudesCobro} mesas pidieron cobrar`}
+          </span>
+        </a>
+      )}
+      {avisosCobro.length > 0 && (
+        <div className="fixed right-3 top-16 z-40 flex w-72 max-w-[calc(100vw-1.5rem)] flex-col gap-2" role="status" aria-live="polite">
+          {avisosCobro.map(aviso => (
+            <div
+              key={aviso.id}
+              className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold shadow-lg ${
+                aviso.tono === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : aviso.tono === 'error' ? 'border-red-200 bg-red-50 text-red-800'
+                  : 'border-blue-200 bg-blue-50 text-blue-800'
+              }`}
+            >
+              <span>{aviso.texto}</span>
+              <button type="button" onClick={() => descartarAviso(aviso.id)} className="text-xs font-medium opacity-70 hover:opacity-100" aria-label="Cerrar aviso">OK</button>
+            </div>
+          ))}
+        </div>
       )}
       {usoLocal >= 0.8 && (
         <p

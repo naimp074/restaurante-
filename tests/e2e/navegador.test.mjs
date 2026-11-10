@@ -260,3 +260,198 @@ test('pedido de PedidosYa: aviso en el encabezado y cierre como saldo a cobrar, 
   assert.deepEqual(errores, []);
   await context.close();
 });
+
+// Mesa M2 con tres desayunos ya entregados: $14.190.
+const sembrarMesaServida = async (page, extra = {}) => {
+  await sembrarCarta(page);
+  const ahora = new Date().toISOString();
+  await page.evaluate(({ ahora, extra }) => {
+    const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+    const mesa = { id: 'mesa-2', numero: 2, nombre: 'M2', capacidad: 4, estado: 'ocupada', sector: 'salon', posicion_x: 0, posicion_y: 0,
+      activa: true, created_at: ahora, updated_at: ahora };
+    set('restaurant-mesas', [mesa]);
+    const item = (id, precio) => ({ id, pedido_id: 'ped-m2', producto_id: `prod-${id}`, cantidad: 1, precio_unitario: precio, subtotal: precio,
+      observaciones: '', estado: 'entregado', created_at: ahora, updated_at: ahora, entregado_at: ahora, producto: { id: `prod-${id}`, nombre: `Desayuno ${id}` } });
+    set('restaurant-demo-pedidos', [{ id: 'ped-m2', mesa_id: 'mesa-2', empleado_id: 'moza-1', cantidad_personas: 3, estado: 'entregado',
+      subtotal: 14190, descuento: 0, recargo: 0, total: 14190, observaciones: '', hora_apertura: ahora, created_at: ahora, updated_at: ahora,
+      mesa, empleado: { id: 'moza-1', nombre: 'María', apellido: 'López', rol: 'moza' },
+      items: [item('a', 4730), item('b', 4730), item('c', 4730)], ...extra }]);
+  }, { ahora, extra });
+};
+
+const leerStore = (page, clave) => page.evaluate(k => JSON.parse(localStorage.getItem(k) || '[]'), clave);
+
+/** Caja en una pestaña y la moza en otra del mismo navegador: los cambios pasan de una a otra solos. */
+const cajaYMoza = async () => {
+  const { context, page: caja, errores } = await sesion();
+  await sembrarMesaServida(caja);
+  await entrar(caja, 'Caja');
+  await caja.getByPlaceholder('Ej: 20000').fill('10000');
+  await caja.getByRole('button', { name: /Abrir caja/ }).click();
+  await caja.goto(`${BASE}/#/cobros`);
+  await caja.getByText('Por cobrar', { exact: true }).first().waitFor();
+
+  const moza = await context.newPage();
+  moza.on('pageerror', e => errores.push(e.message));
+  await moza.goto(BASE);
+  await moza.evaluate(() => localStorage.removeItem('demo_user'));
+  await entrar(moza, 'Moza');
+  await moza.getByRole('button', { name: /M2/ }).first().click();
+  return { context, caja, moza, errores };
+};
+
+test('cobro en dos manos: la moza lo pide, caja imprime el ticket y confirma el pago', async () => {
+  const { context, caja, moza, errores } = await cajaYMoza();
+
+  // Todo entregado: en lugar de "Sin productos nuevos para enviar" están los dos botones.
+  assert.equal(await moza.getByText('Sin productos nuevos para enviar').count(), 0);
+  await moza.getByRole('button', { name: 'Editar / Agregar productos' }).waitFor();
+  await moza.getByRole('button', { name: 'Cobrar comanda' }).click();
+  const dialogo = moza.getByRole('dialog', { name: 'Cobrar comanda' });
+  await dialogo.getByText('$14.190').first().waitFor();
+  assert.equal(await dialogo.getByRole('button', { name: 'Enviar solicitud a Caja' }).isDisabled(), true, 'sin medio elegido no se manda');
+  await dialogo.getByRole('button', { name: 'Efectivo' }).click();
+  await dialogo.getByRole('button', { name: 'Enviar solicitud a Caja' }).dblclick();
+  await moza.getByRole('button', { name: 'Cobro solicitado', exact: true }).waitFor();
+  assert.equal(await moza.getByRole('button', { name: 'Cobro solicitado', exact: true }).isDisabled(), true);
+  assert.equal(await moza.getByRole('button', { name: 'Editar / Agregar productos' }).isDisabled(), true);
+
+  let [pedido] = await leerStore(moza, 'restaurant-demo-pedidos');
+  assert.equal(pedido.estado, 'entregado', 'pedir el cobro no la cierra');
+  assert.equal(pedido.solicitud_cobro.estado, 'solicitado');
+  assert.equal(pedido.solicitud_cobro.solicitada_por_nombre, 'María López');
+  assert.equal(pedido.historial.filter(e => e.tipo === 'cobro_solicitado').length, 1, 'el doble clic no manda dos');
+
+  // Caja la recibe sin recargar.
+  const enLista = caja.getByRole('button', { name: /M2/ }).first();
+  await enLista.getByText('Cobro solicitado').waitFor();
+  await enLista.click();
+  await caja.getByText('María López').first().waitFor();
+  const [ticket] = await Promise.all([caja.waitForEvent('popup'), caja.getByRole('button', { name: 'Imprimir ticket' }).click()]);
+  await ticket.waitForLoadState();
+  const textoTicket = await ticket.locator('body').innerText();
+  assert.match(textoTicket, /NO VÁLIDO COMO FACTURA/);
+  assert.match(textoTicket, /14\.190/);
+  assert.match(textoTicket, /Efectivo/);
+  await caja.getByText('Ticket emitido').first().waitFor();
+  [pedido] = await leerStore(caja, 'restaurant-demo-pedidos');
+  assert.equal(pedido.solicitud_cobro.estado, 'ticket_emitido');
+  assert.equal(pedido.solicitud_cobro.ticket.total, 14190);
+  assert.equal(await caja.getByRole('button', { name: 'Débito', exact: true }).isDisabled(), true, 'con ticket impreso no se cambia el medio');
+  await moza.getByText(/Caja imprimió el ticket/).waitFor();
+
+  // Caja confirma el pago. Los desayunos no tienen receta: el sistema pide confirmar dos veces, como siempre.
+  const confirmar = caja.getByRole('button', { name: /Confirmar pago recibido \$14\.190/ });
+  await confirmar.click();
+  await caja.getByText(/no descuentan stock/).waitFor();
+  await confirmar.dblclick();
+  await caja.getByText('Pago registrado').waitFor();
+  await caja.getByRole('button', { name: 'Finalizar sin imprimir' }).click();
+
+  const [pagos, pedidos, mesas, cajas] = await Promise.all(['restaurant-pagos', 'restaurant-demo-pedidos', 'restaurant-mesas', 'restaurant-cajas-diarias'].map(k => leerStore(caja, k)));
+  assert.equal(pagos.length, 1);
+  assert.equal(pagos[0].id, `pago-${pedido.solicitud_cobro.id.replace(/^sol-/, '')}`);
+  assert.equal(pagos[0].metodo_pago, 'efectivo');
+  assert.equal(pagos[0].total_cobrado, 14190);
+  assert.equal(pagos[0].cajero_id, 'caj-1');
+  assert.equal(pedidos[0].estado, 'cobrado');
+  assert.equal(pedidos[0].solicitud_cobro.estado, 'pagada');
+  assert.equal(pedidos[0].solicitud_cobro.resuelta_por_nombre, 'Ana Rodríguez');
+  assert.equal(mesas[0].estado, 'libre');
+  assert.equal(cajas[0].total_ventas, 14190);
+  assert.equal(cajas[0].efectivo, 14190);
+  await moza.getByText('M2: pagada').waitFor();
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test('caja devuelve el cobro con motivo y la moza corrige, agrega y vuelve a pedir', async () => {
+  const { context, caja, moza, errores } = await cajaYMoza();
+  await moza.getByRole('button', { name: 'Cobrar comanda' }).click();
+  await moza.getByRole('dialog').getByRole('button', { name: 'Mercado Pago' }).click();
+  await moza.getByRole('dialog').getByRole('button', { name: 'Enviar solicitud a Caja' }).click();
+
+  const enLista = caja.getByRole('button', { name: /M2/ }).first();
+  await enLista.getByText('Cobro solicitado').waitFor();
+  await enLista.click();
+  await caja.getByRole('button', { name: 'Devolver a la moza' }).click();
+  await caja.getByLabel('Motivo').fill('Falta cargar la bebida');
+  await caja.getByRole('button', { name: 'Devolver', exact: true }).click();
+  await moza.getByText('Falta cargar la bebida').waitFor();
+
+  // Editar: se agrega solo lo nuevo, que no le llega a cocina hasta mandarlo.
+  await moza.getByRole('button', { name: 'Editar / Agregar productos' }).click();
+  await moza.getByRole('button', { name: /^Hamburguesa [$]/ }).click();
+  await moza.getByText('Sin enviar').waitFor();
+  await moza.getByText('$19.190').first().waitFor();
+  assert.equal(await moza.getByRole('button', { name: 'Cobrar comanda' }).count(), 0, 'con algo sin enviar, primero se envía');
+  let [pedido] = await leerStore(moza, 'restaurant-demo-pedidos');
+  assert.equal(pedido.items.filter(i => i.estado === 'entregado').length, 3, 'lo entregado no se toca');
+  await moza.getByRole('button', { name: 'Enviar a Cocina' }).click();
+  await moza.getByRole('button', { name: 'Cobrar comanda' }).waitFor();
+  [pedido] = await leerStore(moza, 'restaurant-demo-pedidos');
+  assert.equal(pedido.items.filter(i => i.sin_enviar).length, 0);
+  assert.equal(pedido.total, 19190);
+  assert.equal(pedido.historial.at(-1).detalle, '1x Hamburguesa', 'a cocina va solo lo nuevo');
+
+  await moza.getByRole('button', { name: 'Cobrar comanda' }).click();
+  await moza.getByRole('dialog').getByText('$19.190').first().waitFor();
+  await moza.getByRole('dialog').getByRole('button', { name: 'Mercado Pago' }).click();
+  await moza.getByRole('dialog').getByRole('button', { name: 'Enviar solicitud a Caja' }).click();
+  await moza.getByRole('button', { name: 'Cobro solicitado', exact: true }).waitFor();
+  [pedido] = await leerStore(moza, 'restaurant-demo-pedidos');
+  assert.equal(pedido.solicitud_cobro.total, 19190);
+  assert.deepEqual(pedido.historial.map(e => e.tipo), ['cobro_solicitado', 'cobro_rechazado', 'enviado_cocina', 'cobro_solicitado']);
+
+  // Caja cobra lo nuevo por Mercado Pago: entra al banco y queda registrado como Mercado Pago.
+  await caja.getByRole('button', { name: /M2/ }).first().click();
+  await caja.getByRole('button', { name: /Confirmar pago recibido \$19\.190/ }).click();
+  await caja.getByText(/no descuentan stock/).waitFor();
+  await caja.getByRole('button', { name: /Confirmar pago recibido \$19\.190/ }).click();
+  await caja.getByText('Pago registrado').waitFor();
+  const [pago] = await leerStore(caja, 'restaurant-pagos');
+  assert.equal(pago.metodo_pago, 'mercado_pago');
+  assert.equal(pago.monto_transferencia, 19190);
+  assert.deepEqual(errores, []);
+  await context.close();
+});
+
+test('cocina no ve lo cargado sin enviar; la moza no anula lo entregado, el encargado sí y con motivo', async () => {
+  const { context, page, errores } = await sesion();
+  await sembrarMesaServida(page, { estado: 'en_preparacion' });
+  await page.evaluate(() => {
+    const pedidos = JSON.parse(localStorage.getItem('restaurant-demo-pedidos'));
+    const ahora = new Date().toISOString();
+    pedidos[0].items.push({ id: 'x', pedido_id: 'ped-m2', producto_id: 'prod-burger', cantidad: 1, precio_unitario: 5000, subtotal: 5000,
+      observaciones: '', estado: 'en_preparacion', created_at: ahora, updated_at: ahora, producto: { id: 'prod-burger', nombre: 'Hamburguesa' } });
+    pedidos[0].items.push({ id: 'y', pedido_id: 'ped-m2', producto_id: 'prod-agua', cantidad: 1, precio_unitario: 1000, subtotal: 1000,
+      observaciones: '', estado: 'pendiente', sin_enviar: true, created_at: ahora, updated_at: ahora, producto: { id: 'prod-agua', nombre: 'Agua sin gas' } });
+    localStorage.setItem('restaurant-demo-pedidos', JSON.stringify(pedidos));
+  });
+  await entrar(page, 'Encargado');
+  await page.goto(`${BASE}/#/cocina`);
+  await page.getByText('Comandas Activas', { exact: true }).waitFor();
+  await page.waitForTimeout(300);
+  const cocina = await page.locator('main').innerText();
+  assert.match(cocina, /Hamburguesa/, 'lo enviado sí lo ve');
+  assert.doesNotMatch(cocina, /Agua sin gas/, 'lo no enviado no');
+
+  await page.goto(`${BASE}/#/ventas`);
+  await page.getByRole('button', { name: /M2/ }).first().click();
+  await page.getByRole('button', { name: 'Anular Desayuno a' }).click();
+  await page.getByLabel('Motivo').fill('Se cayó el plato');
+  await page.getByRole('button', { name: 'Anular producto' }).click();
+  await page.getByText(/Anulado por Diego Fernández: Se cayó el plato/).waitFor();
+  const [pedido] = await leerStore(page, 'restaurant-demo-pedidos');
+  assert.equal(pedido.items.find(i => i.id === 'a').estado, 'cancelado');
+  assert.equal(pedido.total, 9460 + 5000 + 1000);
+  assert.equal(pedido.historial.at(-1).tipo, 'item_anulado');
+
+  await page.evaluate(() => localStorage.removeItem('demo_user'));
+  await entrar(page, 'Moza');
+  await page.getByRole('button', { name: /M2/ }).first().click();
+  await page.getByText('Desayuno b').waitFor();
+  assert.equal(await page.getByRole('button', { name: /^Anular / }).count(), 0, 'la moza no ve anular');
+  assert.deepEqual(errores, []);
+  await context.close();
+});
