@@ -3,7 +3,8 @@ import { DollarSign, UtensilsCrossed, ShoppingBag, Clock, AlertTriangle, ArrowUp
 import type { Pedido } from '../lib/types';
 import { useIngredientes, usePedidos, useProducciones } from '../lib/demoStore';
 import { calcularCostoProducto } from '../lib/costosReceta';
-import { estadoOperativoMesa, useMesas } from '../lib/mesasStore';
+import { useMesas } from '../lib/mesasStore';
+import { estadoVisualMesa } from '../lib/estadoMesa';
 import { useProductos } from '../lib/productosStore';
 import { useUsuarios } from '../lib/usuariosStore';
 import { dayKey } from '../lib/fechas';
@@ -57,7 +58,7 @@ export default function Dashboard() {
   const margenHoy = ventasHoy > 0 ? ((ventasHoy - costoHoy) / ventasHoy) * 100 : 0;
   const comandasEnCurso = pedidosHoy.filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado').length;
 
-  const mesasVista = mesas.map(mesa => ({ ...mesa, estado: estadoOperativoMesa(mesa, pedidos) }));
+  const mesasVista = mesas.map(mesa => ({ ...mesa, estado: estadoVisualMesa(mesa, pedidos) }));
   const mesasOcupadas = mesasVista.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length;
   const mesasLibres = mesasVista.filter(m => m.estado === 'libre').length;
   const alertasStock = ingredientes.filter(i => i.stock_actual <= i.stock_minimo).length;

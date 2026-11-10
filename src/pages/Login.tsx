@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { UtensilsCrossed, Lock, Mail, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { UtensilsCrossed, Lock, User, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
@@ -67,14 +67,18 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
+              <label htmlFor="login-usuario" className="block text-sm font-medium text-slate-300 mb-1.5">Usuario o email</label>
               <div className="relative">
-                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
-                  type="email"
+                  id="login-usuario"
+                  type="text"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  placeholder="usuario@aroma.com"
+                  placeholder="Tu usuario (ej: juan)"
                   className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-4 py-3 text-white placeholder-slate-500 outline-none focus:border-amber-500/50 focus:bg-white/8 transition-colors text-sm"
                   required
                 />

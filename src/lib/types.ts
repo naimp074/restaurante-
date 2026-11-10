@@ -11,8 +11,9 @@ export type EstadoMesa =
 
 export type EstadoPedido = 'abierto' | 'en_preparacion' | 'listo' | 'entregado' | 'cobrado' | 'cuenta_corriente' | 'cancelado';
 export type EstadoItem = 'pendiente' | 'en_preparacion' | 'listo' | 'entregado' | 'cancelado';
-export type MetodoPago = 'efectivo' | 'transferencia' | 'tarjeta' | 'debito' | 'credito' | 'mixto';
-export type MetodoListaPrecio = Exclude<MetodoPago, 'mixto'>;
+/** mercado_pago entra al banco igual que una transferencia, pero queda registrado como Mercado Pago. */
+export type MetodoPago = 'efectivo' | 'transferencia' | 'tarjeta' | 'debito' | 'credito' | 'mercado_pago' | 'mixto';
+export type MetodoListaPrecio = Exclude<MetodoPago, 'mixto' | 'mercado_pago'>;
 // factura_x, factura_b y factura_a: cobros viejos, de cuando se imprimían sin CAE.
 export type TipoComprobante = 'ticket' | 'factura' | 'factura_x' | 'factura_b' | 'factura_a';
 export type EstadoCajaDiaria = 'abierta' | 'cerrada';
@@ -41,6 +42,8 @@ export interface Profile {
   local_id?: string;
   /** Pantallas que puede abrir. Sin lista, las de su rol. */
   paginas?: PageId[] | null;
+  /** Sueldo mensual acordado. Con él se arma su estado de cuenta en Gastos → Pagos. */
+  sueldo?: number;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +62,45 @@ export interface Mesa {
   created_at: string;
   updated_at: string;
   empleado?: Profile;
+  /** Dónde está dibujada en el plano de su apartado. Sin esto se ubica sola en una grilla. */
+  plano?: PlanoMesa;
+}
+
+export type FormaMesa = 'cuadrada' | 'rectangular' | 'redonda' | 'box' | 'alta';
+
+/**
+ * Posición en unidades del plano (el viewBox del SVG de su apartado, p. ej. 1000 × 700).
+ * Como el dibujo escala entero, la mesa queda en el mismo lugar en cualquier pantalla.
+ * x e y son el centro de la mesa; la rotación es en grados.
+ */
+export interface PlanoMesa {
+  x: number;
+  y: number;
+  ancho: number;
+  alto: number;
+  rotacion: number;
+  forma: FormaMesa;
+}
+
+export type TipoElementoPlano = 'pared' | 'puerta' | 'ingreso' | 'cocina' | 'bano' | 'barra' | 'zona' | 'etiqueta' | 'planta';
+
+/** Lo que se dibuja de referencia (paredes, cocina, baño...). No se puede tocar fuera del editor. */
+export interface ElementoPlano {
+  id: string;
+  tipo: TipoElementoPlano;
+  x: number;
+  y: number;
+  ancho: number;
+  alto: number;
+  rotacion: number;
+  texto?: string;
+}
+
+export interface PlanoSector {
+  ancho: number;
+  alto: number;
+  elementos: ElementoPlano[];
+  actualizado_at?: string;
 }
 
 export interface CategoriaProducto {
@@ -107,6 +149,32 @@ export interface Producto {
   updated_at: string;
   categoria?: CategoriaProducto;
   receta?: RecetaItem[];
+  /** Lo que el cliente elige al pedirlo: "Bebida: café o té", "Aderezo: solo mayonesa"... */
+  grupos_opciones?: GrupoOpciones[];
+}
+
+export interface OpcionProducto {
+  id: string;
+  nombre: string;
+  /** Lo que suma al precio del producto. 0 si no cambia el precio. */
+  precio_extra: number;
+}
+
+export interface GrupoOpciones {
+  id: string;
+  nombre: string;
+  /** Hay que elegir al menos una para poder agregarlo al pedido. */
+  obligatorio: boolean;
+  /** Cuántas se pueden elegir. 1 = elegir una sola. */
+  maximo: number;
+  opciones: OpcionProducto[];
+}
+
+/** Copia de lo elegido: si después cambian la carta, el pedido sigue diciendo lo que se pidió. */
+export interface OpcionElegida {
+  grupo: string;
+  opcion: string;
+  precio_extra: number;
 }
 
 export interface ListaPrecio {
@@ -192,6 +260,66 @@ export interface Pedido {
   /** 'plataforma': lo pagó el cliente en la app; no pasa por la caja del día. */
   cobro?: 'caja' | 'plataforma';
   externo?: PedidoExterno;
+  /** La mesa pidió la cuenta: en el plano se ve "Pendiente de cobro" hasta que se cobra. */
+  cuenta_pedida_at?: string;
+  /** El pedido de cobro que la moza mandó a caja (ver src/lib/cobroComanda.ts). */
+  solicitud_cobro?: SolicitudCobro;
+  /** Quién hizo qué con la comanda: envíos a cocina, correcciones, anulaciones y cobro. */
+  historial?: EventoComanda[];
+}
+
+/**
+ * Estado del cobro, separado de la preparación: una comanda puede estar entregada y
+ * seguir sin pagar. 'pagada' la marca solo caja, al registrar el cobro.
+ */
+export type EstadoSolicitudCobro = 'solicitado' | 'ticket_emitido' | 'pagada' | 'rechazada';
+
+export interface SolicitudCobro {
+  id: string;
+  estado: EstadoSolicitudCobro;
+  /** Lo que eligió la moza. Caja puede cambiarlo si el cliente paga de otra forma. */
+  metodo_pago: MetodoPago;
+  /** Importe al pedir el cobro. Si la comanda ya no suma esto, la solicitud quedó vieja. */
+  subtotal: number;
+  descuento: number;
+  recargo: number;
+  total: number;
+  solicitada_at: string;
+  solicitada_por_id?: string;
+  solicitada_por_nombre: string;
+  ticket_at?: string;
+  ticket_por_nombre?: string;
+  /** Lo que dice el ticket impreso. Hasta anularlo, caja cobra exactamente esto. */
+  ticket?: { total: number; descuento: number; recargo: number; metodo_pago: MetodoPago };
+  resuelta_at?: string;
+  resuelta_por_id?: string;
+  resuelta_por_nombre?: string;
+  motivo_rechazo?: string;
+  pago_id?: string;
+}
+
+export type TipoEventoComanda =
+  | 'enviado_cocina'
+  | 'item_modificado'
+  | 'item_eliminado'
+  | 'item_anulado'
+  | 'cobro_solicitado'
+  | 'cobro_cancelado'
+  | 'ticket_emitido'
+  | 'ticket_anulado'
+  | 'cobro_rechazado'
+  | 'pagada'
+  | 'pago_anulado';
+
+export interface EventoComanda {
+  id: string;
+  at: string;
+  tipo: TipoEventoComanda;
+  detalle: string;
+  usuario_id?: string;
+  usuario_nombre: string;
+  /** Importe de la comanda después del cambio. */
+  total?: number;
 }
 
 export type CanalPedido = 'salon' | 'mostrador' | 'delivery' | 'pedidosya';
@@ -223,7 +351,17 @@ export interface PedidoItem {
   precio_unitario: number;
   subtotal: number;
   observaciones: string;
+  /** Opciones elegidas. precio_unitario ya incluye sus extras. */
+  opciones?: OpcionElegida[];
   estado: EstadoItem;
+  /** Cuándo cocina lo marcó listo: ahí se frena el reloj del ítem. */
+  listo_at?: string;
+  entregado_at?: string;
+  /** Cargado en una comanda ya enviada y todavía no mandado: cocina no lo ve hasta que lo envíen. */
+  sin_enviar?: boolean;
+  /** Anulado después de salir de cocina: quién y por qué. */
+  anulado_por?: string;
+  motivo_anulacion?: string;
   created_at: string;
   updated_at: string;
   producto?: Producto;
@@ -298,6 +436,11 @@ export interface Gasto {
   estado?: 'pendiente' | 'pagado' | 'vencido';
   vencimiento?: string;
   recurrente?: boolean;
+  /** Pago de sueldo: a quién se le pagó y de qué mes (YYYY-MM). */
+  empleado_id?: string;
+  periodo?: string;
+  /** Sueldo mensual que tenía al momento del pago: si después cambia, los meses viejos no se mueven. */
+  sueldo_mes?: number;
 }
 
 export interface Proveedor {

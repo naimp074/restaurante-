@@ -1,4 +1,5 @@
-import type { CuentaDinero, EstadoPlataforma, Pedido, PedidoItem, Producto } from './types';
+import type { CuentaDinero, EstadoPlataforma, OpcionElegida, Pedido, PedidoItem, Producto } from './types';
+import { precioConOpciones } from './opcionesProducto';
 import { loadDemoPedidos, saveDemoPedidos } from './demoStore';
 import { loadCuentasDinero, registrarEntradaCuenta, saveCuentasDinero } from './finance';
 import { nuevoId } from './ids';
@@ -6,6 +7,7 @@ import { withStoreTransaction } from './storeSync';
 import { supabase } from './supabase';
 import { descontarStockPorVenta } from './ventasStock';
 import { etiquetaPedido } from './pedidosCanal';
+import { conEstado } from './tiempoItem';
 
 /** Lo que PedidosYa debe liquidar. Al cobrar, se pasa a Banco con un traspaso (Gastos → Traspasos). */
 export const cuentaPedidosYaId = 'cuenta-pedidosya';
@@ -26,7 +28,8 @@ const actualizarPedido = (pedidoId: string, cambiar: (pedido: Pedido) => Pedido)
 
 // ---------- Para llevar y delivery propio ----------
 
-export type LineaNueva = { producto: Producto; cantidad: number; observaciones: string };
+/** id distingue dos líneas del mismo producto que salen distinto (una con café, otra con té). */
+export type LineaNueva = { id?: string; producto: Producto; cantidad: number; observaciones: string; opciones?: OpcionElegida[] };
 
 export type DatosPedidoLocal = {
   canal: 'mostrador' | 'delivery';
@@ -48,19 +51,23 @@ export const crearPedidoLocal = (datos: DatosPedidoLocal): Pedido => {
 
   const ahora = new Date().toISOString();
   const id = nuevoId('ped');
-  const items: PedidoItem[] = lineas.map(linea => ({
-    id: nuevoId('item'),
-    pedido_id: id,
-    producto_id: linea.producto.id,
-    cantidad: linea.cantidad,
-    precio_unitario: linea.producto.precio_venta,
-    subtotal: redondear(linea.producto.precio_venta * linea.cantidad),
-    observaciones: linea.observaciones.trim(),
-    estado: 'pendiente',
-    created_at: ahora,
-    updated_at: ahora,
-    producto: linea.producto,
-  }));
+  const items: PedidoItem[] = lineas.map(linea => {
+    const precio = precioConOpciones(linea.producto.precio_venta, linea.opciones);
+    return {
+      id: nuevoId('item'),
+      pedido_id: id,
+      producto_id: linea.producto.id,
+      cantidad: linea.cantidad,
+      precio_unitario: precio,
+      subtotal: redondear(precio * linea.cantidad),
+      observaciones: linea.observaciones.trim(),
+      opciones: linea.opciones?.length ? linea.opciones : undefined,
+      estado: 'pendiente',
+      created_at: ahora,
+      updated_at: ahora,
+      producto: linea.producto,
+    };
+  });
   // El envío va en el subtotal para que Caja lo cobre sin pasos extra.
   const subtotal = redondear(items.reduce((s, i) => s + i.subtotal, 0) + envio);
 
@@ -104,7 +111,7 @@ export const cancelarPedido = (pedidoId: string, motivo: string) => actualizarPe
 export const marcarEntregado = (pedidoId: string) => actualizarPedido(pedidoId, pedido => ({
   ...pedido,
   estado: pedido.estado === 'cobrado' ? pedido.estado : 'entregado',
-  items: (pedido.items || []).map(item => (item.estado === 'cancelado' ? item : { ...item, estado: 'entregado' })),
+  items: (pedido.items || []).map(item => (item.estado === 'cancelado' ? item : conEstado(item, 'entregado'))),
 }));
 
 // ---------- PedidosYa ----------
@@ -153,7 +160,7 @@ export const finalizarPedidoPlataforma = (pedidoId: string, comision: number) =>
     ...actual,
     estado: 'cobrado',
     hora_cierre: ahora,
-    items: (actual.items || []).map(item => (item.estado === 'cancelado' ? item : { ...item, estado: 'entregado' })),
+    items: (actual.items || []).map(item => (item.estado === 'cancelado' ? item : conEstado(item, 'entregado', ahora))),
   }));
   descontarStockPorVenta(cerrado);
 

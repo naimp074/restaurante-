@@ -1,142 +1,105 @@
-import { useState } from 'react';
-import { Users, Clock, Plus, X, Check, Pencil, Trash2 } from 'lucide-react';
-import type { Mesa, EstadoMesa, Sector } from '../lib/types';
-import { useMozas } from '../lib/usuariosStore';
+import { useEffect, useMemo, useState } from 'react';
+import { Users, Clock, Plus, X, Check, Pencil, Trash2, PenSquare } from 'lucide-react';
+import type { EstadoMesa, Mesa } from '../lib/types';
+import { useAuth } from '../contexts/AuthContext';
 import {
-  estadoOperativoMesa,
-  mesaTienePedidoAbierto,
+  crearMesa,
   loadMesas,
   loadSectores,
   saveMesas,
   saveSectores,
+  siguienteNumeroMesa,
   useMesas,
+  useSectores,
   type SectorOption,
 } from '../lib/mesasStore';
 import { usePedidos } from '../lib/demoStore';
 import { nuevoId } from '../lib/ids';
-
-const estadoConfig: Record<EstadoMesa, { label: string; color: string; dot: string; bg: string }> = {
-  libre: { label: 'Libre', color: 'text-emerald-700', dot: 'bg-emerald-500', bg: 'bg-emerald-50 border-emerald-200' },
-  ocupada: { label: 'Ocupada', color: 'text-blue-700', dot: 'bg-blue-500', bg: 'bg-blue-50 border-blue-300' },
-  esperando_pedido: { label: 'Esperando pedido', color: 'text-yellow-700', dot: 'bg-yellow-500', bg: 'bg-yellow-50 border-yellow-300' },
-  en_preparacion: { label: 'En preparación', color: 'text-orange-700', dot: 'bg-orange-500', bg: 'bg-orange-50 border-orange-300' },
-  servida: { label: 'Pedido servido', color: 'text-violet-700', dot: 'bg-violet-500', bg: 'bg-violet-50 border-violet-300' },
-  pendiente_cobro: { label: 'Pendiente cobro', color: 'text-red-700', dot: 'bg-red-500', bg: 'bg-red-50 border-red-300' },
-  cerrada: { label: 'Cerrada', color: 'text-slate-600', dot: 'bg-slate-400', bg: 'bg-slate-50 border-slate-200' },
-};
+import {
+  detalleDePedido,
+  estadoMesaConfig,
+  estadoVisualMesa,
+  minutosAbierta,
+  pedidoAbiertoDeMesa,
+  textoDuracion,
+} from '../lib/estadoMesa';
+import { layoutsDelSector, planoValido } from '../lib/planoMesas';
+import PlanoInteractivo from '../components/plano/PlanoInteractivo';
+import EditorPlano from '../components/plano/EditorPlano';
+import PanelMesa from '../components/plano/PanelMesa';
+import { armarMesaEnPlano, nombreDeMesa } from '../components/plano/datosPlano';
 
 const createSectorId = (value: string) =>
   value
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
-const getSectorLabel = (sector: string, sectores: SectorOption[]) =>
-  sectores.find(s => s.id === sector)?.label ?? sector;
+/** Mesas cuyo apartado ya no existe: se siguen mostrando para que no se pierdan. */
+const SIN_APARTADO = '__sin_apartado';
 
-const getMesaLabel = (mesa: Mesa) => mesa.nombre || `M${mesa.numero}`;
+/** El reloj de las mesas ocupadas avanza solo, sin esperar a que cambie algo. */
+const useAhora = (cadaMs: number) => {
+  const [ahora, setAhora] = useState(() => Date.now());
+  useEffect(() => {
+    const intervalo = window.setInterval(() => setAhora(Date.now()), cadaMs);
+    return () => window.clearInterval(intervalo);
+  }, [cadaMs]);
+  return ahora;
+};
 
 export default function Mesas() {
+  const { user } = useAuth();
   const mesas = useMesas();
   const pedidos = usePedidos();
-  const [selectedMesa, setSelectedMesa] = useState<Mesa | null>(null);
+  const sectores = useSectores();
+  const ahora = useAhora(30_000);
   const [sectorFiltro, setSectorFiltro] = useState<string>('todos');
-  const [showModal, setShowModal] = useState(false);
-  const [modalMesa, setModalMesa] = useState<Mesa | null>(null);
-  const [editMesaName, setEditMesaName] = useState('');
-  const [editMesaCapacidad, setEditMesaCapacidad] = useState(1);
-  const [editPersonas, setEditPersonas] = useState(1);
-  const [editMoza, setEditMoza] = useState('');
-  const [editEstado, setEditEstado] = useState<EstadoMesa>('libre');
-  const [sectores, setSectores] = useState<SectorOption[]>(loadSectores);
+  const [mesaAbierta, setMesaAbierta] = useState<{ id: string; configurar?: boolean } | null>(null);
+  const [editandoPlano, setEditandoPlano] = useState(false);
   const [showAddSector, setShowAddSector] = useState(false);
   const [newSectorName, setNewSectorName] = useState('');
   const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
   const [editingSectorName, setEditingSectorName] = useState('');
 
-  const mozas = useMozas();
-  const mesasEnPantalla = mesas.map(mesa => ({ ...mesa, estado: estadoOperativoMesa(mesa, pedidos) }));
-  const filteredMesas = mesasEnPantalla.filter(m => sectorFiltro === 'todos' || m.sector === sectorFiltro);
+  // Solo quien puede cambiar los apartados (admin y encargado, igual que en Supabase) edita planos.
+  const puedeEditarPlano = user?.rol === 'admin' || user?.rol === 'encargado';
 
-  const openModal = (mesa: Mesa) => {
-    setModalMesa(mesa);
-    setEditMesaName(getMesaLabel(mesa));
-    setEditMesaCapacidad(mesa.capacidad);
-    setEditEstado(mesa.estado);
-    setEditMoza(mesa.empleado_id || '');
-    setEditPersonas(1);
-    setShowModal(true);
-  };
+  const apartados = sectores.filter(s => s.id !== 'todos');
+  const huerfanas = mesas.filter(m => !apartados.some(s => s.id === m.sector));
+  const sectorActual: SectorOption | undefined = sectorFiltro === SIN_APARTADO
+    ? { id: SIN_APARTADO, label: 'Sin apartado' }
+    : apartados.find(s => s.id === sectorFiltro);
+  const vistaTodos = !sectorActual;
 
-  const handleSave = () => {
-    if (!modalMesa) return;
-    const empleado = mozas.find(m => m.id === editMoza);
-    const nombre = editMesaName.trim();
-    const capacidad = Math.max(1, editMesaCapacidad);
+  const estados = useMemo(
+    () => new Map(mesas.map(mesa => [mesa.id, estadoVisualMesa(mesa, pedidos)])),
+    [mesas, pedidos],
+  );
+  const estadoDe = (mesa: Mesa): EstadoMesa => estados.get(mesa.id) ?? 'libre';
 
-    saveMesas(loadMesas().map(m =>
-      m.id === modalMesa.id
-        ? {
-            ...m,
-            nombre: nombre || undefined,
-            capacidad,
-            estado: editEstado === 'cerrada' ? 'cerrada' : 'libre',
-            empleado_id: editMoza || undefined,
-            empleado,
-          }
-        : m
-    ));
-    setShowModal(false);
-    setModalMesa(null);
-  };
+  const mesasDe = (sectorId: string) => (sectorId === SIN_APARTADO ? huerfanas : mesas.filter(m => m.sector === sectorId));
 
-  const handleDeleteMesa = () => {
-    if (!modalMesa) return;
-    if (mesaTienePedidoAbierto(modalMesa.id, pedidos)) {
-      window.alert('No se puede borrar: hay una comanda abierta en esta mesa.');
-      return;
-    }
-    if (!window.confirm(`¿Querés borrar ${getMesaLabel(modalMesa)}?`)) return;
-
-    saveMesas(loadMesas().filter(m => m.id !== modalMesa.id));
-    setSelectedMesa(prev => (prev?.id === modalMesa.id ? null : prev));
-    setShowModal(false);
-    setModalMesa(null);
-  };
-
-  const handleAbrirMesa = (mesa: Mesa) => {
-    if (mesa.estado !== 'libre') return;
-    openModal(mesa);
+  const planoDe = (sector: SectorOption) => {
+    const plano = planoValido(sector.plano);
+    const propias = mesasDe(sector.id);
+    const layouts = layoutsDelSector(propias, plano);
+    return { plano, enPlano: propias.map(mesa => armarMesaEnPlano(mesa, layouts.get(mesa.id)!, pedidos, ahora)) };
   };
 
   const handleAddMesa = () => {
-    const sectorDestino = (
-      sectorFiltro !== 'todos'
-        ? sectorFiltro
-        : sectores.find(s => s.id !== 'todos')?.id ?? 'salon'
-    ) as Sector;
-
-    const ahora = new Date().toISOString();
-    const nuevaMesa: Mesa = {
-      id: nuevoId('mesa'),
-      numero: mesas.reduce((mayor, m) => Math.max(mayor, m.numero), 0) + 1,
-      capacidad: 4,
-      estado: 'libre',
-      sector: sectorDestino,
-      posicion_x: 0,
-      posicion_y: 0,
-      activa: true,
-      created_at: ahora,
-      updated_at: ahora,
-    };
-
+    const sectorDestino = sectorActual && sectorActual.id !== SIN_APARTADO
+      ? sectorActual.id
+      : apartados[0]?.id ?? 'salon';
+    const nuevaMesa = crearMesa(siguienteNumeroMesa(loadMesas()), sectorDestino);
     saveMesas([...loadMesas(), nuevaMesa]);
-    setSelectedMesa(nuevaMesa);
-    openModal(nuevaMesa);
+    setMesaAbierta({ id: nuevaMesa.id, configurar: true });
   };
+
+  const setSectores = (update: (prev: SectorOption[]) => SectorOption[]) => saveSectores(update(loadSectores()));
 
   const handleAddSector = () => {
     const label = newSectorName.trim();
@@ -145,11 +108,7 @@ export default function Mesas() {
     const baseId = createSectorId(label) || nuevoId('sector');
     const id = sectores.some(s => s.id === baseId) ? nuevoId(baseId) : baseId;
 
-    setSectores(prev => {
-      const next = [...prev, { id, label }];
-      saveSectores(next);
-      return next;
-    });
+    setSectores(prev => [...prev, { id, label }]);
     setSectorFiltro(id);
     setNewSectorName('');
     setShowAddSector(false);
@@ -168,11 +127,7 @@ export default function Mesas() {
     const label = editingSectorName.trim();
     if (!label) return;
 
-    setSectores(prev => {
-      const next = prev.map(s => (s.id === editingSectorId ? { ...s, label } : s));
-      saveSectores(next);
-      return next;
-    });
+    setSectores(prev => prev.map(s => (s.id === editingSectorId ? { ...s, label } : s)));
     setEditingSectorId(null);
     setEditingSectorName('');
   };
@@ -185,11 +140,7 @@ export default function Mesas() {
       return;
     }
 
-    setSectores(prev => {
-      const next = prev.filter(s => s.id !== sectorId);
-      saveSectores(next);
-      return next;
-    });
+    setSectores(prev => prev.filter(s => s.id !== sectorId));
     if (sectorFiltro === sectorId) {
       setSectorFiltro('todos');
     }
@@ -200,16 +151,50 @@ export default function Mesas() {
   };
 
   const stats = {
-    libres: mesasEnPantalla.filter(m => m.estado === 'libre').length,
-    ocupadas: mesasEnPantalla.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length,
-    porcobrar: mesasEnPantalla.filter(m => m.estado === 'pendiente_cobro').length,
+    libres: mesas.filter(m => estadoDe(m) === 'libre').length,
+    ocupadas: mesas.filter(m => estadoDe(m) !== 'libre' && estadoDe(m) !== 'cerrada').length,
+    porcobrar: mesas.filter(m => estadoDe(m) === 'pendiente_cobro').length,
   };
+
+  const tooltipDe = (mesaId: string) => {
+    const mesa = mesas.find(m => m.id === mesaId);
+    if (!mesa) return null;
+    const estado = estadoDe(mesa);
+    const config = estadoMesaConfig[estado];
+    const pedido = estado === 'libre' || estado === 'cerrada' ? undefined : pedidoAbiertoDeMesa(mesa.id, pedidos);
+    const detalle = pedido ? detalleDePedido(pedido) : undefined;
+    return (
+      <>
+        <p className="text-sm font-bold text-slate-800">{nombreDeMesa(mesa)}</p>
+        <p className={`mt-0.5 flex items-center gap-1.5 font-semibold ${config.color}`}>
+          <span className={`h-2 w-2 rounded-full ${config.dot}`} />{config.label}
+        </p>
+        {detalle && <p className="mt-0.5 text-slate-500">{detalle}</p>}
+        <dl className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-slate-500">
+          {pedido ? (
+            <>
+              <dt>Personas</dt><dd className="text-right font-medium text-slate-700">{pedido.cantidad_personas}</dd>
+              <dt>Ocupada hace</dt><dd className="text-right font-medium text-slate-700">{textoDuracion(minutosAbierta(pedido, ahora))}</dd>
+              <dt>Consumo</dt><dd className="text-right font-medium text-slate-700">${pedido.total.toLocaleString('es-AR')}</dd>
+            </>
+          ) : (
+            <><dt>Capacidad</dt><dd className="text-right font-medium text-slate-700">{mesa.capacidad} personas</dd></>
+          )}
+        </dl>
+      </>
+    );
+  };
+
+  const mesaPanel = mesaAbierta ? mesas.find(m => m.id === mesaAbierta.id) : undefined;
+  const estadoPanel = mesaPanel ? estadoDe(mesaPanel) : 'libre';
+
+  const resumenSectores: SectorOption[] = [...apartados, ...(huerfanas.length ? [{ id: SIN_APARTADO, label: 'Sin apartado' }] : [])];
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
-          <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center gap-3">
+          <div className="hidden sm:flex w-10 h-10 bg-emerald-100 rounded-xl items-center justify-center">
             <div className="w-3 h-3 bg-emerald-500 rounded-full" />
           </div>
           <div>
@@ -217,8 +202,8 @@ export default function Mesas() {
             <p className="text-xs text-slate-500">Mesas libres</p>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
-          <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+        <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center gap-3">
+          <div className="hidden sm:flex w-10 h-10 bg-blue-100 rounded-xl items-center justify-center">
             <Users size={18} className="text-blue-600" />
           </div>
           <div>
@@ -226,8 +211,8 @@ export default function Mesas() {
             <p className="text-xs text-slate-500">Mesas en uso</p>
           </div>
         </div>
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3">
-          <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+        <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4 flex items-center gap-3">
+          <div className="hidden sm:flex w-10 h-10 bg-red-100 rounded-xl items-center justify-center">
             <Clock size={18} className="text-red-600" />
           </div>
           <div>
@@ -237,13 +222,25 @@ export default function Mesas() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 p-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
-          <div>
-            <h2 className="font-semibold text-slate-800">Plano del Local</h2>
-            <p className="text-sm text-slate-500">Seleccioná una mesa para gestionar</p>
-          </div>
-          <div className="flex flex-wrap gap-1.5 bg-slate-100 rounded-xl p-1">
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6">
+        {editandoPlano && sectorActual && sectorActual.id !== SIN_APARTADO ? (
+          <EditorPlano
+            key={sectorActual.id}
+            sector={sectorActual}
+            mesas={mesas}
+            pedidos={pedidos}
+            onSalir={() => setEditandoPlano(false)}
+          />
+        ) : (
+          <>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-5">
+              <div>
+                <h2 className="font-semibold text-slate-800">Plano del Local</h2>
+                <p className="text-sm text-slate-500">
+                  {vistaTodos ? 'Elegí un apartado para ver su plano' : 'Tocá una mesa para gestionarla'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5 bg-slate-100 rounded-xl p-1">
             {sectores.map(s => (
               editingSectorId === s.id ? (
                 <div key={s.id} className="flex items-center gap-1 rounded-lg bg-white p-0.5 shadow-sm">
@@ -359,198 +356,113 @@ export default function Mesas() {
             )}
           </div>
 
-          <button
-            onClick={handleAddMesa}
-            className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-400"
-          >
-            <Plus size={16} />
-            Nueva mesa
-          </button>
-        </div>
-
-        {filteredMesas.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-4">
-            {filteredMesas.map(mesa => {
-              const cfg = estadoConfig[mesa.estado];
-              const isSelected = selectedMesa?.id === mesa.id;
-              return (
+              <div className="flex gap-2">
+                {puedeEditarPlano && sectorActual && sectorActual.id !== SIN_APARTADO && (
+                  <button
+                    onClick={() => { setMesaAbierta(null); setEditandoPlano(true); }}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition-colors hover:bg-amber-100"
+                  >
+                    <PenSquare size={16} />
+                    Editar plano
+                  </button>
+                )}
                 <button
-                  key={mesa.id}
-                  onClick={() => {
-                    setSelectedMesa(mesa);
-                    if (mesa.estado === 'libre') handleAbrirMesa(mesa);
-                    else openModal(mesa);
-                  }}
-                  className={`relative p-4 rounded-2xl border-2 transition-all duration-200 text-left hover:scale-105 hover:shadow-md ${cfg.bg} ${
-                    isSelected ? 'ring-2 ring-amber-500 ring-offset-2' : ''
-                  }`}
+                  onClick={handleAddMesa}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-400"
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-lg font-bold text-slate-800">{getMesaLabel(mesa)}</span>
-                    <div className={`w-2.5 h-2.5 rounded-full ${cfg.dot} animate-pulse`} />
-                  </div>
-                  <div className={`text-xs font-semibold mb-2 ${cfg.color}`}>{cfg.label}</div>
-                  <div className="flex items-center gap-1 text-xs text-slate-500">
-                    <Users size={10} />
-                    <span>{mesa.capacidad} pers.</span>
-                  </div>
-                  {mesa.empleado && (
-                    <div className="mt-2 text-xs text-slate-600 truncate font-medium">
-                      {mesa.empleado.nombre}
-                    </div>
-                  )}
-                  <div className="text-xs text-slate-400 mt-0.5">{getSectorLabel(mesa.sector, sectores)}</div>
+                  <Plus size={16} />
+                  Nueva mesa
                 </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center">
-            {mesas.length === 0 ? (
-              <>
+              </div>
+            </div>
+
+            {mesas.length === 0 && (vistaTodos || !planoValido(sectorActual?.plano).elementos.length) ? (
+              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center">
                 <p className="text-sm font-semibold text-slate-700">Todavía no hay mesas cargadas</p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Usá el botón "Nueva mesa" para armar el salón como está en tu local.
+                  Usá el botón "Nueva mesa" para armar el salón como está en tu local
+                  {puedeEditarPlano ? ', o entrá a un apartado y tocá "Editar plano" para usar el plano de referencia.' : '.'}
                 </p>
-              </>
-            ) : (
-              <>
-                <p className="text-sm font-semibold text-slate-700">
-                  No hay mesas en {getSectorLabel(sectorFiltro, sectores)}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Las mesas que se asignen a este sector van a aparecer acá.
-                </p>
-              </>
-            )}
-          </div>
-        )}
+              </div>
+            ) : vistaTodos ? (
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {resumenSectores.map(sector => {
+                  const { plano, enPlano } = planoDe(sector);
+                  const libres = enPlano.filter(m => m.estado === 'libre').length;
+                  const enUso = enPlano.filter(m => m.estado !== 'libre' && m.estado !== 'cerrada').length;
+                  const porCobrar = enPlano.filter(m => m.estado === 'pendiente_cobro').length;
+                  return (
+                    <button
+                      key={sector.id}
+                      type="button"
+                      onClick={() => setSectorFiltro(sector.id)}
+                      className="group rounded-2xl border border-slate-200 bg-white p-3 text-left transition-all hover:border-amber-300 hover:shadow-md"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-800">{sector.label}</span>
+                        <span className="text-xs text-slate-500">{enPlano.length} mesas</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-1.5">
+                        <PlanoInteractivo plano={plano} mesas={enPlano} estatico altoMaximo="190px" />
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-medium">
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">{libres} libres</span>
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">{enUso} en uso</span>
+                        {porCobrar > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-red-700">{porCobrar} por cobrar</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (() => {
+              const { plano, enPlano } = planoDe(sectorActual);
+              return (
+                <div className="space-y-3">
+                  {enPlano.length === 0 && (
+                    <p className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                      No hay mesas en {sectorActual.label}. Usá "Nueva mesa"{puedeEditarPlano ? ' o "Editar plano"' : ''} para agregarlas.
+                    </p>
+                  )}
+                  <PlanoInteractivo
+                    key={sectorActual.id}
+                    plano={plano}
+                    mesas={enPlano}
+                    onTocarMesa={id => setMesaAbierta({ id })}
+                    tooltip={tooltipDe}
+                  />
+                  {sectorActual.id === SIN_APARTADO && (
+                    <p className="text-xs text-slate-500">Estas mesas son de un apartado que ya no existe. Tocá una y elegí su apartado en la configuración.</p>
+                  )}
+                </div>
+              );
+            })()}
 
-        <div className="mt-6 pt-6 border-t border-slate-100 flex flex-wrap gap-3">
-          {Object.entries(estadoConfig).map(([estado, cfg]) => (
-            <div key={estado} className="flex items-center gap-1.5">
-              <div className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
-              <span className="text-xs text-slate-500">{cfg.label}</span>
+            <div className="mt-5 pt-5 border-t border-slate-100 flex flex-wrap gap-x-4 gap-y-2">
+              {Object.entries(estadoMesaConfig).map(([estado, cfg]) => (
+                <div key={estado} className="flex items-center gap-1.5">
+                  <span
+                    className="h-3.5 w-3.5 rounded-[4px] border-2"
+                    style={{ background: cfg.colores.relleno, borderColor: cfg.colores.borde }}
+                  />
+                  <span className="text-xs text-slate-600">{cfg.label}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
 
-      {showModal && modalMesa && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-800 text-lg">{getMesaLabel(modalMesa)}</h3>
-                <p className="text-sm text-slate-500">{getSectorLabel(modalMesa.sector, sectores)} · {modalMesa.capacidad} personas</p>
-              </div>
-              <button onClick={() => setShowModal(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Nombre de la mesa</label>
-                  <input
-                    value={editMesaName}
-                    onChange={e => setEditMesaName(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                    placeholder={`M${modalMesa.numero}`}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Capacidad</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={editMesaCapacidad}
-                    onChange={e => setEditMesaCapacidad(Math.max(1, Number(e.target.value) || 1))}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Disponibilidad</label>
-                <p className="text-xs text-slate-500 mb-2">Ocupada o libre lo marcan las comandas. Acá solo podés dejarla fuera de servicio.</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {([
-                    { id: 'libre' as const, label: 'Operativa' },
-                    { id: 'cerrada' as const, label: 'Fuera de servicio' },
-                  ]).map(est => (
-                    <button
-                      key={est.id}
-                      onClick={() => setEditEstado(est.id)}
-                      className={`px-3 py-2 rounded-xl text-xs font-medium border-2 transition-all ${
-                        (est.id === 'cerrada' ? editEstado === 'cerrada' : editEstado !== 'cerrada')
-                          ? `${estadoConfig[est.id].bg} border-current ${estadoConfig[est.id].color}`
-                          : 'bg-slate-50 border-slate-100 text-slate-500 hover:border-slate-200'
-                      }`}
-                    >
-                      {est.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Moza asignada</label>
-                <select
-                  value={editMoza}
-                  onChange={e => setEditMoza(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
-                >
-                  <option value="">Sin asignar</option>
-                  {mozas.map(m => (
-                    <option key={m.id} value={m.id}>{m.nombre} {m.apellido}</option>
-                  ))}
-                </select>
-              </div>
-
-              {editEstado !== 'cerrada' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Cantidad de personas</label>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => setEditPersonas(p => Math.max(1, p - 1))}
-                      className="w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50"
-                    >-</button>
-                    <span className="text-xl font-bold text-slate-800 w-8 text-center">{editPersonas}</span>
-                    <button
-                      onClick={() => setEditPersonas(p => Math.min(editMesaCapacidad, p + 1))}
-                      className="w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center text-slate-600 hover:bg-slate-50"
-                    >+</button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button
-                onClick={handleDeleteMesa}
-                className="py-2.5 px-3 rounded-xl border border-red-100 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <Trash2 size={15} />
-                Borrar
-              </button>
-              <button
-                onClick={() => setShowModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSave}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-400 transition-colors flex items-center justify-center gap-2"
-              >
-                <Check size={16} />
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
+      {mesaPanel && (
+        <PanelMesa
+          key={mesaPanel.id}
+          mesa={mesaPanel}
+          estado={estadoPanel}
+          pedido={estadoPanel === 'libre' || estadoPanel === 'cerrada' ? undefined : pedidoAbiertoDeMesa(mesaPanel.id, pedidos)}
+          sectores={sectores}
+          ahora={ahora}
+          configurar={mesaAbierta?.configurar}
+          onClose={() => setMesaAbierta(null)}
+        />
       )}
     </div>
   );

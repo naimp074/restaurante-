@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { ajustarCuenta, guardarClienteCuenta, mediosCobroCuenta, registrarPagoCuenta, revertirConsumoCuenta, saldoCliente, useCuentaCorriente } from '../lib/cuentaCorrienteStore';
 import type { ClienteCuenta, MedioCobroCuenta } from '../lib/cuentaCorrienteStore';
 import { nuevoId } from '../lib/ids';
+import { DetalleItem } from '../components/OpcionesProducto';
 
 const money = (value: number) => value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
 const inputClass = 'w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-amber-400';
@@ -84,7 +85,7 @@ export default function CuentaCorriente() {
             <div className="space-y-3">{historial.map(m => <div key={m.id} className="rounded-xl border border-slate-200 p-4">
               <div className="flex flex-wrap justify-between gap-2"><div><p className="font-semibold text-slate-800">{m.tipo === 'consumo' ? 'Consumo' : m.tipo === 'pago' ? 'Pago recibido' : 'Ajuste de saldo'}{m.metodo_pago ? ` · ${mediosCobroCuenta[m.metodo_pago]}` : ''}</p><p className="text-xs text-slate-500">{new Date(m.created_at).toLocaleString('es-AR')} · {m.responsable || 'Sin responsable'}</p></div><div className="text-right"><p className={`font-bold ${m.tipo === 'pago' || m.monto < 0 ? 'text-emerald-700' : 'text-orange-700'}`}>{m.tipo === 'pago' || m.monto < 0 ? '−' : '+'}{money(Math.abs(m.monto))}</p><p className="text-xs text-slate-500">Saldo: {money(m.saldo)}</p></div></div>
               <p className="text-sm text-slate-500 mt-2 break-words">{m.descripcion}</p>
-              {m.pedido && <details className="mt-3 text-sm"><summary className="cursor-pointer text-amber-700 font-semibold">Ver detalle del consumo</summary><div className="mt-2 space-y-2">{m.pedido.items?.filter(i => i.estado !== 'cancelado').map(i => <div key={i.id} className="flex justify-between gap-3 text-slate-600"><span>{i.cantidad} × {i.producto?.nombre || 'Producto'} · {money(i.precio_unitario)}</span><span>{money(i.subtotal)}</span></div>)}<div className="border-t pt-2 text-slate-500">Descuento: {money(m.pedido.descuento)} · Recargo: {money(m.pedido.recargo)}<p className="font-semibold text-slate-800 mt-1">Total del consumo: {money(m.pedido.total)}</p></div></div></details>}
+              {m.pedido && <details className="mt-3 text-sm"><summary className="cursor-pointer text-amber-700 font-semibold">Ver detalle del consumo</summary><div className="mt-2 space-y-2">{m.pedido.items?.filter(i => i.estado !== 'cancelado').map(i => <div key={i.id} className="flex justify-between gap-3 text-slate-600"><span>{i.cantidad} × {i.producto?.nombre || 'Producto'} · {money(i.precio_unitario)}<DetalleItem opciones={i.opciones} observaciones={i.observaciones} /></span><span>{money(i.subtotal)}</span></div>)}<div className="border-t pt-2 text-slate-500">Descuento: {money(m.pedido.descuento)} · Recargo: {money(m.pedido.recargo)}<p className="font-semibold text-slate-800 mt-1">Total del consumo: {money(m.pedido.total)}</p></div></div></details>}
               {m.tipo === 'consumo' && m.pedido && hasRole('admin', 'encargado') && !movimientos.some(otro => otro.id === `anula-${m.id}`) && (
                 <button
                   type="button"

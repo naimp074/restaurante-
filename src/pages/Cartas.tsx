@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Check, CreditCard as Edit2, Plus, Search, Tags, Trash2, X } from 'lucide-react';
-import type { CategoriaProducto, Producto } from '../lib/types';
+import type { CategoriaProducto, GrupoOpciones, Producto } from '../lib/types';
+import { EditorOpciones } from '../components/OpcionesProducto';
+import { limpiarGrupos } from '../lib/opcionesProducto';
 import { agregarCartaRestaurante, cartaRestauranteCargada } from '../lib/cartaRestaurante';
 import { loadCategorias, saveCategorias, useCategorias } from '../lib/categoriasStore';
 import { margenPorcentaje } from '../lib/costosReceta';
@@ -22,6 +24,7 @@ type FormularioProducto = {
   imagen_url: string;
   disponible: boolean;
   agotado: boolean;
+  grupos_opciones: GrupoOpciones[];
 };
 
 const campo = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white';
@@ -40,6 +43,7 @@ const formularioDe = (producto: Producto | null, categoriaId: string): Formulari
   imagen_url: producto?.imagen_url ?? '',
   disponible: producto?.disponible ?? true,
   agotado: producto?.agotado ?? false,
+  grupos_opciones: producto?.grupos_opciones ?? [],
 });
 
 /** Lo que se vende: categorías y productos. Las recetas se siguen editando en Combos. */
@@ -162,6 +166,7 @@ export default function Cartas() {
       imagen_url: formulario.imagen_url.trim() || undefined,
       disponible: formulario.disponible,
       agotado: formulario.agotado,
+      grupos_opciones: limpiarGrupos(formulario.grupos_opciones),
       updated_at: ahora,
     };
     saveProductos(previo
@@ -345,7 +350,7 @@ export default function Cartas() {
 
       {formulario && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <h3 className="font-bold text-slate-800">{formulario.id ? 'Editar producto' : 'Agregar producto'}</h3>
               <button onClick={() => setFormulario(null)} aria-label="Cerrar"><X size={18} className="text-slate-400" /></button>
@@ -399,6 +404,10 @@ export default function Cartas() {
                   Agotado
                 </label>
               </div>
+              <EditorOpciones
+                grupos={formulario.grupos_opciones}
+                onChange={grupos => setFormulario({ ...formulario, grupos_opciones: grupos })}
+              />
               {errorFormulario && <p role="alert" className="text-sm text-red-600">{errorFormulario}</p>}
             </div>
             <div className="flex flex-wrap gap-3 p-5 border-t border-slate-100">

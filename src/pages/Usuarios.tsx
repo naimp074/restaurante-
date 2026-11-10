@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Plus, CreditCard as Edit2, X, Check, Shield, Users as UsersIcon } from 'lucide-react';
+import { Plus, CreditCard as Edit2, X, Check, Shield, Users as UsersIcon, FileText } from 'lucide-react';
 import type { Profile, Rol } from '../lib/types';
 import { loadUsuarios, saveUsuarios, useUsuarios } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import CuentasAcceso from '../components/CuentasAcceso';
 import { nuevoId } from '../lib/ids';
 import { pantallasElegibles } from '../lib/paginas';
+import { EstadoCuentaSueldo, PagarSueldo } from '../components/Sueldos';
 
 const rolConfig: Record<Rol, { label: string; color: string; desc: string }> = {
   admin: { label: 'Administrador', color: 'bg-red-100 text-red-700', desc: 'Acceso completo al sistema' },
@@ -30,6 +31,8 @@ export default function Usuarios() {
   const [editUser, setEditUser] = useState<Partial<Profile & { email?: string; password?: string }> | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [selectedRol, setSelectedRol] = useState<Rol | null>(null);
+  const [cuentaDe, setCuentaDe] = useState<string | null>(null);
+  const [pagando, setPagando] = useState<{ usuarioId: string; periodo: string } | null>(null);
 
   // Siempre sobre la lista guardada: así no se pisan cambios que llegaron de otro dispositivo.
   const setUsuarios = (actualizar: (previos: Profile[]) => Profile[]) => saveUsuarios(actualizar(loadUsuarios()));
@@ -57,6 +60,7 @@ export default function Usuarios() {
         apellido: editUser.apellido || '',
         rol: editUser.rol || 'moza',
         activo: true,
+        sueldo: editUser.sueldo || undefined,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -161,6 +165,14 @@ export default function Usuarios() {
                         </td>
                         <td className="py-3 px-4 text-center">
                           <button
+                            onClick={() => setCuentaDe(u.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                            title="Estado de cuenta del sueldo"
+                            aria-label="Estado de cuenta del sueldo"
+                          >
+                            <FileText size={14} />
+                          </button>
+                          <button
                             onClick={() => openEdit(u)}
                             className="p-1.5 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
                           >
@@ -200,6 +212,13 @@ export default function Usuarios() {
 
       {!modoDemo && <CuentasAcceso />}
 
+      {cuentaDe && (
+        <EstadoCuentaSueldo usuarioId={cuentaDe} onCerrar={() => setCuentaDe(null)} onPagar={periodo => setPagando({ usuarioId: cuentaDe, periodo })} />
+      )}
+      {pagando && (
+        <PagarSueldo key={`${pagando.usuarioId}-${pagando.periodo}`} usuarioInicial={pagando.usuarioId} periodoInicial={pagando.periodo} onCerrar={() => setPagando(null)} />
+      )}
+
       {showForm && editUser && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -227,6 +246,18 @@ export default function Usuarios() {
                     placeholder="Apellido"
                   />
                 </div>
+              </div>
+              <div>
+                <label htmlFor="usuario-sueldo" className="block text-sm font-medium text-slate-700 mb-1.5">Sueldo mensual</label>
+                <input
+                  id="usuario-sueldo"
+                  type="number"
+                  min="0"
+                  value={editUser.sueldo || ''}
+                  onChange={e => setEditUser(u => ({ ...u, sueldo: Math.max(0, parseFloat(e.target.value) || 0) || undefined }))}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                  placeholder="Opcional. Con esto se ve si se le pagó el mes"
+                />
               </div>
               {!editId && modoDemo && (
                 <div>

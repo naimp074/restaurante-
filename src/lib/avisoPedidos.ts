@@ -6,7 +6,7 @@ import type { Pedido } from './types';
 const pedidoAbierto = (pedido: Pedido) => !['cobrado', 'cuenta_corriente', 'cancelado'].includes(pedido.estado);
 
 /** Dos pitidos cortos. Los navegadores solo dejan sonar después de que se tocó la pantalla. */
-const sonar = () => {
+export const sonar = () => {
   try {
     const Contexto = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Contexto) return;

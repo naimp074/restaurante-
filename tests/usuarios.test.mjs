@@ -8,7 +8,8 @@ import { build } from 'esbuild';
 const compiled = await build({
   stdin: {
     contents: `
-      export { crearManejador } from './supabase/functions/usuarios/manejador.ts';
+      export { crearManejador, dominioCuentas as dominioFuncion } from './supabase/functions/usuarios/manejador.ts';
+      export { dominioCuentas, emailParaEntrar, accesoDeCuenta, normalizarUsuario } from './src/lib/cuentaUsuario.ts';
       export { perfilVePagina, paginaInicialDe, paginasPorDefecto } from './src/lib/paginas.ts';
     `,
     resolveDir: process.cwd(),
@@ -20,7 +21,7 @@ const archivo = path.resolve('tests/usuarios.compiled.cjs');
 const mod = new Module(archivo);
 mod.filename = archivo;
 mod._compile(compiled.outputFiles[0].text, archivo);
-const { crearManejador, perfilVePagina, paginaInicialDe, paginasPorDefecto } = mod.exports;
+const { crearManejador, perfilVePagina, paginaInicialDe, paginasPorDefecto, dominioFuncion, dominioCuentas, emailParaEntrar, accesoDeCuenta, normalizarUsuario } = mod.exports;
 
 const admin = { rol: 'admin', activo: true, local_id: 'local-1' };
 let perfil, activados, borrados, resultadoCrear, falloActivar;
@@ -115,4 +116,29 @@ test('las pantallas por defecto de cada rol coinciden con lo que ya veía', () =
   assert.ok(paginasPorDefecto('moza').includes('ventas'));
   assert.ok(!paginasPorDefecto('moza').includes('caja'));
   assert.deepEqual(paginasPorDefecto('cocina'), ['cocina']);
+});
+
+test('se crea la cuenta solo con un usuario, sin email', async () => {
+  const { email, ...sinEmail } = valida;
+  const respuesta = await pedir({ ...sinEmail, usuario: 'Juan Pérez' });
+  assert.equal(respuesta.status, 200);
+  assert.equal(activados[0].cuenta.email, `juan.perez@${dominioCuentas}`);
+});
+
+test('rechaza un usuario muy corto o con símbolos', async () => {
+  const { email, ...sinEmail } = valida;
+  for (const usuario of ['jo', 'juan!', '']) {
+    const respuesta = await pedir({ ...sinEmail, usuario });
+    assert.equal(respuesta.status, 400, usuario);
+  }
+  assert.equal(activados.length, 0);
+});
+
+test('el login con usuario llega al mismo email interno que creó la función', () => {
+  assert.equal(dominioFuncion, dominioCuentas);
+  assert.equal(emailParaEntrar('  Juan '), `juan@${dominioCuentas}`);
+  assert.equal(emailParaEntrar('Ana@Gmail.com'), 'ana@gmail.com');
+  assert.equal(accesoDeCuenta(`juan@${dominioCuentas}`), 'juan');
+  assert.equal(accesoDeCuenta('ana@gmail.com'), 'ana@gmail.com');
+  assert.equal(normalizarUsuario('María José'), 'maria.jose');
 });

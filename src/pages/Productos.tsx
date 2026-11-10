@@ -11,6 +11,8 @@ import { getDescuentoProducto, loadListasPrecios, metodosListasPrecio, saveLista
 import { withStoreTransaction } from '../lib/storeSync';
 import { nuevoId } from '../lib/ids';
 import { cargarXlsx, type Xlsx } from '../lib/cargadores';
+import { EditorOpciones } from '../components/OpcionesProducto';
+import { limpiarGrupos } from '../lib/opcionesProducto';
 
 const unidades: UnidadMedida[] = ['gramos', 'kilos', 'mililitros', 'litros', 'unidad', 'feta', 'porcion', 'paquete'];
 
@@ -325,6 +327,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
     const precioVenta = editForm.precio_venta || 0;
     const margenGanancia = margenPorcentaje(precioVenta, costoProduccion);
     const categoria = categorias.find(c => c.id === editForm.categoria_id);
+    const gruposOpciones = limpiarGrupos(editForm.grupos_opciones);
 
     if (selectedProducto) {
       setProductos(prev => prev.map(p => p.id === selectedProducto.id ? {
@@ -334,6 +337,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         margen_ganancia: margenGanancia,
         categoria,
         receta,
+        grupos_opciones: gruposOpciones,
         updated_at: new Date().toISOString(),
       } as Producto : p));
     } else {
@@ -352,6 +356,7 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         categoria,
         receta: receta.map(item => ({ ...item, producto_id: newId })),
+        grupos_opciones: gruposOpciones,
       };
       setProductos(prev => [newProd, ...prev]);
     }
@@ -2051,6 +2056,10 @@ export default function Productos({ apartadoInicial }: ProductosProps) {
                     </div>
                   )}
                 </div>
+                <EditorOpciones
+                  grupos={editForm.grupos_opciones || []}
+                  onChange={grupos => setEditForm(f => ({ ...f, grupos_opciones: grupos }))}
+                />
               </div>
               {editForm.precio_venta && costoProduccionActual > 0 && (
                 <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">

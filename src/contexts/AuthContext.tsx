@@ -4,6 +4,7 @@ import type { Profile, Rol } from '../lib/types';
 import { mockProfile } from '../lib/mockData';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { asegurarUsuarioLocal } from '../lib/usuariosStore';
+import { emailParaEntrar } from '../lib/cuentaUsuario';
 
 interface AuthContextType {
   user: Profile | null;
@@ -28,7 +29,7 @@ const demoAccounts: Record<string, { profile: Profile; pass: string }> = {
 
 const mensajeError = (mensaje: string) => {
   const texto = mensaje.toLowerCase();
-  if (texto.includes('invalid login credentials')) return 'Email o contraseña incorrectos';
+  if (texto.includes('invalid login credentials')) return 'Usuario o contraseña incorrectos';
   if (texto.includes('email not confirmed')) return 'Falta confirmar el email de esta cuenta';
   if (texto.includes('too many requests')) return 'Demasiados intentos, esperá un momento';
   if (texto.includes('failed to fetch')) return 'No hay conexión con el servidor';
@@ -116,7 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!supabase) {
       const account = demoAccounts[email.trim().toLowerCase()];
       if (!account || account.pass !== password) {
-        return { error: 'Email o contraseña incorrectos' };
+        return { error: 'Usuario o contraseña incorrectos' };
       }
       asegurarUsuarioLocal(account.profile);
       setUser(account.profile);
@@ -125,7 +126,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      // Los mozos entran con su usuario ("juan"); se pasa al email interno de su cuenta.
+      email: emailParaEntrar(email),
       password,
     });
 

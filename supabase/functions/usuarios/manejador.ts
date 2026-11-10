@@ -1,8 +1,14 @@
 /**
- * POST /crear { email, password, nombre, apellido, rol, paginas }
+ * POST /crear { usuario | email, password, nombre, apellido, rol, paginas }
  * Crea la cuenta ya activa en el local del admin que la pide. Va en el servidor porque
  * crear usuarios sin cerrar la sesión del admin requiere la service role.
+ *
+ * El email no es obligatorio: con un usuario ("juan") se arma un email interno para Supabase
+ * y el mozo entra escribiendo solo "juan". Misma regla que src/lib/cuentaUsuario.ts.
  */
+export const dominioCuentas = 'usuarios.burgerpos.local';
+const normalizarUsuario = (texto: string) =>
+  texto.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '.');
 
 export type Perfil = { rol: string; activo: boolean; local_id: string | null };
 
@@ -30,9 +36,14 @@ const roles = ['admin', 'encargado', 'cajero', 'moza', 'cocina'];
 
 const leerCuenta = (cuerpo: Record<string, unknown>): DatosCuenta | { error: string } => {
   const texto = (campo: string) => (typeof cuerpo[campo] === 'string' ? (cuerpo[campo] as string).trim() : '');
-  const email = texto('email').toLowerCase();
+  const usuario = normalizarUsuario(texto('usuario'));
+  const email = usuario && !usuario.includes('@') ? `${usuario}@${dominioCuentas}` : (texto('email') || usuario).toLowerCase();
   const password = typeof cuerpo.password === 'string' ? cuerpo.password : '';
   const rol = texto('rol');
+  if (!texto('usuario') && !texto('email')) return { error: 'Falta el usuario para entrar.' };
+  if (usuario && !usuario.includes('@') && !/^[a-z0-9][a-z0-9._-]{2,29}$/.test(usuario)) {
+    return { error: 'El usuario tiene que tener de 3 a 30 letras o números (puede llevar punto, guion o guion bajo).' };
+  }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: 'El email no es válido.' };
   if (password.length < 8) return { error: 'La contraseña tiene que tener al menos 8 caracteres.' };
   if (!texto('nombre')) return { error: 'Falta el nombre.' };

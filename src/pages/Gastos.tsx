@@ -9,7 +9,6 @@ import {
   loadCuentasDinero,
   loadMovimientosFinancieros,
   registrarEntradaCuenta,
-  registrarSalidaCuenta,
   saveCuentasDinero,
   transferirEntreCuentas,
 } from '../lib/finance';
@@ -18,6 +17,9 @@ import { dayKey } from '../lib/fechas';
 import { saveGastos, useGastos } from '../lib/gastosStore';
 import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
 import { nuevoId } from '../lib/ids';
+import { useUsuarios } from '../lib/usuariosStore';
+import { SueldosDelMes } from '../components/Sueldos';
+import { nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -38,6 +40,8 @@ const metodosConfig: Record<MetodoPago, string> = {
   tarjeta: 'Tarjeta',
   debito: 'Débito',
   credito: 'Crédito',
+  // Solo para leer cobros: los gastos todavía no se pagan por Mercado Pago.
+  mercado_pago: 'Mercado Pago',
   mixto: 'Mixto',
 };
 
@@ -131,6 +135,9 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const [traspasoDestinoId, setTraspasoDestinoId] = useState(cuentaBancoId);
   const [traspasoMonto, setTraspasoMonto] = useState('');
   const [traspasoError, setTraspasoError] = useState('');
+  const [empleadoId, setEmpleadoId] = useState('');
+  const [periodo, setPeriodo] = useState(periodoActual());
+  const usuarios = useUsuarios();
 
   useEffect(() => {
     const actualizar = () => {
@@ -189,6 +196,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     setMontoEfectivo('');
     setMontoTransferencia('');
     setGastoError('');
+    setEmpleadoId('');
+    setPeriodo(periodoActual());
   };
 
   const saveGasto = () => {
@@ -207,6 +216,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       setGastoError('Ingresá un importe mayor que cero para efectivo y transferencia.');
       return;
     }
+    const empleado = categoria === 'sueldo' ? usuarios.find(u => u.id === empleadoId) : undefined;
 
     const gasto: Gasto = {
       id: nuevoId('gasto'),
@@ -229,33 +239,14 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       estado,
       vencimiento,
       recurrente,
+      // Un sueldo con persona elegida suma a su estado de cuenta.
+      empleado_id: empleado?.id,
+      periodo: empleado ? periodo : undefined,
+      sueldo_mes: empleado?.sueldo,
     };
 
-    saveGastos([gasto, ...gastos]);
-    const efectivoCajaDia = estado === 'pagado' && alcance === 'caja_dia' && (metodoPago === 'efectivo' || metodoPago === 'mixto');
-    const montoEfectivoCaja = metodoPago === 'mixto' ? efectivoMixto : metodoPago === 'efectivo' ? parsedMonto : 0;
-    if (efectivoCajaDia && montoEfectivoCaja > 0) aplicarGastoEnCajaDia(fecha, montoEfectivoCaja, 1);
-    if (estado === 'pagado' && metodoPago === 'mixto') {
-      gasto.pagos_divididos?.forEach(parte => registrarSalidaCuenta({
-        cuenta_id: alcance === 'caja_dia' && parte.metodo_pago === 'efectivo' ? cuentaCajaDiaId : parte.cuenta_id,
-        monto: parte.monto,
-        descripcion: `${gasto.concepto} (${metodosConfig[parte.metodo_pago]})`, origen: 'gasto', fecha,
-        metodo_pago: parte.metodo_pago, proveedor_id: proveedorId || undefined, creado_por: gasto.creado_por,
-      }));
-      setCuentas(loadCuentasDinero());
-    } else if (estado === 'pagado' && cuentaOrigenId) {
-      registrarSalidaCuenta({
-        cuenta_id: alcance === 'caja_dia' && metodoPago === 'efectivo' ? cuentaCajaDiaId : cuentaOrigenId,
-        monto: parsedMonto,
-        descripcion: gasto.concepto,
-        origen: 'gasto',
-        fecha,
-        metodo_pago: metodoPago,
-        proveedor_id: proveedorId || undefined,
-        creado_por: gasto.creado_por,
-      });
-      setCuentas(loadCuentasDinero());
-    }
+    registrarGasto(gasto);
+    setCuentas(loadCuentasDinero());
     resetForm();
     setShowForm(false);
   };
@@ -760,6 +751,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
         </button>
       </div>
 
+      <SueldosDelMes />
+
       <div className="grid grid-cols-2 gap-3 bg-white rounded-2xl border border-slate-200 p-4">
         <div>
           <label className="block text-xs font-semibold text-slate-500 mb-1.5">Estado</label>
@@ -1021,6 +1014,27 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                       <option key={key} value={key}>{categoriasConfig[key].label}</option>
                     ))}
                   </select>
+                  {categoria === 'sueldo' && (
+                    <div className="mt-2 space-y-2">
+                      <select
+                        value={empleadoId}
+                        onChange={e => {
+                          setEmpleadoId(e.target.value);
+                          const elegido = usuarios.find(u => u.id === e.target.value);
+                          if (elegido && !concepto.trim()) setConcepto(`Sueldo ${nombreUsuario(elegido)}`);
+                        }}
+                        aria-label="A quién se le paga"
+                        className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
+                      >
+                        <option value="">¿A quién? (opcional)</option>
+                        {usuarios.filter(u => u.activo).map(u => <option key={u.id} value={u.id}>{nombreUsuario(u)}</option>)}
+                      </select>
+                      {empleadoId && (
+                        <input type="month" value={periodo} onChange={e => e.target.value && setPeriodo(e.target.value)} aria-label="Mes que se paga"
+                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400" />
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Método</label>
@@ -1029,7 +1043,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                     onChange={e => { setMetodoPago(e.target.value as MetodoPago); setGastoError(''); }}
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white"
                   >
-                    {(Object.keys(metodosConfig) as MetodoPago[]).map(key => (
+                    {(Object.keys(metodosConfig) as MetodoPago[]).filter(key => key !== 'mercado_pago').map(key => (
                       <option key={key} value={key}>{metodosConfig[key]}</option>
                     ))}
                   </select>

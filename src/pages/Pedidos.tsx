@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed } from 'lucide-react';
-import type { Mesa, Pedido, PedidoItem, Producto } from '../lib/types';
+import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2 } from 'lucide-react';
+import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, TipoEventoComanda } from '../lib/types';
+import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
+import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
 import { useCategorias } from '../lib/categoriasStore';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { useProductos } from '../lib/productosStore';
@@ -9,6 +11,14 @@ import { useMozas } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import { nuevoId } from '../lib/ids';
 import { esDeSalon } from '../lib/pedidosCanal';
+import RelojItem from '../components/RelojItem';
+import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
+import {
+  anularItem, bloqueoEdicion, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
+  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, nombreMedio, nuevaSolicitud, puedeAnularItems, type Actor,
+} from '../lib/cobroComanda';
+import SolicitarCobro from '../components/SolicitarCobro';
+import PedirMotivo from '../components/PedirMotivo';
 
 const estadoItemColors: Record<string, string> = {
   pendiente: 'bg-yellow-100 text-yellow-700',
@@ -23,6 +33,19 @@ const estadoItemLabels: Record<string, string> = {
   listo: 'Listo',
   entregado: 'Entregado',
   cancelado: 'Cancelado',
+};
+const textoEvento: Record<TipoEventoComanda, string> = {
+  enviado_cocina: 'Envió a cocina',
+  item_modificado: 'Corrigió',
+  item_eliminado: 'Sacó',
+  item_anulado: 'Anuló',
+  cobro_solicitado: 'Pidió el cobro',
+  cobro_cancelado: 'Canceló el pedido de cobro',
+  ticket_emitido: 'Caja imprimió el ticket',
+  ticket_anulado: 'Caja anuló el ticket',
+  cobro_rechazado: 'Caja devolvió el cobro',
+  pagada: 'Caja registró el pago',
+  pago_anulado: 'Caja anuló el cobro',
 };
 // Esta pantalla es del salón: los pedidos para llevar, delivery y PedidosYa tienen su apartado.
 const pedidoAbierto = (pedido: Pedido) => esDeSalon(pedido) && !['cobrado', 'cuenta_corriente', 'cancelado'].includes(pedido.estado);
@@ -40,6 +63,17 @@ export default function Pedidos() {
   const [newMozaId, setNewMozaId] = useState(() => (user && (user.rol === 'moza' || user.rol === 'encargado') ? user.id : ''));
   const borradorId = useRef<string | null>(null);
   const [pedidoError, setPedidoError] = useState('');
+  // Producto al que se le están eligiendo opciones; con item, se está corrigiendo uno ya cargado.
+  const [eligiendo, setEligiendo] = useState<{ producto: Producto; item?: PedidoItem } | null>(null);
+  const [verCobro, setVerCobro] = useState(false);
+  const [cobroError, setCobroError] = useState('');
+  const [enviandoCobro, setEnviandoCobro] = useState(false);
+  const cobroEnProceso = useRef(false);
+  const [anulando, setAnulando] = useState<PedidoItem | null>(null);
+  const [anularError, setAnularError] = useState('');
+  const [verHistorial, setVerHistorial] = useState(false);
+  const panelProductos = useRef<HTMLDivElement>(null);
+  const actor: Actor = { id: user?.id, nombre: [user?.nombre, user?.apellido].filter(Boolean).join(' ') || 'Sin usuario', rol: user?.rol };
 
   const catalogoProductos = useProductos();
   const categorias = useCategorias();
@@ -52,7 +86,11 @@ export default function Pedidos() {
     const matchBusq = p.nombre.toLowerCase().includes(busqueda.toLowerCase());
     return matchCat && matchBusq && p.disponible && !p.agotado;
   });
-  const pendingItemsToKitchen = selectedPedido?.items?.filter(i => i.estado === 'pendiente') || [];
+  const pendingItemsToKitchen = selectedPedido ? itemsSinEnviar(selectedPedido) : [];
+  const esBorrador = Boolean(selectedPedido && selectedPedido.id === borradorId.current);
+  // Con un cobro en caja no se toca el contenido: el importe tiene que seguir siendo el pedido.
+  const bloqueo = selectedPedido && !esBorrador ? bloqueoEdicion(selectedPedido) : null;
+  const tieneItems = Boolean(selectedPedido?.items?.some(i => i.estado !== 'cancelado'));
 
   useEffect(() => {
     setSelectedPedido(actual => {
@@ -64,21 +102,32 @@ export default function Pedidos() {
     });
   }, [pedidos]);
 
-  const addItem = (producto: Producto) => {
+  const elegirProducto = (producto: Producto) => {
+    if (tieneOpciones(producto)) setEligiendo({ producto });
+    else addItem(producto);
+  };
+
+  const addItem = (producto: Producto, opciones: OpcionElegida[] = [], observaciones = '') => {
     if (!selectedPedido) return;
-    const existing = selectedPedido.items?.find(i => i.producto_id === producto.id && i.estado === 'pendiente');
+    if (bloqueo) { setPedidoError(bloqueo); return; }
+    // Solo se suma a lo que todavía no se mandó: lo que cocina ya tiene sale como renglón nuevo.
+    const existing = selectedPedido.items?.find(i => itemSinEnviar(i, selectedPedido) && salenIgual(i, producto.id, opciones, observaciones));
     if (existing) {
       updateItemQty(existing, existing.cantidad + 1);
     } else {
+      const precio = precioConOpciones(producto.precio_venta, opciones);
       const newItem: PedidoItem = {
         id: nuevoId('item'),
         pedido_id: selectedPedido.id,
         producto_id: producto.id,
         cantidad: 1,
-        precio_unitario: producto.precio_venta,
-        subtotal: producto.precio_venta,
-        observaciones: '',
+        precio_unitario: precio,
+        subtotal: precio,
+        observaciones,
+        opciones: opciones.length ? opciones : undefined,
         estado: 'pendiente',
+        // En una comanda ya enviada, cocina no lo ve hasta que lo manden.
+        sin_enviar: selectedPedido.estado !== 'abierto' ? true : undefined,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         producto,
@@ -89,6 +138,21 @@ export default function Pedidos() {
 
   const updateItemQty = (item: PedidoItem, qty: number) => {
     if (!selectedPedido) return;
+    if (bloqueo) { setPedidoError(bloqueo); return; }
+    if (!itemSinEnviar(item, selectedPedido)) {
+      // Ya está en cocina sin empezar: sumar va como renglón nuevo; restar o sacar queda anotado.
+      if (qty > item.cantidad) {
+        const producto = catalogoProductos.find(p => p.id === item.producto_id) || item.producto;
+        if (producto) addItem(producto, item.opciones, item.observaciones);
+        return;
+      }
+      try {
+        updatePedido(corregirItemPendiente(selectedPedido, item.id, { cantidad: qty }, actor));
+      } catch (error) {
+        setPedidoError(error instanceof Error ? error.message : 'No se pudo corregir el producto.');
+      }
+      return;
+    }
     let items = selectedPedido.items || [];
     if (qty <= 0) {
       items = items.filter(i => i.id !== item.id);
@@ -102,6 +166,31 @@ export default function Pedidos() {
     updatePedido({ ...selectedPedido, items });
   };
 
+  const corregirItem = (item: PedidoItem, producto: Producto, opciones: OpcionElegida[], observaciones: string) => {
+    if (!selectedPedido) return;
+    if (bloqueo) { setPedidoError(bloqueo); return; }
+    const precio = precioConOpciones(producto.precio_venta, opciones);
+    if (!itemSinEnviar(item, selectedPedido)) {
+      try {
+        updatePedido(corregirItemPendiente(selectedPedido, item.id, { opciones, observaciones, precio_unitario: precio }, actor));
+      } catch (error) {
+        setPedidoError(error instanceof Error ? error.message : 'No se pudo corregir el producto.');
+      }
+      return;
+    }
+    updatePedido({
+      ...selectedPedido,
+      items: (selectedPedido.items || []).map(i => (i.id === item.id ? {
+        ...i,
+        opciones: opciones.length ? opciones : undefined,
+        observaciones,
+        precio_unitario: precio,
+        subtotal: precio * i.cantidad,
+        updated_at: new Date().toISOString(),
+      } : i)),
+    });
+  };
+
   const updatePedido = (updated: Pedido) => {
     const actuales = loadDemoPedidos();
     const esNuevo = updated.id === borradorId.current;
@@ -109,6 +198,13 @@ export default function Pedidos() {
     const mesa = loadMesas().find(item => item.id === updated.mesa_id);
     if (!mesa || mesa.estado === 'cerrada' || (!esNuevo && (!guardado || !pedidoAbierto(guardado)))) {
       setPedidoError('La mesa o la comanda ya no está disponible. Seleccioná otra mesa.');
+      return;
+    }
+    const bloqueoGuardado = !esNuevo && guardado ? bloqueoEdicion(guardado) : null;
+    if (bloqueoGuardado) {
+      // Otro dispositivo (o caja) cambió la comanda mientras se editaba acá.
+      setSelectedPedido(guardado || null);
+      setPedidoError(bloqueoGuardado);
       return;
     }
     const otroPedido = esNuevo && actuales.find(pedido => pedido.mesa_id === updated.mesa_id && pedidoAbierto(pedido));
@@ -129,12 +225,56 @@ export default function Pedidos() {
 
   const sendToKitchen = () => {
     if (!selectedPedido) return;
-    const updated = {
-      ...selectedPedido,
-      estado: 'en_preparacion' as const,
-      updated_at: new Date().toISOString(),
-    };
-    updatePedido(updated);
+    updatePedido(enviarACocina(selectedPedido, actor));
+  };
+
+  /** Cambios del cobro: se aplican sobre lo guardado, no sobre lo que muestra la pantalla. */
+  const guardarCobro = (cambio: (pedido: Pedido) => Pedido): string => {
+    if (!selectedPedido) return 'Elegí una mesa.';
+    const actuales = loadDemoPedidos();
+    const guardado = actuales.find(pedido => pedido.id === selectedPedido.id);
+    if (!guardado || !pedidoAbierto(guardado)) return 'La comanda ya no está abierta.';
+    try {
+      const final = cambio(guardado);
+      saveDemoPedidos(actuales.map(pedido => (pedido.id === final.id ? final : pedido)));
+      setSelectedPedido(final);
+      setPedidoError('');
+      return '';
+    } catch (error) {
+      setSelectedPedido(guardado);
+      return error instanceof Error ? error.message : 'No se pudo guardar.';
+    }
+  };
+
+  const solicitarCobro = (metodo: MetodoPago) => {
+    // Un doble toque no manda dos pedidos de cobro (y nuevaSolicitud rechaza si ya hay uno).
+    if (cobroEnProceso.current) return;
+    cobroEnProceso.current = true;
+    setEnviandoCobro(true);
+    const error = guardarCobro(pedido => nuevaSolicitud(pedido, metodo, actor));
+    cobroEnProceso.current = false;
+    setEnviandoCobro(false);
+    setCobroError(error);
+    if (!error) setVerCobro(false);
+  };
+
+  const retirarSolicitud = () => setPedidoError(guardarCobro(pedido => cancelarSolicitud(pedido, actor)));
+
+  const abrirEdicion = () => {
+    setShowAddProduct(true);
+    setPedidoError('');
+    window.setTimeout(() => panelProductos.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+  };
+
+  const confirmarAnulacion = (motivo: string) => {
+    if (!selectedPedido || !anulando) return;
+    try {
+      updatePedido(anularItem(selectedPedido, anulando.id, motivo, actor));
+      setAnulando(null);
+      setAnularError('');
+    } catch (error) {
+      setAnularError(error instanceof Error ? error.message : 'No se pudo anular.');
+    }
   };
 
   const prepararPedido = (mesa: Mesa, personas: number, mozaId: string): Pedido => ({
@@ -151,10 +291,14 @@ export default function Pedidos() {
       mesa, empleado: mozas.find(e => e.id === mozaId), items: [],
   });
 
-  const seleccionarMesa = (mesa: Mesa) => {
+  const seleccionarMesa = (mesa: Mesa, apertura?: { personas?: number; mozaId?: string }) => {
     if (mesa.estado === 'cerrada') return;
     const abierto = loadDemoPedidos().find(pedido => pedido.mesa_id === mesa.id && pedidoAbierto(pedido));
-    const seleccionado = abierto || prepararPedido(mesa, Math.min(2, Math.max(1, mesa.capacidad)), mesa.empleado_id || newMozaId);
+    const seleccionado = abierto || prepararPedido(
+      mesa,
+      apertura?.personas ?? Math.min(2, Math.max(1, mesa.capacidad)),
+      apertura?.mozaId || mesa.empleado_id || newMozaId,
+    );
     borradorId.current = abierto ? null : seleccionado.id;
     setSelectedPedido(seleccionado);
     setShowAddProduct(true);
@@ -162,6 +306,16 @@ export default function Pedidos() {
     setBusqueda('');
     setCategoriaFiltro('todos');
   };
+
+  // Llegó desde el plano de Mesas: abre esa mesa como si la hubieran tocado acá.
+  useEffect(() => {
+    const pedida = tomarMesaAAbrir();
+    if (!pedida) return;
+    const mesa = loadMesas().find(item => item.id === pedida.mesaId);
+    if (mesa) seleccionarMesa(mesa, pedida);
+    // Solo al entrar a la pantalla.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const createOrder = () => {
     const mesa = loadMesas().find(m => m.id === newMesaId);
@@ -234,7 +388,7 @@ export default function Pedidos() {
                   </div>
                   {pedido ? (
                     <p className="text-[11px] text-slate-500 mt-1">
-                      {pedido.estado === 'en_preparacion' ? 'En preparación' : pedido.estado === 'listo' ? 'Listo' : pedido.estado === 'entregado' ? 'Entregado' : 'Comanda abierta'} · {tiempoAbierto(pedido.hora_apertura)}
+                      {pedido.solicitud_cobro && estadoCobro(pedido) !== 'pagada' ? estadoCobroConfig[estadoCobro(pedido)].label : pedido.estado === 'en_preparacion' ? 'En preparación' : pedido.estado === 'listo' ? 'Listo' : pedido.estado === 'entregado' ? 'Entregado' : 'Comanda abierta'} · {tiempoAbierto(pedido.hora_apertura)}
                     </p>
                   ) : !cerrada && <p className="text-[11px] text-emerald-700 mt-1">Tocá para agregar pedido</p>}
                 </button>
@@ -261,7 +415,9 @@ export default function Pedidos() {
                   </div>
                   <button
                     onClick={() => setShowAddProduct(!showAddProduct)}
-                    className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                    disabled={Boolean(bloqueo)}
+                    title={bloqueo || undefined}
+                    className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:hover:bg-amber-500 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
                   >
                     <Plus size={14} />
                     Agregar producto
@@ -285,6 +441,30 @@ export default function Pedidos() {
                   </div>
                 )}
                 {pedidoError && <p role="alert" className="mt-3 text-sm text-red-600">{pedidoError}</p>}
+                {selectedPedido.solicitud_cobro && !esBorrador && (() => {
+                  const solicitud = selectedPedido.solicitud_cobro;
+                  if (!solicitud) return null;
+                  const estado = estadoCobro(selectedPedido);
+                  const hora = new Date(solicitud.solicitada_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+                  return (
+                    <div role="status" className={`mt-3 rounded-xl border p-3 text-sm ${estadoCobroConfig[estado].clase}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-semibold">{estadoCobroConfig[estado].label}</p>
+                        <p className="text-xs opacity-80">{nombreMedio(solicitud.metodo_pago)} · ${solicitud.total.toLocaleString('es-AR')} · {hora}</p>
+                      </div>
+                      {estado === 'solicitado' && <p className="mt-1 text-xs">Caja ya lo tiene. Hasta que lo resuelva, la comanda no se puede modificar.</p>}
+                      {estado === 'ticket_emitido' && <p className="mt-1 text-xs">Caja imprimió el ticket{solicitud.ticket_por_nombre ? ` (${solicitud.ticket_por_nombre})` : ''}. Pasá a buscarlo y cobrale al cliente.</p>}
+                      {estado === 'rechazada' && (
+                        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs">
+                            Caja la devolvió{solicitud.resuelta_por_nombre ? ` (${solicitud.resuelta_por_nombre})` : ''}: <strong>{solicitud.motivo_rechazo}</strong>. Corregí la comanda y volvé a pedir el cobro.
+                          </p>
+                          <button type="button" onClick={retirarSolicitud} className="text-xs font-semibold underline">Entendido</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="flex-1 overflow-y-auto p-5 space-y-2">
@@ -300,19 +480,36 @@ export default function Pedidos() {
                   selectedPedido.items?.map(item => (
                     <div key={item.id} className={`flex items-center gap-3 p-3 rounded-xl border ${item.estado === 'cancelado' ? 'opacity-40 bg-slate-50' : 'bg-slate-50 border-slate-100'}`}>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <p className="text-sm font-medium text-slate-800 truncate">{item.producto?.nombre}</p>
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${estadoItemColors[item.estado]}`}>
-                            {estadoItemLabels[item.estado]}
-                          </span>
+                          {itemSinEnviar(item, selectedPedido) && selectedPedido.estado !== 'abierto' ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-800">Sin enviar</span>
+                          ) : (
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${estadoItemColors[item.estado]}`}>
+                              {item.estado === 'cancelado' && item.motivo_anulacion ? 'Anulado' : estadoItemLabels[item.estado]}
+                            </span>
+                          )}
+                          <RelojItem item={item} />
                         </div>
-                        {item.observaciones && (
-                          <p className="text-xs text-amber-600 mt-0.5">* {item.observaciones}</p>
-                        )}
+                        <DetalleItem opciones={item.opciones} observaciones={item.observaciones} />
                         <p className="text-xs text-slate-500 mt-0.5">${item.precio_unitario.toLocaleString()} c/u</p>
+                        {item.motivo_anulacion && (
+                          <p className="text-xs text-red-600 mt-0.5">Anulado por {item.anulado_por || 'sin usuario'}: {item.motivo_anulacion}</p>
+                        )}
                       </div>
-                      {item.estado === 'pendiente' ? (
+                      {item.estado === 'pendiente' && !bloqueo ? (
                         <>
+                          <button
+                            onClick={() => {
+                              const producto = catalogoProductos.find(p => p.id === item.producto_id) || item.producto;
+                              if (producto) setEligiendo({ producto, item });
+                            }}
+                            className="flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700 px-2 py-1 rounded-lg hover:bg-amber-50"
+                            title="Elegir opciones o escribir una aclaración"
+                          >
+                            <MessageSquarePlus size={13} />
+                            <span className="hidden sm:inline">Aclarar</span>
+                          </button>
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => updateItemQty(item, item.cantidad - 1)}
@@ -332,6 +529,7 @@ export default function Pedidos() {
                           <button
                             onClick={() => updateItemQty(item, 0)}
                             className="text-red-400 hover:text-red-600 transition-colors"
+                            aria-label={`Sacar ${item.producto?.nombre || 'producto'}`}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -340,10 +538,43 @@ export default function Pedidos() {
                         <>
                           <span className="text-sm font-bold text-slate-800 w-8 text-center">x{item.cantidad}</span>
                           <p className="text-sm font-bold text-slate-800 w-20 text-right">${item.subtotal.toLocaleString()}</p>
+                          {item.estado !== 'cancelado' && item.estado !== 'pendiente' && !bloqueo && puedeAnularItems(user?.rol) && (
+                            <button
+                              onClick={() => { setAnulando(item); setAnularError(''); }}
+                              className="text-slate-400 hover:text-red-600 transition-colors"
+                              title="Anular (queda registrado)"
+                              aria-label={`Anular ${item.producto?.nombre || 'producto'}`}
+                            >
+                              <Ban size={14} />
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
                   ))
+                )}
+                {!esBorrador && (selectedPedido.historial?.length ?? 0) > 0 && (
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setVerHistorial(v => !v)}
+                      aria-expanded={verHistorial}
+                      className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-700"
+                    >
+                      <History size={13} />{verHistorial ? 'Ocultar historial' : `Ver historial (${selectedPedido.historial?.length})`}
+                    </button>
+                    {verHistorial && (
+                      <ol className="mt-2 space-y-1 border-l-2 border-slate-100 pl-3">
+                        {[...(selectedPedido.historial || [])].reverse().map(evento => (
+                          <li key={evento.id} className="text-xs text-slate-500">
+                            <span className="font-mono text-slate-400">{new Date(evento.at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
+                            {' · '}<span className="font-medium text-slate-700">{evento.usuario_nombre}</span>
+                            {' · '}{textoEvento[evento.tipo]}{evento.detalle ? `: ${evento.detalle}` : ''}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -359,24 +590,79 @@ export default function Pedidos() {
                       <span>-${selectedPedido.descuento.toLocaleString()}</span>
                     </div>
                   )}
+                  {selectedPedido.recargo > 0 && (
+                    <div className="flex justify-between text-sm text-orange-600">
+                      <span>Recargo</span>
+                      <span>${selectedPedido.recargo.toLocaleString()}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-bold text-lg text-slate-800 pt-1 border-t border-slate-200">
                     <span>Total</span>
                     <span>${selectedPedido.total.toLocaleString()}</span>
                   </div>
                 </div>
-                <button
-                  onClick={sendToKitchen}
-                  disabled={pendingItemsToKitchen.length === 0}
-                  className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Send size={16} />
-                  {pendingItemsToKitchen.length > 0 ? 'Enviar a Cocina' : 'Sin productos nuevos para enviar'}
-                </button>
+                {pendingItemsToKitchen.length > 0 || esBorrador || !tieneItems ? (
+                  // Hay algo nuevo para mandar (o todavía no hay nada que cobrar): el botón de siempre.
+                  <button
+                    onClick={sendToKitchen}
+                    disabled={pendingItemsToKitchen.length === 0}
+                    className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <Send size={16} />
+                    {pendingItemsToKitchen.length > 0 ? 'Enviar a Cocina' : 'Sin productos nuevos para enviar'}
+                  </button>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {selectedPedido.solicitud_cobro?.estado === 'solicitado' ? (
+                      <div className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full bg-amber-100 text-amber-800 border border-amber-200 font-semibold text-sm sm:text-base leading-tight text-center min-h-[3.25rem] px-2 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed"
+                        >
+                          <Hourglass size={16} className="shrink-0" />
+                          Cobro solicitado
+                        </button>
+                        <button type="button" onClick={retirarSolicitud} className="flex items-center justify-center gap-1 text-xs font-medium text-slate-500 hover:text-red-600">
+                          <Undo2 size={12} />Cancelar solicitud
+                        </button>
+                      </div>
+                    ) : selectedPedido.solicitud_cobro?.estado === 'ticket_emitido' ? (
+                      <button
+                        type="button"
+                        disabled
+                        className="w-full bg-blue-100 text-blue-800 border border-blue-200 font-semibold text-sm sm:text-base leading-tight text-center min-h-[3.25rem] px-2 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed"
+                      >
+                        <Hourglass size={16} className="shrink-0" />
+                        Ticket emitido · esperando pago
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setCobroError(''); setVerCobro(true); }}
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm sm:text-base leading-tight text-center min-h-[3.25rem] px-2 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-colors shadow-sm shadow-emerald-600/20"
+                      >
+                        <Banknote size={18} className="shrink-0" />
+                        Cobrar comanda
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={abrirEdicion}
+                      disabled={Boolean(bloqueo)}
+                      title={bloqueo || undefined}
+                      className="w-full self-start bg-white border border-slate-300 hover:border-amber-400 hover:bg-amber-50 disabled:opacity-50 disabled:hover:bg-white disabled:hover:border-slate-300 text-slate-700 font-semibold text-sm sm:text-base leading-tight text-center min-h-[3.25rem] px-2 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Pencil size={16} className="shrink-0" />
+                      Editar / Agregar productos
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
-            {showAddProduct && (
-              <div className="w-full xl:w-80 2xl:w-96 flex-shrink-0 bg-white rounded-2xl border border-slate-200 flex flex-col max-h-[70vh] xl:max-h-none">
+            {showAddProduct && !bloqueo && (
+              <div ref={panelProductos} className="w-full xl:w-80 2xl:w-96 flex-shrink-0 bg-white rounded-2xl border border-slate-200 flex flex-col max-h-[70vh] xl:max-h-none">
                 <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                   <h4 className="font-semibold text-slate-800">Agregar Productos</h4>
                   <button onClick={() => setShowAddProduct(false)}>
@@ -423,12 +709,12 @@ export default function Pedidos() {
                   {filteredProductos.map(prod => (
                     <button
                       key={prod.id}
-                      onClick={() => addItem(prod)}
+                      onClick={() => elegirProducto(prod)}
                       className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-amber-50 hover:border-amber-200 border border-slate-100 transition-all group"
                     >
                       <div className="text-left">
                         <p className="text-sm font-medium text-slate-800 group-hover:text-amber-700">{prod.nombre}</p>
-                        <p className="text-xs text-slate-400">{prod.categoria?.nombre}</p>
+                        <p className="text-xs text-slate-400">{prod.categoria?.nombre}{tieneOpciones(prod) ? ' · con opciones' : ''}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold text-slate-700">${prod.precio_venta.toLocaleString()}</span>
@@ -451,6 +737,45 @@ export default function Pedidos() {
           </div>
         )}
       </div>
+
+      {eligiendo && (
+        <ElegirOpciones
+          key={eligiendo.item?.id || eligiendo.producto.id}
+          producto={eligiendo.producto}
+          opcionesIniciales={eligiendo.item?.opciones}
+          observacionesIniciales={eligiendo.item?.observaciones}
+          cantidad={eligiendo.item?.cantidad}
+          textoConfirmar={eligiendo.item ? 'Guardar cambios' : 'Agregar al pedido'}
+          onCerrar={() => setEligiendo(null)}
+          onConfirmar={(opciones, observaciones) => {
+            if (eligiendo.item) corregirItem(eligiendo.item, eligiendo.producto, opciones, observaciones);
+            else addItem(eligiendo.producto, opciones, observaciones);
+            setEligiendo(null);
+          }}
+        />
+      )}
+
+      {verCobro && selectedPedido && (
+        <SolicitarCobro
+          pedido={selectedPedido}
+          enviando={enviandoCobro}
+          error={cobroError}
+          onCerrar={() => setVerCobro(false)}
+          onConfirmar={solicitarCobro}
+        />
+      )}
+
+      {anulando && (
+        <PedirMotivo
+          titulo={`Anular ${anulando.cantidad}x ${anulando.producto?.nombre || 'producto'}`}
+          descripcion="Cocina ya lo preparó o lo entregó. Queda tachado en la comanda, no se cobra y se registra quién lo anuló y por qué."
+          placeholder="Ej: se cayó el plato, el cliente lo rechazó…"
+          textoConfirmar="Anular producto"
+          error={anularError}
+          onCerrar={() => setAnulando(null)}
+          onConfirmar={confirmarAnulacion}
+        />
+      )}
 
       {showNewOrder && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
