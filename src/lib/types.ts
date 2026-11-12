@@ -406,6 +406,8 @@ export interface CajaDiaria {
   monto_esperado_efectivo: number;
   monto_cierre_efectivo?: number;
   diferencia_efectivo?: number;
+  monto_cierre_transferencia?: number;
+  diferencia_transferencia?: number;
   estado: EstadoCajaDiaria;
   opened_at: string;
   closed_at?: string;

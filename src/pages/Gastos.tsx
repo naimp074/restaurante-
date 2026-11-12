@@ -97,6 +97,9 @@ interface GastosProps {
   onNavigate?: (page: PageId) => void;
 }
 
+const tiposConcepto = ['Alquiler', 'Luz', 'Gas', 'Agua', 'Proveedor', 'Otros'] as const;
+type TipoConcepto = typeof tiposConcepto[number];
+
 export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const { user } = useAuth();
   const gastos = useGastos();
@@ -106,6 +109,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const [movimientos, setMovimientos] = useState(loadMovimientosFinancieros);
   const [proveedores] = useState<Proveedor[]>(loadProveedores);
   const [showForm, setShowForm] = useState(false);
+  const [tipoConcepto, setTipoConcepto] = useState<TipoConcepto | ''>('');
   const [concepto, setConcepto] = useState('');
   const [categoria, setCategoria] = useState<CategoriaGasto>('extra');
   const [alcance, setAlcance] = useState<AlcanceGasto>('caja_dia');
@@ -178,6 +182,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     .filter(gasto => filtroCuenta === 'todos' || gasto.cuenta_origen_id === filtroCuenta || gasto.pagos_divididos?.some(parte => parte.cuenta_id === filtroCuenta));
 
   const resetForm = () => {
+    setTipoConcepto('');
     setConcepto('');
     setCategoria('extra');
     setAlcance('caja_dia');
@@ -202,8 +207,22 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
 
   const saveGasto = () => {
     const parsedMonto = parseFloat(monto);
-    if (!concepto.trim() || !parsedMonto || parsedMonto <= 0) {
-      setGastoError('Completá el concepto y un monto mayor que cero.');
+    const proveedorElegido = proveedores.find(proveedor => proveedor.id === proveedorId);
+    const conceptoFinal = tipoConcepto === 'Otros'
+      ? concepto.trim()
+      : tipoConcepto === 'Proveedor' && proveedorElegido
+        ? `Proveedor - ${proveedorElegido.nombre}`
+        : tipoConcepto;
+    if (!tipoConcepto) {
+      setGastoError('Elegí el concepto del gasto.');
+      return;
+    }
+    if (!conceptoFinal) {
+      setGastoError('Escribí el concepto del gasto.');
+      return;
+    }
+    if (!parsedMonto || parsedMonto <= 0) {
+      setGastoError('Ingresá un monto mayor que cero.');
       return;
     }
     const efectivoMixto = parseFloat(montoEfectivo) || 0;
@@ -221,7 +240,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     const gasto: Gasto = {
       id: nuevoId('gasto'),
       fecha,
-      concepto: concepto.trim(),
+      concepto: conceptoFinal,
       categoria,
       alcance,
       metodo_pago: metodoPago,
@@ -889,13 +908,27 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Concepto *</label>
                 <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-2.5 focus-within:border-amber-400">
                   <ReceiptText size={15} className="text-slate-400" />
+                  <select
+                    value={tipoConcepto}
+                    onChange={e => { setTipoConcepto(e.target.value as TipoConcepto | ''); setGastoError(''); }}
+                    className="flex-1 text-sm outline-none bg-white"
+                  >
+                    <option value="">Elegí el concepto</option>
+                    {tiposConcepto.map(tipo => <option key={tipo} value={tipo}>{tipo}</option>)}
+                  </select>
+                </div>
+                {tipoConcepto === 'Otros' && (
                   <input
                     value={concepto}
-                    onChange={e => setConcepto(e.target.value)}
-                    className="flex-1 text-sm outline-none"
-                    placeholder="Ej: sueldo, alquiler, arreglo, compra extra"
+                    onChange={e => { setConcepto(e.target.value); setGastoError(''); }}
+                    className="mt-2 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                    placeholder="Escribí el concepto (ej: arreglo, sueldo, compra extra)"
+                    autoFocus
                   />
-                </div>
+                )}
+                {tipoConcepto === 'Proveedor' && (
+                  <p className="mt-1.5 text-xs text-slate-500">Elegí el proveedor más abajo y queda en el concepto.</p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -1021,7 +1054,10 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                         onChange={e => {
                           setEmpleadoId(e.target.value);
                           const elegido = usuarios.find(u => u.id === e.target.value);
-                          if (elegido && !concepto.trim()) setConcepto(`Sueldo ${nombreUsuario(elegido)}`);
+                          if (elegido && (!tipoConcepto || (tipoConcepto === 'Otros' && !concepto.trim()))) {
+                            setTipoConcepto('Otros');
+                            setConcepto(`Sueldo ${nombreUsuario(elegido)}`);
+                          }
                         }}
                         aria-label="A quién se le paga"
                         className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400 bg-white"
