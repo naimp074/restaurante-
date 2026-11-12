@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Clock, Check, ChefHat, Bell, AlertCircle } from 'lucide-react';
+import { Clock, Check, ChefHat, Bell, AlertCircle, Maximize2, X } from 'lucide-react';
 import type { Pedido, EstadoItem } from '../lib/types';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { canalDe, etiquetaPedido } from '../lib/pedidosCanal';
@@ -25,6 +25,8 @@ export default function Cocina() {
   const pedidos = usePedidos();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
+  // Comanda abierta en grande (para leerla bien en la tablet).
+  const [abiertaId, setAbiertaId] = useState<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -63,6 +65,28 @@ export default function Cocina() {
     }));
   };
 
+  /** Pasa a "listo" todo lo que todavía se está haciendo en esa comanda. */
+  const marcarTodoListo = (pedidoId: string) => {
+    saveDemoPedidos(loadDemoPedidos().map(p => {
+      if (p.id !== pedidoId) return p;
+      const items = p.items?.map(item =>
+        !item.sin_enviar && (item.estado === 'pendiente' || item.estado === 'en_preparacion') ? conEstado(item, 'listo') : item
+      );
+      const enviados = (items || []).filter(i => !i.sin_enviar);
+      const allReady = enviados.every(i => i.estado === 'listo' || i.estado === 'entregado' || i.estado === 'cancelado');
+      return { ...p, items, estado: allReady ? 'listo' : p.estado } as Pedido;
+    }));
+  };
+
+  const colorBoton = (estado: EstadoItem) =>
+    estado === 'pendiente'
+      ? 'bg-orange-500 hover:bg-orange-400 text-white'
+      : estado === 'en_preparacion'
+      ? 'bg-emerald-500 hover:bg-emerald-400 text-white'
+      : estado === 'listo'
+      ? 'bg-blue-500 hover:bg-blue-400 text-white'
+      : 'bg-slate-200 text-slate-500';
+
   const enCocina = pedidos.filter(p =>
     p.estado !== 'abierto' && p.estado !== 'entregado' && p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'
   );
@@ -71,6 +95,7 @@ export default function Cocina() {
   const pendingItems = enCocina.flatMap(p => itemsParaCocina(p).filter(i => i.estado === 'pendiente')).length;
   const inProgressItems = enCocina.flatMap(p => itemsParaCocina(p).filter(i => i.estado === 'en_preparacion')).length;
   const readyItems = enCocina.flatMap(p => itemsParaCocina(p).filter(i => i.estado === 'listo')).length;
+  const abierta = abiertaId ? activeOrders.find(p => p.id === abiertaId) || null : null;
 
   return (
     <div className="h-full flex flex-col space-y-4">
@@ -145,50 +170,50 @@ export default function Cocina() {
                     : 'border-slate-200'
                 }`}
               >
-                <div className={`px-4 py-3 flex items-center justify-between ${
+                <button
+                  type="button"
+                  onClick={() => setAbiertaId(pedido.id)}
+                  aria-label={`Ver en grande la comanda de ${etiquetaPedido(pedido)}`}
+                  className={`w-full px-4 py-3 flex items-center justify-between gap-3 text-left ${
                   activeItems.some(i => i.estado === 'listo') ? 'bg-emerald-50' : total > 900 ? 'bg-red-50' : 'bg-slate-50'
                 }`}>
-                  <div>
-                    <span className="font-bold text-slate-800">{etiquetaPedido(pedido)}</span>
+                  <div className="min-w-0">
+                    <span className="text-lg font-bold text-slate-800">{etiquetaPedido(pedido)}</span>
                     {canalDe(pedido) === 'salon'
                       ? <span className="text-sm text-slate-500 ml-2">{pedido.empleado?.nombre}</span>
                       : <span className={`text-[11px] font-semibold ml-2 px-1.5 py-0.5 rounded ${colorCanal[canalDe(pedido)]}`}>{pedido.externo?.tipo_entrega === 'delivery_plataforma' ? 'Lo retira PedidosYa' : pedido.direccion_entrega ? 'Delivery' : 'Retira en el local'}</span>}
-                    {pedido.observaciones && <p className="text-xs text-amber-700 mt-0.5">* {pedido.observaciones}</p>}
+                    {pedido.observaciones && <p className="text-sm font-medium text-amber-700 mt-0.5">* {pedido.observaciones}</p>}
                   </div>
-                  <div className={`flex items-center gap-1.5 font-mono font-bold text-sm ${timerColor}`}>
-                    <Clock size={14} />
-                    <span>{String(min).padStart(2, '0')}:{String(sec).padStart(2, '0')}</span>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <div className={`flex items-center gap-1.5 font-mono font-bold ${timerColor}`}>
+                      <Clock size={16} />
+                      <span>{String(min).padStart(2, '0')}:{String(sec).padStart(2, '0')}</span>
+                    </div>
+                    <span className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-slate-600 border border-slate-200">
+                      <Maximize2 size={13} />Ver
+                    </span>
                   </div>
-                </div>
+                </button>
 
                 <div className="p-4 space-y-2">
                   {itemsParaCocina(pedido).map(item => {
                     const cfg = estadoConfig[item.estado];
                     return (
-                      <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-50">
-                        <div className={`flex-shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold ${cfg?.bg} ${cfg?.color}`}>
-                          {cfg?.label}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-slate-700">x{item.cantidad}</span>
-                            <span className="text-sm font-medium text-slate-800 truncate">{item.producto?.nombre}</span>
-                            <RelojItem item={item} className="ml-auto shrink-0" />
+                      <div key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3 rounded-xl bg-slate-50">
+                        <div className="flex-1 min-w-[10rem]">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cfg?.bg} ${cfg?.color}`}>{cfg?.label}</span>
+                            <RelojItem item={item} />
                           </div>
-                          <DetalleItem opciones={item.opciones} observaciones={item.observaciones} className="font-medium" />
+                          <p className="mt-1 text-base font-semibold text-slate-800 break-words">
+                            <span className="font-bold text-slate-900">{item.cantidad}×</span> {item.producto?.nombre}
+                          </p>
+                          <DetalleItem opciones={item.opciones} observaciones={item.observaciones} className="text-sm font-medium" />
                         </div>
                         {item.estado !== 'entregado' && (
                           <button
                             onClick={() => advanceItemState(pedido.id, item.id)}
-                            className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                              item.estado === 'pendiente'
-                                ? 'bg-orange-500 hover:bg-orange-400 text-white'
-                                : item.estado === 'en_preparacion'
-                                ? 'bg-emerald-500 hover:bg-emerald-400 text-white'
-                                : item.estado === 'listo'
-                                ? 'bg-blue-500 hover:bg-blue-400 text-white'
-                                : 'bg-slate-200 text-slate-500'
-                            }`}
+                            className={`flex-shrink-0 min-h-[44px] px-4 py-2 rounded-xl text-sm font-semibold transition-all ${colorBoton(item.estado)}`}
                           >
                             {cfg?.action}
                           </button>
@@ -202,6 +227,84 @@ export default function Cocina() {
           })}
         </div>
       )}
+
+      {abierta && (() => {
+        const { min, sec, total } = getElapsed(abierta.hora_apertura);
+        const items = itemsParaCocina(abierta);
+        const quedanEnCocina = items.some(i => i.estado === 'pendiente' || i.estado === 'en_preparacion');
+        return (
+          <div className="fixed inset-0 z-50 flex flex-col bg-white" role="dialog" aria-label={`Comanda de ${etiquetaPedido(abierta)}`}>
+            <div className={`flex items-start justify-between gap-4 px-5 py-4 border-b ${total > 900 ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="min-w-0">
+                <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900">{etiquetaPedido(abierta)}</h2>
+                <p className="mt-1 text-base text-slate-600">
+                  {canalDe(abierta) === 'salon'
+                    ? abierta.empleado?.nombre && `Moza/o: ${abierta.empleado.nombre}`
+                    : abierta.externo?.tipo_entrega === 'delivery_plataforma' ? 'Lo retira PedidosYa' : abierta.direccion_entrega ? 'Delivery' : 'Retira en el local'}
+                </p>
+                {abierta.observaciones && (
+                  <p className="mt-2 rounded-xl bg-amber-100 px-3 py-2 text-lg font-semibold text-amber-900">* {abierta.observaciones}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <div className={`flex items-center gap-2 font-mono text-2xl font-bold ${getTimerColor(total)}`}>
+                  <Clock size={22} />
+                  {String(min).padStart(2, '0')}:{String(sec).padStart(2, '0')}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAbiertaId(null)}
+                  className="flex h-12 w-12 items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                  aria-label="Cerrar"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
+              {items.map(item => {
+                const cfg = estadoConfig[item.estado];
+                return (
+                  <div key={item.id} className={`flex flex-wrap items-center gap-4 rounded-2xl border-2 p-4 ${item.estado === 'entregado' ? 'border-slate-100 opacity-60' : 'border-slate-200'}`}>
+                    <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-3xl font-extrabold text-white">
+                      {item.cantidad}
+                    </span>
+                    <div className="flex-1 min-w-[12rem]">
+                      <p className="text-2xl sm:text-3xl font-bold text-slate-900 break-words">{item.producto?.nombre}</p>
+                      <DetalleItem opciones={item.opciones} observaciones={item.observaciones} className="text-lg sm:text-xl font-semibold" />
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className={`px-3 py-1 rounded-full text-sm font-semibold ${cfg?.bg} ${cfg?.color}`}>{cfg?.label}</span>
+                        <RelojItem item={item} className="text-sm" />
+                      </div>
+                    </div>
+                    {item.estado !== 'entregado' && (
+                      <button
+                        onClick={() => advanceItemState(abierta.id, item.id)}
+                        className={`min-h-[64px] min-w-[10rem] px-6 rounded-2xl text-lg font-bold transition-all ${colorBoton(item.estado)}`}
+                      >
+                        {cfg?.action}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {quedanEnCocina && (
+              <div className="border-t border-slate-200 p-4">
+                <button
+                  type="button"
+                  onClick={() => marcarTodoListo(abierta.id)}
+                  className="w-full min-h-[64px] rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-xl font-bold text-white flex items-center justify-center gap-2"
+                >
+                  <Check size={24} />Marcar toda la comanda como lista
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
