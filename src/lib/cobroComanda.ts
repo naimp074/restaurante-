@@ -1,4 +1,4 @@
-import type { EventoComanda, MetodoPago, Pedido, PedidoItem, Rol, SolicitudCobro, TipoEventoComanda } from './types';
+import type { EventoComanda, MetodoPago, Pedido, PedidoItem, RepartoMixto, Rol, SolicitudCobro, TipoEventoComanda } from './types';
 import { nuevoId } from './ids';
 
 /**
@@ -27,15 +27,45 @@ export const estadoCobroConfig: Record<EstadoCobro, { label: string; clase: stri
   rechazada: { label: 'Solicitud rechazada', clase: 'bg-red-100 text-red-700 border-red-200' },
 };
 
-/** Lo que puede elegir la moza. Mixto lo reparte caja, que es la que ve los importes. */
+/** Lo que puede elegir la moza. En mixto anota cuánto paga con cada medio. */
 export const mediosSolicitud: { id: MetodoPago; label: string }[] = [
   { id: 'efectivo', label: 'Efectivo' },
   { id: 'transferencia', label: 'Transferencia' },
   { id: 'debito', label: 'Tarjeta de débito' },
   { id: 'credito', label: 'Tarjeta de crédito' },
   { id: 'mercado_pago', label: 'Mercado Pago' },
-  { id: 'mixto', label: 'Pago mixto (lo reparte caja)' },
+  { id: 'mixto', label: 'Pago mixto' },
 ];
+
+export const mediosReparto: { id: keyof RepartoMixto; label: string }[] = [
+  { id: 'efectivo', label: 'Efectivo' },
+  { id: 'transferencia', label: 'Transferencia' },
+  { id: 'debito', label: 'Tarjeta de débito' },
+  { id: 'credito', label: 'Tarjeta de crédito' },
+];
+
+const centavos = (monto: number) => Math.round(monto * 100) / 100;
+
+export const totalReparto = (reparto: RepartoMixto) =>
+  centavos(mediosReparto.reduce((suma, medio) => suma + (reparto[medio.id] || 0), 0));
+
+/** "Efectivo $5.000 + Transferencia $3.800". */
+export const describirReparto = (reparto: RepartoMixto) => mediosReparto
+  .filter(medio => reparto[medio.id] > 0)
+  .map(medio => `${medio.label} $${reparto[medio.id].toLocaleString('es-AR')}`)
+  .join(' + ');
+
+/** Por qué el reparto no sirve para ese total, o null si está bien. */
+export const errorReparto = (reparto: RepartoMixto | undefined, total: number): string | null => {
+  if (!reparto) return 'Anotá cuánto paga con cada medio.';
+  const montos = mediosReparto.map(medio => reparto[medio.id] || 0);
+  if (!montos.every(monto => Number.isFinite(monto) && monto >= 0)) return 'Los importes no pueden ser negativos.';
+  if (montos.filter(monto => monto > 0).length < 2) return 'Un pago mixto usa dos medios o más.';
+  const diferencia = centavos(total - totalReparto(reparto));
+  if (diferencia > 0) return `Faltan $${diferencia.toLocaleString('es-AR')} para llegar al total.`;
+  if (diferencia < 0) return `Te pasaste $${(-diferencia).toLocaleString('es-AR')} del total.`;
+  return null;
+};
 
 export const nombreMedio = (metodo?: MetodoPago) =>
   mediosSolicitud.find(medio => medio.id === metodo)?.label ?? (metodo === 'tarjeta' ? 'Tarjeta' : 'Sin elegir');
@@ -124,16 +154,25 @@ export const enviarACocina = (pedido: Pedido, actor: Actor, at = new Date().toIS
   return conEvento(enviado, actor, 'enviado_cocina', nuevos.map(describir).join(', '), at);
 };
 
-export const nuevaSolicitud = (pedido: Pedido, metodo: MetodoPago, actor: Actor, at = new Date().toISOString()): Pedido => {
+export const nuevaSolicitud = (
+  pedido: Pedido,
+  metodo: MetodoPago,
+  actor: Actor,
+  at = new Date().toISOString(),
+  reparto?: RepartoMixto,
+): Pedido => {
   if (cerrada(pedido)) throw new Error('La comanda ya está cerrada.');
   if (cobroEnCurso(pedido)) throw new Error('Esta comanda ya tiene un pedido de cobro en caja.');
   if (!vivos(pedido).length) throw new Error('La comanda no tiene productos para cobrar.');
   if (itemsSinEnviar(pedido).length) throw new Error('Hay productos sin enviar a cocina. Enviálos o sacalos antes de pedir el cobro.');
   if (!mediosSolicitud.some(medio => medio.id === metodo)) throw new Error('Elegí cómo va a pagar.');
+  const problemaReparto = metodo === 'mixto' ? errorReparto(reparto, pedido.total) : null;
+  if (problemaReparto) throw new Error(problemaReparto);
   const solicitud: SolicitudCobro = {
     id: nuevoId('sol'),
     estado: 'solicitado',
     metodo_pago: metodo,
+    ...(metodo === 'mixto' && reparto ? { reparto: { ...reparto } } : {}),
     subtotal: pedido.subtotal,
     descuento: pedido.descuento || 0,
     recargo: pedido.recargo || 0,
@@ -143,7 +182,7 @@ export const nuevaSolicitud = (pedido: Pedido, metodo: MetodoPago, actor: Actor,
     solicitada_por_nombre: actor.nombre,
   };
   const conSolicitud: Pedido = { ...pedido, solicitud_cobro: solicitud, cuenta_pedida_at: pedido.cuenta_pedida_at || at, updated_at: at };
-  return conEvento(conSolicitud, actor, 'cobro_solicitado', `${nombreMedio(metodo)} · $${pedido.total.toLocaleString('es-AR')}`, at);
+  return conEvento(conSolicitud, actor, 'cobro_solicitado', `${metodo === 'mixto' && reparto ? `Mixto: ${describirReparto(reparto)}` : nombreMedio(metodo)} ·$${pedido.total.toLocaleString('es-AR')}`, at);
 };
 
 /** La moza la retira antes de que caja imprima. Con ticket ya no: lo anula caja. */
