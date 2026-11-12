@@ -411,6 +411,9 @@ export interface CajaDiaria {
   estado: EstadoCajaDiaria;
   opened_at: string;
   closed_at?: string;
+  /** Quién hizo el cierre (puede no ser quien la abrió). */
+  cerrado_por_id?: string;
+  cerrado_por_nombre?: string;
 }
 
 export interface Gasto {

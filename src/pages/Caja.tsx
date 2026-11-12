@@ -58,6 +58,7 @@ import {
   nombreMedio, pagoIdDeSolicitud, rechazarSolicitud, solicitudDesactualizada, type Actor,
 } from '../lib/cobroComanda';
 import PedirMotivo from '../components/PedirMotivo';
+import DetalleArqueo from '../components/DetalleArqueo';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -198,6 +199,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [mensajeCierre, setMensajeCierre] = useState('');
   const [mensajeCierreError, setMensajeCierreError] = useState(false);
   const [showCierreCaja, setShowCierreCaja] = useState(false);
+  const [arqueoAbierto, setArqueoAbierto] = useState<CajaDiaria | null>(null);
   const [nuevoApartadoNombre, setNuevoApartadoNombre] = useState('');
   const [nuevoApartadoMonto, setNuevoApartadoMonto] = useState('');
   const [cuentasDinero, setCuentasDinero] = useState(loadCuentasDinero);
@@ -407,6 +409,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               diferencia_transferencia: transferenciaContada - caja.transferencia,
               estado: 'cerrada',
               closed_at: new Date().toISOString(),
+              cerrado_por_id: user?.id,
+              cerrado_por_nombre: user ? `${user.nombre} ${user.apellido || ''}`.trim() : 'Cajero',
             }
           : caja
       )));
@@ -1213,8 +1217,22 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </thead>
           <tbody className="divide-y divide-slate-50">
             {historialCajas.map(caja => (
-              <tr key={caja.id}>
-                <td className="py-3 px-4 text-sm font-medium text-slate-700">{new Date(`${caja.fecha}T00:00:00`).toLocaleDateString('es-AR')}</td>
+              <tr
+                key={caja.id}
+                onClick={() => setArqueoAbierto(caja)}
+                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setArqueoAbierto(caja); } }}
+                tabIndex={0}
+                title="Ver el detalle del arqueo"
+                className="cursor-pointer hover:bg-amber-50/60 focus:bg-amber-50 focus:outline-none"
+              >
+                <td className="py-3 px-4 text-sm font-medium text-slate-700">
+                  {new Date(`${caja.fecha}T00:00:00`).toLocaleDateString('es-AR')}
+                  {caja.estado === 'cerrada' && caja.cerrado_por_nombre && (
+                    <span className="block text-xs font-normal text-slate-400">
+                      Cerró {caja.cerrado_por_nombre}
+                    </span>
+                  )}
+                </td>
                 {!cierreACiegas && <>
                   <td className="py-3 px-4 text-sm text-right">{formatMoney(caja.monto_inicial)}</td>
                   <td className="py-3 px-4 text-sm text-right">{formatMoney(caja.efectivo)}</td>
@@ -1239,7 +1257,21 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </tbody>
         </table>
       </div>
+      {historialCajas.length > 0 && (
+        <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">Tocá un día para ver quién cerró, con cuánto y todo lo que pasó en esa caja.</p>
+      )}
     </div>
+    {arqueoAbierto && (
+      <DetalleArqueo
+        caja={cajas.find(caja => caja.id === arqueoAbierto.id) || arqueoAbierto}
+        pagos={pagosRegistrados}
+        movimientos={movimientosFinancieros}
+        apartados={apartadosCaja}
+        cuentas={cuentasDinero}
+        aCiegas={cierreACiegas}
+        onClose={() => setArqueoAbierto(null)}
+      />
+    )}
     </>
   );
 
