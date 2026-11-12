@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { Save, Store, Bell, Trash2 } from 'lucide-react';
+import { Save, Store, Bell, Trash2, EyeOff } from 'lucide-react';
+import type { PageId } from '../lib/types';
+import { loadMenuOculto, pantallasOcultables } from '../lib/menuOculto';
 import { useAuth } from '../contexts/AuthContext';
 import { copiaAntesDeEmpezar, empezarDeCero } from '../lib/empezarDeCero';
 import { readStore, writeStore } from '../lib/storeSync';
@@ -17,9 +19,13 @@ type ConfigLocal = {
   iva: string;
   /** Hora (0 a 12) en la que termina la jornada comercial. Ver fechas.ts. */
   hora_corte: number;
+  /** A dónde avisar si en el cierre de caja falta plata. */
+  gmail_admin: string;
 };
 
-const configPorDefecto: ConfigLocal = { nombre: '', direccion: '', telefono: '', iva: '21', hora_corte: horaCortePorDefecto };
+const configPorDefecto: ConfigLocal = {
+  nombre: '', direccion: '', telefono: '', iva: '21', hora_corte: horaCortePorDefecto, gmail_admin: '',
+};
 
 const loadConfig = (): ConfigLocal => ({
   ...configPorDefecto,
@@ -34,10 +40,19 @@ export default function Configuracion() {
   const [localTelefono, setLocalTelefono] = useState(configInicial.telefono);
   const [iva, setIva] = useState(configInicial.iva);
   const [horaCorte, setHoraCorte] = useState(String(configInicial.hora_corte));
+  const [gmailAdmin, setGmailAdmin] = useState(configInicial.gmail_admin || '');
+  const [gmailError, setGmailError] = useState('');
+  const [menuOculto, setMenuOculto] = useState<PageId[]>(loadMenuOculto);
   const [saved, setSaved] = useState(false);
   const [reiniciado, setReiniciado] = useState(false);
 
   const handleSave = () => {
+    const gmail = gmailAdmin.trim().toLowerCase();
+    if (gmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(gmail)) {
+      setGmailError('El Gmail no es válido.');
+      return;
+    }
+    setGmailError('');
     writeStore(
       configStorageKey,
       {
@@ -46,6 +61,8 @@ export default function Configuracion() {
         telefono: localTelefono,
         iva,
         hora_corte: Math.min(12, Math.max(0, Math.round(Number(horaCorte) || 0))),
+        gmail_admin: gmail,
+        menu_oculto: menuOculto,
       },
       configUpdatedEvent,
     );
@@ -144,6 +161,20 @@ export default function Configuracion() {
           <h3 className="font-semibold text-slate-800">Notificaciones</h3>
         </div>
         <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Gmail del administrador</label>
+            <input
+              type="email"
+              value={gmailAdmin}
+              onChange={e => { setGmailAdmin(e.target.value); setGmailError(''); }}
+              placeholder="admin@gmail.com"
+              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+            />
+            {gmailError && <p role="alert" className="text-sm text-red-600 mt-1.5">{gmailError}</p>}
+            <p className="text-xs text-slate-500 mt-1.5">
+              Si en el cierre falta más de $5.000, se avisa a este Gmail. Si sobra plata, el mail solo dice que se cerró la caja.
+            </p>
+          </div>
           {[
             { label: 'Avisar cuando el pedido está listo en cocina', enabled: true },
             { label: 'Alerta de stock bajo', enabled: true },
@@ -159,6 +190,37 @@ export default function Configuracion() {
           ))}
         </div>
       </div>
+
+      {hasRole('admin') && <div className="bg-white rounded-2xl border border-slate-200 p-6">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-9 h-9 bg-slate-100 rounded-xl flex items-center justify-center">
+            <EyeOff size={18} className="text-slate-600" />
+          </div>
+          <h3 className="font-semibold text-slate-800">Pantallas que todavía no uso</h3>
+        </div>
+        <p className="text-sm text-slate-500 mb-4">
+          Lo que tildes no aparece en el menú de nadie. No se borra nada: destildalo cuando lo quieras usar.
+        </p>
+        <div className="space-y-2">
+          {pantallasOcultables.map(pantalla => {
+            const oculta = pantalla.paginas.every(p => menuOculto.includes(p));
+            return (
+              <label key={pantalla.label} className="flex items-center gap-3 py-1.5 text-sm text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={oculta}
+                  onChange={() => setMenuOculto(prev => (oculta
+                    ? prev.filter(p => !pantalla.paginas.includes(p))
+                    : [...new Set([...prev, ...pantalla.paginas])]))}
+                  className="w-4 h-4 accent-amber-500"
+                />
+                {pantalla.label}
+              </label>
+            );
+          })}
+        </div>
+        <p className="text-xs text-slate-400 mt-3">Se aplica al tocar Guardar Cambios.</p>
+      </div>}
 
       {hasRole('admin') && !modoDemo && <ConfigFacturacion />}
 

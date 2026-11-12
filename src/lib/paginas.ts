@@ -53,12 +53,12 @@ type PerfilPaginas = { rol: Rol; paginas?: PageId[] | null };
 /** Lo que el admin puede tildar por cuenta. Cada una abarca todos sus apartados. */
 export const pantallasElegibles: { label: string; paginas: PageId[]; roles?: Rol[] }[] = [
   { label: 'Dashboard', paginas: ['dashboard'] },
-  { label: 'Mesas', paginas: ['mesas'] },
+  { label: 'Distribución de mesas', paginas: ['mesas'] },
   { label: 'Comandas', paginas: ['ventas', 'pedidos'] },
-  { label: 'Pedidos', paginas: ['pedidos_delivery'] },
   { label: 'Cocina', paginas: ['cocina'] },
-  { label: 'Caja y arqueos', paginas: ['caja', 'caja_dia', 'caja_arqueos'] },
   { label: 'Cobros', paginas: ['cobros'] },
+  { label: 'Caja y arqueos', paginas: ['caja', 'caja_dia', 'caja_arqueos'] },
+  { label: 'Pedidos', paginas: ['pedidos_delivery'] },
   { label: 'Cuenta corriente', paginas: ['cuenta_corriente'] },
   // Supabase solo le muestra los comprobantes a estos roles.
   { label: 'Facturas', paginas: ['facturas'], roles: caja },

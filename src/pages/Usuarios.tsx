@@ -17,10 +17,10 @@ const rolConfig: Record<Rol, { label: string; color: string; desc: string }> = {
 };
 
 const rolesPermissions: Record<Rol, string[]> = {
-  admin: ['Dashboard', 'Mesas', 'Comandas', 'Cocina', 'Caja del día', 'Arqueos', 'Cobros', 'Productos', 'Stock', 'Costos', 'Reportes', 'Usuarios', 'Configuración'],
-  encargado: ['Dashboard', 'Mesas', 'Comandas', 'Cocina', 'Caja del día', 'Arqueos', 'Cobros', 'Productos', 'Stock', 'Costos', 'Reportes'],
-  cajero: ['Mesas', 'Comandas', 'Caja del día', 'Arqueos', 'Cobros', 'Dashboard'],
-  moza: ['Mesas', 'Comandas'],
+  admin: ['Dashboard', 'Distribución de mesas', 'Comandas', 'Cocina', 'Cobros', 'Caja del día', 'Arqueos', 'Productos', 'Stock', 'Costos', 'Reportes', 'Usuarios', 'Configuración'],
+  encargado: ['Dashboard', 'Distribución de mesas', 'Comandas', 'Cocina', 'Cobros', 'Caja del día', 'Arqueos', 'Productos', 'Stock', 'Costos', 'Reportes'],
+  cajero: ['Distribución de mesas', 'Comandas', 'Cobros', 'Caja del día', 'Arqueos', 'Dashboard'],
+  moza: ['Distribución de mesas', 'Comandas'],
   cocina: ['Cocina'],
 };
 

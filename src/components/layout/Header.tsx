@@ -10,7 +10,7 @@ import { perfilVePagina } from '../../lib/paginas';
 
 const pageTitles: Record<PageId, string> = {
   dashboard: 'Dashboard',
-  mesas: 'Gestión de Mesas',
+  mesas: 'Distribución de mesas',
   pedidos: 'Comandas',
   pedidos_delivery: 'Pedidos para llevar, delivery y PedidosYa',
   cocina: 'Pantalla de Cocina',
