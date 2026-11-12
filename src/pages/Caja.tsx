@@ -150,6 +150,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const gastos = useGastos();
   const { user, modoDemo } = useAuth();
   const cierreACiegas = user?.rol === 'cajero';
+  /** En Cobros, los totales de la caja (inicial, ventas, efectivo, esperado) los ve solo el admin. */
+  const verTotalesCaja = !cierreACiegas && (vista !== 'cobros' || user?.rol === 'admin');
   const [pedidos, setPedidos] = useState<Pedido[]>(
     () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
   );
@@ -1314,12 +1316,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       <div className={vista === 'caja' ? 'space-y-4' : 'w-full xl:w-72 flex-shrink-0 space-y-4'}>
         {avisoCuenta && <p role="status" className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800">{avisoCuenta}</p>}
         {avisoSolicitud && <p role="status" className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">{avisoSolicitud}</p>}
-        {!cierreACiegas && <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm space-y-2">
+        {verTotalesCaja && <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm space-y-2">
           <p>Ventas a cuenta: <strong>{formatMoney(cajaAbierta.ventas_cuenta_corriente || 0)}</strong></p>
           <p>Cobros de cuenta corriente: <strong>{formatMoney(cajaAbierta.cobros_cuenta_corriente || 0)}</strong></p>
           <p className="text-xs text-slate-500">Los cobros de deudas ingresan a caja sin sumar otra venta.</p>
         </div>}
-        {!cierreACiegas && <div className="grid grid-cols-2 gap-3">
+        {verTotalesCaja && <div className="grid grid-cols-2 gap-3">
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <p className="text-xs text-slate-500 mb-1">Caja inicial</p>
             <p className="text-xl font-bold text-slate-800">{formatMoney(cajaAbierta.monto_inicial)}</p>
