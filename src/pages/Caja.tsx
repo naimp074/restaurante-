@@ -54,7 +54,7 @@ import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
 import { detalleTicket } from '../lib/opcionesProducto';
 import {
-  anularTicket, cobroEnCurso, conEvento, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
+  anularTicket, cobroEnCurso, conEvento, describirReparto, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
   nombreMedio, pagoIdDeSolicitud, rechazarSolicitud, solicitudDesactualizada, type Actor,
 } from '../lib/cobroComanda';
 import PedirMotivo from '../components/PedirMotivo';
@@ -476,7 +476,18 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const selectPedido = (pedido: Pedido) => {
     setACuenta(false); setAnticipoCuenta(''); setPagoError(''); setAvisoCuenta(''); setAvisoSolicitud('');
     // Arranca con el medio que eligió la moza; caja lo puede cambiar si el cliente paga distinto.
-    if (cobroEnCurso(pedido) && pedido.solicitud_cobro) setMetodoPago(pedido.solicitud_cobro.metodo_pago);
+    if (cobroEnCurso(pedido) && pedido.solicitud_cobro) {
+      setMetodoPago(pedido.solicitud_cobro.metodo_pago);
+      // Pago mixto: viene repartido por la moza; caja lo revisa y lo puede corregir.
+      const reparto = pedido.solicitud_cobro.metodo_pago === 'mixto' ? pedido.solicitud_cobro.reparto : undefined;
+      if (reparto) {
+        const texto = (monto: number) => (monto > 0 ? String(monto) : '');
+        setMontoMixtoEfectivo(texto(reparto.efectivo));
+        setMontoMixtoTransferencia(texto(reparto.transferencia));
+        setMontoMixtoDebito(texto(reparto.debito));
+        setMontoMixtoCredito(texto(reparto.credito));
+      }
+    }
     setSelectedPedido(pedido);
   };
 
@@ -1499,6 +1510,10 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
                       <dt className="opacity-75">Moza</dt><dd className="text-right font-medium">{solicitud.solicitada_por_nombre}</dd>
                       <dt className="opacity-75">Medio elegido</dt><dd className="text-right font-medium">{nombreMedio(solicitud.metodo_pago)}</dd>
+                      {solicitud.metodo_pago === 'mixto' && solicitud.reparto && (<>
+                        <dt className="opacity-75">Cómo paga</dt>
+                        <dd className="text-right font-medium">{describirReparto(solicitud.reparto)}</dd>
+                      </>)}
                       <dt className="opacity-75">Pedido a las</dt>
                       <dd className="text-right font-medium">{new Date(solicitud.solicitada_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</dd>
                       <dt className="opacity-75">Importe pedido</dt><dd className="text-right font-bold">{formatMoney(solicitud.total)}</dd>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2 } from 'lucide-react';
-import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, TipoEventoComanda } from '../lib/types';
+import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, RepartoMixto, TipoEventoComanda } from '../lib/types';
 import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
 import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
 import { useCategorias } from '../lib/categoriasStore';
@@ -246,12 +246,12 @@ export default function Pedidos() {
     }
   };
 
-  const solicitarCobro = (metodo: MetodoPago) => {
+  const solicitarCobro = (metodo: MetodoPago, reparto?: RepartoMixto) => {
     // Un doble toque no manda dos pedidos de cobro (y nuevaSolicitud rechaza si ya hay uno).
     if (cobroEnProceso.current) return;
     cobroEnProceso.current = true;
     setEnviandoCobro(true);
-    const error = guardarCobro(pedido => nuevaSolicitud(pedido, metodo, actor));
+    const error = guardarCobro(pedido => nuevaSolicitud(pedido, metodo, actor, undefined, reparto));
     cobroEnProceso.current = false;
     setEnviandoCobro(false);
     setCobroError(error);
