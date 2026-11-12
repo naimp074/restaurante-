@@ -121,6 +121,8 @@ export interface DatosPagoSueldo {
   cuenta_caja_dia_id: string;
   observaciones?: string;
   creado_por?: string;
+  /** Texto del gasto; si no viene, se arma con el nombre y el mes. */
+  concepto?: string;
 }
 
 export const pagarSueldo = (datos: DatosPagoSueldo): Gasto => {
@@ -133,7 +135,7 @@ export const pagarSueldo = (datos: DatosPagoSueldo): Gasto => {
   return registrarGasto({
     id: nuevoId('gasto'),
     fecha: datos.fecha,
-    concepto: `Sueldo ${nombreUsuario(datos.usuario)} · ${nombrePeriodo(datos.periodo)}`,
+    concepto: datos.concepto?.trim() || `Sueldo ${nombreUsuario(datos.usuario)} · ${nombrePeriodo(datos.periodo)}`,
     categoria: 'sueldo',
     alcance: enCaja ? 'caja_dia' : 'general',
     metodo_pago: datos.metodo_pago,
