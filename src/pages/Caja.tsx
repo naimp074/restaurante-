@@ -150,11 +150,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const gastos = useGastos();
   const { user, modoDemo } = useAuth();
   /**
-   * Los importes de la caja (inicial, ventas, efectivo, esperado, arqueos, saldos) los ve solo el admin.
-   * Los demás cierran a ciegas: cuentan el efectivo sin ver cuánto debería haber.
+   * Los importes de la caja y del arqueo de cierre (inicial, ventas, efectivo, esperado, arqueos, saldos)
+   * los ven el admin y el encargado. Los demás cierran a ciegas: cuentan el efectivo sin ver cuánto debería haber.
    */
-  const cierreACiegas = user?.rol !== 'admin';
-  const verTotalesCaja = !cierreACiegas;
+  const cierreACiegas = user?.rol !== 'admin' && user?.rol !== 'encargado';
+  /** En Cobros, esos totales los ve solo el admin. */
+  const verTotalesCaja = !cierreACiegas && (vista !== 'cobros' || user?.rol === 'admin');
   const [pedidos, setPedidos] = useState<Pedido[]>(
     () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
   );
