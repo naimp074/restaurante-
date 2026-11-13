@@ -52,6 +52,7 @@ import { armarAvisoCierre } from '../lib/avisoCierreCaja';
 import { enviarAvisoCierreCaja } from '../lib/enviarAvisoCierre';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
+import RelojItem from '../components/RelojItem';
 import { detalleTicket } from '../lib/opcionesProducto';
 import {
   anularTicket, cobroEnCurso, conEvento, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
@@ -1526,6 +1527,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   <div key={item.id} className="flex justify-between gap-3 text-sm">
                     <div className="min-w-0">
                       <span className="text-slate-600">{item.cantidad}x {item.producto?.nombre}</span>
+                      {/* Lo mismo que ve cocina: cuánto lleva desde que se pidió, o cuánto tardó en salir. */}
+                      <RelojItem item={item} className="ml-2 align-middle" />
                       <DetalleItem opciones={item.opciones} observaciones={item.observaciones} />
                     </div>
                     <span className="font-medium text-slate-800 shrink-0">${item.subtotal.toLocaleString()}</span>
