@@ -192,7 +192,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [montoInicial, setMontoInicial] = useState('');
   const [aperturaError, setAperturaError] = useState('');
   const [montoCierreEfectivo, setMontoCierreEfectivo] = useState('');
-  const [montoCierreTransferencia, setMontoCierreTransferencia] = useState('');
   const [cierreError, setCierreError] = useState('');
   const [cerrandoCaja, setCerrandoCaja] = useState(false);
   const [mensajeCierre, setMensajeCierre] = useState('');
@@ -377,10 +376,10 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const cerrarCaja = async () => {
     if (!cajaAbierta || cerrandoCaja) return;
 
+    // Para cerrar solo se cuenta el efectivo del cajón: las transferencias ya quedan registradas en cada cobro.
     const efectivoContado = montoContado(montoCierreEfectivo);
-    const transferenciaContada = montoContado(montoCierreTransferencia);
-    if (efectivoContado === null || transferenciaContada === null) {
-      setCierreError('Ingresá cuánto cerrás en efectivo y en transferencia.');
+    if (efectivoContado === null) {
+      setCierreError('Ingresá cuánto efectivo hay en la caja.');
       return;
     }
 
@@ -389,8 +388,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       cajero: cajaAbierta.cajero_nombre || (user ? `${user.nombre} ${user.apellido}`.trim() : 'Cajero'),
       esperadoEfectivo: cajaAbierta.monto_esperado_efectivo,
       contadoEfectivo: efectivoContado,
+      // No se cuenta: se toma como lo registrado, así el aviso de faltante mira solo el efectivo.
       esperadoTransferencia: cajaAbierta.transferencia,
-      contadoTransferencia: transferenciaContada,
+      contadoTransferencia: cajaAbierta.transferencia,
     };
     const aviso = armarAvisoCierre(conteo);
 
@@ -403,8 +403,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               ...caja,
               monto_cierre_efectivo: efectivoContado,
               diferencia_efectivo: efectivoContado - caja.monto_esperado_efectivo,
-              monto_cierre_transferencia: transferenciaContada,
-              diferencia_transferencia: transferenciaContada - caja.transferencia,
               estado: 'cerrada',
               closed_at: new Date().toISOString(),
             }
@@ -419,7 +417,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setCuentasDinero(loadCuentasDinero());
     setMovimientosFinancieros(loadMovimientosFinancieros());
     setMontoCierreEfectivo('');
-    setMontoCierreTransferencia('');
     setShowCierreCaja(false);
     setCerrandoCaja(false);
     setMensajeCierreError(false);
@@ -1925,8 +1922,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               )}
 
               {([
-                ['Efectivo', montoCierreEfectivo, setMontoCierreEfectivo, cajaAbierta.monto_esperado_efectivo, ''],
-                ['Transferencia', montoCierreTransferencia, setMontoCierreTransferencia, cajaAbierta.transferencia, 'Transferencias y Mercado Pago del día.'],
+                ['Efectivo en la caja', montoCierreEfectivo, setMontoCierreEfectivo, cajaAbierta.monto_esperado_efectivo, 'Contá los billetes del cajón. Las transferencias y tarjetas no hace falta contarlas.'],
               ] as Array<[string, string, (value: string) => void, number, string]>).map(([etiqueta, valor, setValor, esperado, ayuda]) => {
                 const contado = montoContado(valor);
                 const diferencia = contado === null ? null : contado - esperado;
