@@ -1,4 +1,4 @@
-import type { EventoComanda, MetodoPago, Pedido, PedidoItem, RepartoMixto, Rol, SolicitudCobro, TipoEventoComanda } from './types';
+import type { EventoComanda, Mesa, MetodoPago, Pedido, PedidoItem, RepartoMixto, Rol, SolicitudCobro, TipoEventoComanda } from './types';
 import { nuevoId } from './ids';
 
 /**
@@ -312,4 +312,27 @@ export const anularItem = (pedido: Pedido, itemId: string, motivo: string, actor
     : i));
   const anulado = conTotales({ ...pedido, items, updated_at: at });
   return conEvento(anulado, actor, 'item_anulado', `${describir(item)}: ${texto}`, at);
+};
+
+const nombreMesa = (mesa?: Pick<Mesa, 'nombre' | 'numero'> | null) =>
+  mesa ? (mesa.nombre && !/^\d+$/.test(mesa.nombre.trim()) ? mesa.nombre : `Mesa ${mesa.numero}`) : 'Sin mesa';
+
+/**
+ * Los clientes se cambian de mesa: la comanda entera (productos, lo que ya está en cocina, el
+ * pedido de cobro) pasa a la mesa nueva. La de antes queda libre. Solo a una mesa libre.
+ */
+export const cambiarDeMesa = (
+  pedido: Pedido,
+  destino: Mesa,
+  pedidos: Pedido[],
+  actor: Actor,
+  at = new Date().toISOString(),
+): Pedido => {
+  if (cerrada(pedido)) throw new Error('La comanda ya está cerrada.');
+  if (destino.id === pedido.mesa_id) throw new Error('La comanda ya está en esa mesa.');
+  if (destino.estado === 'cerrada') throw new Error(`${nombreMesa(destino)} está fuera de servicio.`);
+  const ocupada = pedidos.find(otro => otro.id !== pedido.id && otro.mesa_id === destino.id && !cerrada(otro));
+  if (ocupada) throw new Error(`${nombreMesa(destino)} ya tiene una comanda abierta. Elegí una mesa libre.`);
+  const movido: Pedido = { ...pedido, mesa_id: destino.id, mesa: destino, updated_at: at };
+  return conEvento(movido, actor, 'mesa_cambiada', `${nombreMesa(pedido.mesa)} → ${nombreMesa(destino)}`, at);
 };

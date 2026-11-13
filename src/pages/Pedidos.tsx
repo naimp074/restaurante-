@@ -1,20 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2 } from 'lucide-react';
+import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2, ArrowLeftRight } from 'lucide-react';
 import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, RepartoMixto, TipoEventoComanda } from '../lib/types';
 import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
 import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
 import { useCategorias } from '../lib/categoriasStore';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { useProductos } from '../lib/productosStore';
-import { estadoOperativoMesa, loadMesas, mesaTienePedidoAbierto, ocuparMesa, useMesas } from '../lib/mesasStore';
+import { estadoOperativoMesa, loadMesas, mesaTienePedidoAbierto, ocuparMesa, sincronizarEstadoMesa, useMesas } from '../lib/mesasStore';
 import { useMozas } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import { nuevoId } from '../lib/ids';
+import { withStoreTransaction } from '../lib/storeSync';
 import { esDeSalon } from '../lib/pedidosCanal';
 import RelojItem from '../components/RelojItem';
 import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
 import {
-  anularItem, bloqueoEdicion, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
+  anularItem, bloqueoEdicion, cambiarDeMesa, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
   estadoCobroConfig, itemSinEnviar, itemsSinEnviar, nombreMedio, nuevaSolicitud, puedeAnularItems, type Actor,
 } from '../lib/cobroComanda';
 import SolicitarCobro from '../components/SolicitarCobro';
@@ -46,6 +47,7 @@ const textoEvento: Record<TipoEventoComanda, string> = {
   cobro_rechazado: 'Caja devolvió el cobro',
   pagada: 'Caja registró el pago',
   pago_anulado: 'Caja anuló el cobro',
+  mesa_cambiada: 'Cambió de mesa',
 };
 const sinAcentos = (texto: string) => texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
@@ -91,6 +93,9 @@ export default function Pedidos() {
   const [anulando, setAnulando] = useState<PedidoItem | null>(null);
   const [anularError, setAnularError] = useState('');
   const [verHistorial, setVerHistorial] = useState(false);
+  const [cambiandoMesa, setCambiandoMesa] = useState(false);
+  const [cambioMesaError, setCambioMesaError] = useState('');
+  const [buscarDestino, setBuscarDestino] = useState('');
   const panelProductos = useRef<HTMLDivElement>(null);
   const actor: Actor = { id: user?.id, nombre: [user?.nombre, user?.apellido].filter(Boolean).join(' ') || 'Sin usuario', rol: user?.rol };
 
@@ -279,6 +284,29 @@ export default function Pedidos() {
     if (!error) setVerCobro(false);
   };
 
+  /** Pasa la comanda entera a otra mesa libre; la de antes queda libre. Se aplica sobre lo guardado. */
+  const moverAMesa = (destino: Mesa) => {
+    if (!selectedPedido) return;
+    const actuales = loadDemoPedidos();
+    const guardado = actuales.find(pedido => pedido.id === selectedPedido.id);
+    if (!guardado || !pedidoAbierto(guardado)) { setCambioMesaError('La comanda ya no está abierta.'); return; }
+    try {
+      const movido = cambiarDeMesa(guardado, destino, actuales, actor);
+      withStoreTransaction(() => {
+        saveDemoPedidos(actuales.map(pedido => (pedido.id === movido.id ? movido : pedido)));
+        ocuparMesa(destino.id, movido.empleado_id);
+        sincronizarEstadoMesa(guardado.mesa_id);
+      });
+      setSelectedPedido(movido);
+      setCambiandoMesa(false);
+      setCambioMesaError('');
+      setBuscarDestino('');
+      setPedidoError('');
+    } catch (error) {
+      setCambioMesaError(error instanceof Error ? error.message : 'No se pudo cambiar de mesa.');
+    }
+  };
+
   const retirarSolicitud = () => setPedidoError(guardarCobro(pedido => cancelarSolicitud(pedido, actor)));
 
   const abrirEdicion = () => {
@@ -460,15 +488,27 @@ export default function Pedidos() {
                       {selectedPedido.empleado?.nombre} · {selectedPedido.cantidad_personas} personas · {tiempoAbierto(selectedPedido.hora_apertura)}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setShowAddProduct(!showAddProduct)}
-                    disabled={Boolean(bloqueo)}
-                    title={bloqueo || undefined}
-                    className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:hover:bg-amber-500 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
-                  >
-                    <Plus size={14} />
-                    Agregar producto
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    {!esBorrador && (
+                      <button
+                        type="button"
+                        onClick={() => { setCambiandoMesa(true); setCambioMesaError(''); setBuscarDestino(''); }}
+                        className="flex items-center gap-2 border border-slate-300 bg-white hover:border-amber-400 hover:bg-amber-50 text-slate-700 text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                      >
+                        <ArrowLeftRight size={14} />
+                        Cambiar de mesa
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowAddProduct(!showAddProduct)}
+                      disabled={Boolean(bloqueo)}
+                      title={bloqueo || undefined}
+                      className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:hover:bg-amber-500 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                    >
+                      <Plus size={14} />
+                      Agregar producto
+                    </button>
+                  </div>
                 </div>
                 {selectedPedido.id === borradorId.current && (
                   <div className="mt-3 flex flex-wrap gap-3">
@@ -801,6 +841,66 @@ export default function Pedidos() {
           }}
         />
       )}
+
+      {cambiandoMesa && selectedPedido && (() => {
+        const texto = buscarDestino.trim().toLowerCase().replace(/^mesa\s*/, '');
+        const libres = [...mesasLibres]
+          .filter(mesa => mesa.id !== selectedPedido.mesa_id && mesa.estado !== 'cerrada')
+          .filter(mesa => !texto || String(mesa.numero).startsWith(texto) || (mesa.nombre || '').toLowerCase().includes(texto))
+          .sort((a, b) => a.numero - b.numero);
+        const origen = selectedPedido.mesa?.nombre || `Mesa ${selectedPedido.mesa?.numero}`;
+        return (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onClick={() => setCambiandoMesa(false)}>
+            <div role="dialog" aria-modal="true" aria-labelledby="titulo-cambiar-mesa" className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+                <div>
+                  <h3 id="titulo-cambiar-mesa" className="flex items-center gap-2 text-lg font-bold text-slate-800">
+                    <ArrowLeftRight size={18} className="text-amber-600" />Cambiar de mesa
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    La comanda de <strong>{origen}</strong> pasa entera a la mesa que elijas, y {origen} queda libre.
+                  </p>
+                </div>
+                <button type="button" onClick={() => setCambiandoMesa(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Cerrar">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="border-b border-slate-100 p-4">
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 focus-within:border-amber-400 focus-within:bg-white">
+                  <Search size={15} className="shrink-0 text-slate-400" />
+                  <input
+                    autoFocus
+                    type="search"
+                    value={buscarDestino}
+                    onChange={e => setBuscarDestino(e.target.value)}
+                    placeholder="Buscar mesa libre (número o nombre)"
+                    aria-label="Buscar mesa libre"
+                    className="min-h-[44px] w-full bg-transparent text-sm outline-none placeholder-slate-400"
+                  />
+                </div>
+              </div>
+              <div className="grid flex-1 grid-cols-3 gap-2 overflow-y-auto p-4 sm:grid-cols-4">
+                {libres.map(mesa => (
+                  <button
+                    key={mesa.id}
+                    type="button"
+                    onClick={() => moverAMesa(mesa)}
+                    className="min-h-[56px] rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2 text-sm font-semibold text-slate-800 hover:border-emerald-400"
+                  >
+                    {mesa.nombre || `Mesa ${mesa.numero}`}
+                  </button>
+                ))}
+                {libres.length === 0 && (
+                  <p className="col-span-full py-6 text-center text-sm text-slate-500">
+                    {texto ? `No hay ninguna mesa libre «${buscarDestino.trim()}».` : 'No hay mesas libres.'}
+                  </p>
+                )}
+              </div>
+              {cambioMesaError && <p role="alert" className="mx-4 mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{cambioMesaError}</p>}
+            </div>
+          </div>
+        );
+      })()}
 
       {verCobro && selectedPedido && (
         <SolicitarCobro
