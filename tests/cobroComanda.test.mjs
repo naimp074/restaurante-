@@ -50,6 +50,22 @@ test('la moza pide el cobro: no cierra la comanda y la mesa pasa a pendiente de 
   assert.equal(pedido.historial.at(-1).tipo, 'cobro_solicitado');
 });
 
+test('pago mixto: la moza anota cuánto paga con cada medio y tiene que sumar el total', () => {
+  const reparto = { efectivo: 10000, transferencia: 4190, debito: 0, credito: 0 };
+  const pedido = api.nuevaSolicitud(mesaM2(), 'mixto', moza, t0, reparto);
+  assert.deepEqual(pedido.solicitud_cobro.reparto, reparto);
+  assert.match(pedido.historial.at(-1).detalle, /Efectivo \$10\.000 \+ Transferencia \$4\.190/);
+
+  assert.throws(() => api.nuevaSolicitud(mesaM2(), 'mixto', moza, t0), /cuánto paga con cada medio/);
+  assert.throws(() => api.nuevaSolicitud(mesaM2(), 'mixto', moza, t0, { ...reparto, transferencia: 4000 }), /Faltan \$190/);
+  assert.throws(() => api.nuevaSolicitud(mesaM2(), 'mixto', moza, t0, { ...reparto, transferencia: 5000 }), /Te pasaste \$810/);
+  assert.throws(() => api.nuevaSolicitud(mesaM2(), 'mixto', moza, t0, { efectivo: 14190, transferencia: 0, debito: 0, credito: 0 }), /dos medios/);
+  assert.throws(() => api.nuevaSolicitud(mesaM2(), 'mixto', moza, t0, { ...reparto, debito: -1, efectivo: 10001 }), /negativos/);
+
+  const simple = api.nuevaSolicitud(mesaM2(), 'efectivo', moza, t0, reparto);
+  assert.equal(simple.solicitud_cobro.reparto, undefined, 'con un solo medio no guarda reparto');
+});
+
 test('no se puede pedir el cobro dos veces ni con cosas sin enviar', () => {
   const pedida = api.nuevaSolicitud(mesaM2(), 'efectivo', moza, t0);
   assert.throws(() => api.nuevaSolicitud(pedida, 'efectivo', moza), /ya tiene un pedido de cobro/);

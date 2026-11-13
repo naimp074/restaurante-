@@ -52,12 +52,14 @@ import { armarAvisoCierre } from '../lib/avisoCierreCaja';
 import { enviarAvisoCierreCaja } from '../lib/enviarAvisoCierre';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
+import RelojItem from '../components/RelojItem';
 import { detalleTicket } from '../lib/opcionesProducto';
 import {
-  anularTicket, cobroEnCurso, conEvento, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
+  anularTicket, cobroEnCurso, conEvento, describirReparto, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
   nombreMedio, pagoIdDeSolicitud, rechazarSolicitud, solicitudDesactualizada, type Actor,
 } from '../lib/cobroComanda';
 import PedirMotivo from '../components/PedirMotivo';
+import DetalleArqueo from '../components/DetalleArqueo';
 
 type TipoDocumentoCliente = 'DNI' | 'CUIT' | 'CUIL';
 
@@ -149,7 +151,12 @@ const getPagoBreakdown = (pago: Pago) => {
 export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaProps) {
   const gastos = useGastos();
   const { user, modoDemo } = useAuth();
-  const cierreACiegas = user?.rol === 'cajero';
+  /**
+   * Los importes de la caja (inicial, ventas, efectivo, esperado, arqueos, saldos) los ve solo el admin.
+   * Los demás cierran a ciegas: cuentan el efectivo sin ver cuánto debería haber.
+   */
+  const cierreACiegas = user?.rol !== 'admin';
+  const verTotalesCaja = !cierreACiegas;
   const [pedidos, setPedidos] = useState<Pedido[]>(
     () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
   );
@@ -192,12 +199,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [montoInicial, setMontoInicial] = useState('');
   const [aperturaError, setAperturaError] = useState('');
   const [montoCierreEfectivo, setMontoCierreEfectivo] = useState('');
-  const [montoCierreTransferencia, setMontoCierreTransferencia] = useState('');
   const [cierreError, setCierreError] = useState('');
   const [cerrandoCaja, setCerrandoCaja] = useState(false);
   const [mensajeCierre, setMensajeCierre] = useState('');
   const [mensajeCierreError, setMensajeCierreError] = useState(false);
   const [showCierreCaja, setShowCierreCaja] = useState(false);
+  const [arqueoAbierto, setArqueoAbierto] = useState<CajaDiaria | null>(null);
   const [nuevoApartadoNombre, setNuevoApartadoNombre] = useState('');
   const [nuevoApartadoMonto, setNuevoApartadoMonto] = useState('');
   const [cuentasDinero, setCuentasDinero] = useState(loadCuentasDinero);
@@ -377,10 +384,10 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const cerrarCaja = async () => {
     if (!cajaAbierta || cerrandoCaja) return;
 
+    // Para cerrar solo se cuenta el efectivo del cajón: las transferencias ya quedan registradas en cada cobro.
     const efectivoContado = montoContado(montoCierreEfectivo);
-    const transferenciaContada = montoContado(montoCierreTransferencia);
-    if (efectivoContado === null || transferenciaContada === null) {
-      setCierreError('Ingresá cuánto cerrás en efectivo y en transferencia.');
+    if (efectivoContado === null) {
+      setCierreError('Ingresá cuánto efectivo hay en la caja.');
       return;
     }
 
@@ -389,8 +396,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       cajero: cajaAbierta.cajero_nombre || (user ? `${user.nombre} ${user.apellido}`.trim() : 'Cajero'),
       esperadoEfectivo: cajaAbierta.monto_esperado_efectivo,
       contadoEfectivo: efectivoContado,
+      // No se cuenta: se toma como lo registrado, así el aviso de faltante mira solo el efectivo.
       esperadoTransferencia: cajaAbierta.transferencia,
-      contadoTransferencia: transferenciaContada,
+      contadoTransferencia: cajaAbierta.transferencia,
     };
     const aviso = armarAvisoCierre(conteo);
 
@@ -403,10 +411,10 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               ...caja,
               monto_cierre_efectivo: efectivoContado,
               diferencia_efectivo: efectivoContado - caja.monto_esperado_efectivo,
-              monto_cierre_transferencia: transferenciaContada,
-              diferencia_transferencia: transferenciaContada - caja.transferencia,
               estado: 'cerrada',
               closed_at: new Date().toISOString(),
+              cerrado_por_id: user?.id,
+              cerrado_por_nombre: user ? `${user.nombre} ${user.apellido || ''}`.trim() : 'Cajero',
             }
           : caja
       )));
@@ -419,7 +427,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setCuentasDinero(loadCuentasDinero());
     setMovimientosFinancieros(loadMovimientosFinancieros());
     setMontoCierreEfectivo('');
-    setMontoCierreTransferencia('');
     setShowCierreCaja(false);
     setCerrandoCaja(false);
     setMensajeCierreError(false);
@@ -472,7 +479,18 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const selectPedido = (pedido: Pedido) => {
     setACuenta(false); setAnticipoCuenta(''); setPagoError(''); setAvisoCuenta(''); setAvisoSolicitud('');
     // Arranca con el medio que eligió la moza; caja lo puede cambiar si el cliente paga distinto.
-    if (cobroEnCurso(pedido) && pedido.solicitud_cobro) setMetodoPago(pedido.solicitud_cobro.metodo_pago);
+    if (cobroEnCurso(pedido) && pedido.solicitud_cobro) {
+      setMetodoPago(pedido.solicitud_cobro.metodo_pago);
+      // Pago mixto: viene repartido por la moza; caja lo revisa y lo puede corregir.
+      const reparto = pedido.solicitud_cobro.metodo_pago === 'mixto' ? pedido.solicitud_cobro.reparto : undefined;
+      if (reparto) {
+        const texto = (monto: number) => (monto > 0 ? String(monto) : '');
+        setMontoMixtoEfectivo(texto(reparto.efectivo));
+        setMontoMixtoTransferencia(texto(reparto.transferencia));
+        setMontoMixtoDebito(texto(reparto.debito));
+        setMontoMixtoCredito(texto(reparto.credito));
+      }
+    }
     setSelectedPedido(pedido);
   };
 
@@ -1213,8 +1231,22 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </thead>
           <tbody className="divide-y divide-slate-50">
             {historialCajas.map(caja => (
-              <tr key={caja.id}>
-                <td className="py-3 px-4 text-sm font-medium text-slate-700">{new Date(`${caja.fecha}T00:00:00`).toLocaleDateString('es-AR')}</td>
+              <tr
+                key={caja.id}
+                onClick={() => setArqueoAbierto(caja)}
+                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setArqueoAbierto(caja); } }}
+                tabIndex={0}
+                title="Ver el detalle del arqueo"
+                className="cursor-pointer hover:bg-amber-50/60 focus:bg-amber-50 focus:outline-none"
+              >
+                <td className="py-3 px-4 text-sm font-medium text-slate-700">
+                  {new Date(`${caja.fecha}T00:00:00`).toLocaleDateString('es-AR')}
+                  {caja.estado === 'cerrada' && caja.cerrado_por_nombre && (
+                    <span className="block text-xs font-normal text-slate-400">
+                      Cerró {caja.cerrado_por_nombre}
+                    </span>
+                  )}
+                </td>
                 {!cierreACiegas && <>
                   <td className="py-3 px-4 text-sm text-right">{formatMoney(caja.monto_inicial)}</td>
                   <td className="py-3 px-4 text-sm text-right">{formatMoney(caja.efectivo)}</td>
@@ -1239,7 +1271,21 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </tbody>
         </table>
       </div>
+      {historialCajas.length > 0 && (
+        <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">Tocá un día para ver quién cerró, con cuánto y todo lo que pasó en esa caja.</p>
+      )}
     </div>
+    {arqueoAbierto && (
+      <DetalleArqueo
+        caja={cajas.find(caja => caja.id === arqueoAbierto.id) || arqueoAbierto}
+        pagos={pagosRegistrados}
+        movimientos={movimientosFinancieros}
+        apartados={apartadosCaja}
+        cuentas={cuentasDinero}
+        aCiegas={cierreACiegas}
+        onClose={() => setArqueoAbierto(null)}
+      />
+    )}
     </>
   );
 
@@ -1314,12 +1360,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       <div className={vista === 'caja' ? 'space-y-4' : 'w-full xl:w-72 flex-shrink-0 space-y-4'}>
         {avisoCuenta && <p role="status" className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800">{avisoCuenta}</p>}
         {avisoSolicitud && <p role="status" className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">{avisoSolicitud}</p>}
-        {!cierreACiegas && <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm space-y-2">
+        {verTotalesCaja && <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm space-y-2">
           <p>Ventas a cuenta: <strong>{formatMoney(cajaAbierta.ventas_cuenta_corriente || 0)}</strong></p>
           <p>Cobros de cuenta corriente: <strong>{formatMoney(cajaAbierta.cobros_cuenta_corriente || 0)}</strong></p>
           <p className="text-xs text-slate-500">Los cobros de deudas ingresan a caja sin sumar otra venta.</p>
         </div>}
-        {!cierreACiegas && <div className="grid grid-cols-2 gap-3">
+        {verTotalesCaja && <div className="grid grid-cols-2 gap-3">
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <p className="text-xs text-slate-500 mb-1">Caja inicial</p>
             <p className="text-xl font-bold text-slate-800">{formatMoney(cajaAbierta.monto_inicial)}</p>
@@ -1467,6 +1513,10 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
                       <dt className="opacity-75">Moza</dt><dd className="text-right font-medium">{solicitud.solicitada_por_nombre}</dd>
                       <dt className="opacity-75">Medio elegido</dt><dd className="text-right font-medium">{nombreMedio(solicitud.metodo_pago)}</dd>
+                      {solicitud.metodo_pago === 'mixto' && solicitud.reparto && (<>
+                        <dt className="opacity-75">Cómo paga</dt>
+                        <dd className="text-right font-medium">{describirReparto(solicitud.reparto)}</dd>
+                      </>)}
                       <dt className="opacity-75">Pedido a las</dt>
                       <dd className="text-right font-medium">{new Date(solicitud.solicitada_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</dd>
                       <dt className="opacity-75">Importe pedido</dt><dd className="text-right font-bold">{formatMoney(solicitud.total)}</dd>
@@ -1526,6 +1576,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                   <div key={item.id} className="flex justify-between gap-3 text-sm">
                     <div className="min-w-0">
                       <span className="text-slate-600">{item.cantidad}x {item.producto?.nombre}</span>
+                      {/* Lo mismo que ve cocina: cuánto lleva desde que se pidió, o cuánto tardó en salir. */}
+                      <RelojItem item={item} className="ml-2 align-middle" />
                       <DetalleItem opciones={item.opciones} observaciones={item.observaciones} />
                     </div>
                     <span className="font-medium text-slate-800 shrink-0">${item.subtotal.toLocaleString()}</span>
@@ -1925,8 +1977,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               )}
 
               {([
-                ['Efectivo', montoCierreEfectivo, setMontoCierreEfectivo, cajaAbierta.monto_esperado_efectivo, ''],
-                ['Transferencia', montoCierreTransferencia, setMontoCierreTransferencia, cajaAbierta.transferencia, 'Transferencias y Mercado Pago del día.'],
+                ['Efectivo en la caja', montoCierreEfectivo, setMontoCierreEfectivo, cajaAbierta.monto_esperado_efectivo, 'Contá los billetes del cajón. Las transferencias y tarjetas no hace falta contarlas.'],
               ] as Array<[string, string, (value: string) => void, number, string]>).map(([etiqueta, valor, setValor, esperado, ayuda]) => {
                 const contado = montoContado(valor);
                 const diferencia = contado === null ? null : contado - esperado;

@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, FileText, Wallet, X } from 'lucide-react';
-import type { Profile } from '../lib/types';
+import type { Gasto, Profile } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
 import { useGastos } from '../lib/gastosStore';
-import { loadUsuarios, saveUsuarios, useUsuarios } from '../lib/usuariosStore';
+import { useUsuarios } from '../lib/usuariosStore';
 import { cuentaCajaDiaId, cuentaCajaGrandeId, cuentaBancoId, loadCuentasDinero } from '../lib/finance';
 import { dayKey } from '../lib/fechas';
-import { estadoDeCuenta, mesDeSueldo, nombrePeriodo, nombreUsuario, pagarSueldo, periodoActual, type EstadoSueldo } from '../lib/sueldos';
+import { estadoDeCuenta, nombrePeriodo,nombreUsuario, pagarSueldo, pagosDeSueldo, periodoActual, type EstadoSueldo } from '../lib/sueldos';
 
 const dinero = (valor: number) => `$${valor.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`;
 const campo = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white';
@@ -24,37 +24,31 @@ const Iniciales = ({ usuario }: { usuario: Profile }) => (
   </div>
 );
 
-const guardarSueldo = (usuarioId: string, sueldo: number) =>
-  saveUsuarios(loadUsuarios().map(u => (u.id === usuarioId ? { ...u, sueldo, updated_at: new Date().toISOString() } : u)));
+/** "2026-11-12" → "12/11/2026". */
+const fechaCorta = (fecha: string) => fecha.split('-').reverse().join('/');
 
-/** Pago rápido: elegís a quién, el mes, y el monto ya viene con lo que le falta cobrar. */
-export function PagarSueldo({ usuarioInicial, periodoInicial, onCerrar }: { usuarioInicial?: string; periodoInicial?: string; onCerrar: () => void }) {
+/** Lo que ya se le pagó a la persona en un día. */
+const pagadoEnElDia = (gastos: Gasto[], empleadoId: string, fecha: string) =>
+  pagosDeSueldo(gastos, empleadoId).filter(g => g.fecha === fecha).reduce((suma, g) => suma + g.monto, 0);
+
+/** Pago rápido por día: elegís a quién, cuánto y la fecha. */
+export function PagarSueldo({ usuarioInicial, fechaInicial, onCerrar }: { usuarioInicial?: string; periodoInicial?: string; fechaInicial?: string; onCerrar: () => void }) {
   const { user } = useAuth();
   const usuarios = useUsuarios().filter(u => u.activo || u.id === usuarioInicial);
   const gastos = useGastos();
   const cuentas = loadCuentasDinero().filter(c => c.activa);
   const [usuarioId, setUsuarioId] = useState(usuarioInicial || '');
-  const [periodo, setPeriodo] = useState(periodoInicial || periodoActual());
   const usuario = usuarios.find(u => u.id === usuarioId);
-  const [sueldo, setSueldo] = useState(usuario?.sueldo ? String(usuario.sueldo) : '');
-  const mes = usuario ? mesDeSueldo({ ...usuario, sueldo: Number(sueldo) || 0 }, gastos, periodo) : null;
-  const [monto, setMonto] = useState(() => (mes && mes.resta > 0 ? String(mes.resta) : ''));
-  const [fecha, setFecha] = useState(dayKey());
+  const [monto, setMonto] = useState('');
+  const [fecha, setFecha] = useState(fechaInicial || dayKey());
   const [metodo, setMetodo] = useState<'efectivo' | 'transferencia'>('efectivo');
   const [desdeCajaDia, setDesdeCajaDia] = useState(false);
   const [cuentaId, setCuentaId] = useState(cuentaCajaGrandeId);
   const [observaciones, setObservaciones] = useState('');
   const [error, setError] = useState('');
 
-  // Al cambiar de persona o de mes, el monto se vuelve a completar con lo que falta.
-  const elegir = (id: string, nuevoPeriodo = periodo) => {
-    const elegido = usuarios.find(u => u.id === id);
-    const sueldoElegido = id === usuarioId ? Number(sueldo) || 0 : elegido?.sueldo || 0;
-    if (id !== usuarioId) setSueldo(elegido?.sueldo ? String(elegido.sueldo) : '');
+  const elegir = (id: string) => {
     setUsuarioId(id);
-    setPeriodo(nuevoPeriodo);
-    const resta = elegido ? mesDeSueldo({ ...elegido, sueldo: sueldoElegido }, gastos, nuevoPeriodo).resta : 0;
-    setMonto(resta > 0 ? String(resta) : '');
     setError('');
   };
 
@@ -66,13 +60,13 @@ export function PagarSueldo({ usuarioInicial, periodoInicial, onCerrar }: { usua
 
   const confirmar = () => {
     if (!usuario) return setError('Elegí a quién le pagás.');
-    const sueldoNum = Number(sueldo) || 0;
-    if (sueldo && sueldoNum < 0) return setError('Revisá el sueldo mensual.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return setError('Elegí la fecha del pago.');
     try {
-      if (sueldoNum !== (usuario.sueldo || 0)) guardarSueldo(usuario.id, sueldoNum);
       pagarSueldo({
-        usuario: { ...usuario, sueldo: sueldoNum || undefined },
-        periodo,
+        usuario,
+        // Se paga por día: el mes sale de la fecha, solo para agrupar el historial.
+        periodo: fecha.slice(0, 7),
+        concepto: `Sueldo ${nombreUsuario(usuario)} · ${fechaCorta(fecha)}`,
         monto: Number(monto),
         fecha,
         metodo_pago: metodo,
@@ -110,7 +104,7 @@ export function PagarSueldo({ usuarioInicial, periodoInicial, onCerrar }: { usua
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto">
                 {usuarios.map(u => {
-                  const estado = mesDeSueldo(u, gastos, periodo).estado;
+                  const cobroHoy = pagadoEnElDia(gastos, u.id, fecha);
                   return (
                     <button
                       key={u.id}
@@ -124,7 +118,9 @@ export function PagarSueldo({ usuarioInicial, periodoInicial, onCerrar }: { usua
                       <Iniciales usuario={u} />
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-800 truncate">{nombreUsuario(u)}</p>
-                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${estadosSueldo[estado].color}`}>{estadosSueldo[estado].label}</span>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${cobroHoy > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {cobroHoy > 0 ? `Cobró ${dinero(cobroHoy)} ese día` : 'Sin pago ese día'}
+                        </span>
                       </div>
                     </button>
                   );
@@ -135,45 +131,18 @@ export function PagarSueldo({ usuarioInicial, periodoInicial, onCerrar }: { usua
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="sueldo-periodo" className="block text-sm font-medium text-slate-700 mb-1.5">Mes que se paga</label>
-              <input id="sueldo-periodo" type="month" value={periodo} onChange={e => e.target.value && elegir(usuarioId, e.target.value)} className={campo} />
-            </div>
-            <div>
-              <label htmlFor="sueldo-mensual" className="block text-sm font-medium text-slate-700 mb-1.5">Sueldo mensual</label>
-              <input
-                id="sueldo-mensual"
-                type="number"
-                min="0"
-                value={sueldo}
-                disabled={!usuario}
-                onChange={e => setSueldo(e.target.value)}
-                onBlur={() => usuario && elegir(usuario.id)}
-                placeholder="Ej: 600000"
-                className={`${campo} disabled:bg-slate-50`}
-              />
-            </div>
-          </div>
-
-          {usuario && mes && (
-            <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center">
-              <div><p className="text-[11px] text-slate-500">Sueldo</p><p className="text-sm font-bold text-slate-800">{dinero(mes.sueldo)}</p></div>
-              <div><p className="text-[11px] text-slate-500">Ya cobró</p><p className="text-sm font-bold text-emerald-700">{dinero(mes.pagado)}</p></div>
-              <div><p className="text-[11px] text-slate-500">Le falta</p><p className="text-sm font-bold text-red-600">{dinero(mes.resta)}</p></div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
               <label htmlFor="sueldo-monto" className="block text-sm font-medium text-slate-700 mb-1.5">Monto a pagar *</label>
               <input id="sueldo-monto" type="number" min="0" value={monto} onChange={e => { setMonto(e.target.value); setError(''); }} placeholder="0" className={`${campo} font-semibold`} />
             </div>
             <div>
               <label htmlFor="sueldo-fecha" className="block text-sm font-medium text-slate-700 mb-1.5">Fecha</label>
-              <input id="sueldo-fecha" type="date" value={fecha} onChange={e => setFecha(e.target.value)} className={campo} />
+              <input id="sueldo-fecha" type="date" value={fecha} onChange={e => { setFecha(e.target.value); setError(''); }} className={campo} />
             </div>
           </div>
-          {mes && mes.sueldo > 0 && montoNum > mes.resta && (
-            <p className="text-xs text-amber-700">Es más de lo que le falta cobrar este mes ({dinero(mes.resta)}). Se registra igual.</p>
+          {usuario && pagadoEnElDia(gastos, usuario.id, fecha) > 0 && (
+            <p className="text-xs text-amber-700">
+              {usuario.nombre} ya cobró {dinero(pagadoEnElDia(gastos, usuario.id, fecha))} el {fechaCorta(fecha)}. Si pagás de nuevo, se suma.
+            </p>
           )}
 
           <div className="grid grid-cols-2 gap-2">
@@ -297,16 +266,15 @@ export function EstadoCuentaSueldo({ usuarioId, onCerrar, onPagar }: { usuarioId
   );
 }
 
-/** Tarjeta de Pagos: cómo está cada persona en el mes elegido. */
+/** Tarjeta de Pagos: cuánto cobró cada persona en el día elegido (se paga por día). */
 export function SueldosDelMes() {
   const usuarios = useUsuarios().filter(u => u.activo);
   const gastos = useGastos();
-  const [periodo, setPeriodo] = useState(periodoActual());
-  const [pagando, setPagando] = useState<{ usuarioId?: string; periodo?: string } | null>(null);
+  const [fecha, setFecha] = useState(dayKey());
+  const [pagando, setPagando] = useState<{ usuarioId?: string; fecha: string } | null>(null);
   const [cuentaDe, setCuentaDe] = useState<string | null>(null);
-  const filas = usuarios.map(u => ({ usuario: u, mes: mesDeSueldo(u, gastos, periodo) }));
-  const totalResta = filas.reduce((s, f) => s + f.mes.resta, 0);
-  const totalPagado = filas.reduce((s, f) => s + f.mes.pagado, 0);
+  const filas = usuarios.map(u => ({ usuario: u, delDia: pagadoEnElDia(gastos, u.id, fecha) }));
+  const totalDia = filas.reduce((s, f) => s + f.delDia, 0);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -314,12 +282,12 @@ export function SueldosDelMes() {
         <div>
           <h3 className="font-semibold text-slate-800">Sueldos del personal</h3>
           <p className="text-xs text-slate-500">
-            Pagado {dinero(totalPagado)} · Falta pagar <span className={totalResta > 0 ? 'text-red-600 font-semibold' : ''}>{dinero(totalResta)}</span>
+            Pagado el {fechaCorta(fecha)}: <span className="font-semibold text-slate-700">{dinero(totalDia)}</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <input type="month" value={periodo} onChange={e => e.target.value && setPeriodo(e.target.value)} aria-label="Mes" className="border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400" />
-          <button onClick={() => setPagando({ periodo })} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white font-semibold px-4 py-2 rounded-xl text-sm">
+          <input type="date" value={fecha} onChange={e => e.target.value && setFecha(e.target.value)} aria-label="Día" className="border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-amber-400" />
+          <button onClick={() => setPagando({ fecha })} className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-white font-semibold px-4 py-2 rounded-xl text-sm">
             <Wallet size={14} />Pagar sueldo
           </button>
         </div>
@@ -329,26 +297,23 @@ export function SueldosDelMes() {
         <p className="p-6 text-center text-sm text-slate-400">Cargá tu personal en Usuarios para pagarle sueldos desde acá.</p>
       ) : (
         <div className="divide-y divide-slate-50">
-          {filas.map(({ usuario, mes }) => {
-            const cfg = estadosSueldo[mes.estado];
+          {filas.map(({ usuario, delDia }) => {
             return (
               <div key={usuario.id} className="flex flex-wrap sm:flex-nowrap items-center gap-3 px-4 py-3">
                 <Iniciales usuario={usuario} />
                 <div className="flex-1 min-w-[8rem]">
                   <p className="text-sm font-medium text-slate-800">{nombreUsuario(usuario)}</p>
-                  <p className="text-xs text-slate-500">
-                    {mes.sueldo > 0 ? `${dinero(mes.pagado)} de ${dinero(mes.sueldo)}` : mes.pagado > 0 ? `Cobró ${dinero(mes.pagado)}` : 'Sin sueldo cargado'}
-                    {mes.resta > 0 && <span className="text-red-600"> · falta {dinero(mes.resta)}</span>}
-                  </p>
+                  <p className="text-xs text-slate-500">{delDia > 0 ? `Cobró ${dinero(delDia)} ese día` : 'Sin pago ese día'}</p>
                 </div>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${cfg.color}`}>{cfg.label}</span>
+                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${delDia > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                  {delDia > 0 ? 'Pagado' : 'Sin pagar'}
+                </span>
                 <button onClick={() => setCuentaDe(usuario.id)} className="flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-800 px-2 py-1.5 rounded-lg hover:bg-slate-100">
                   <FileText size={13} />Estado de cuenta
                 </button>
                 <button
-                  onClick={() => setPagando({ usuarioId: usuario.id, periodo })}
-                  disabled={mes.estado === 'pagado'}
-                  className="text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-40 px-3 py-1.5 rounded-lg"
+                  onClick={() => setPagando({ usuarioId: usuario.id, fecha })}
+                  className="text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg"
                 >
                   Pagar
                 </button>
@@ -362,14 +327,14 @@ export function SueldosDelMes() {
         <EstadoCuentaSueldo
           usuarioId={cuentaDe}
           onCerrar={() => setCuentaDe(null)}
-          onPagar={p => setPagando({ usuarioId: cuentaDe, periodo: p })}
+          onPagar={() => setPagando({ usuarioId: cuentaDe, fecha: dayKey() })}
         />
       )}
       {pagando && (
         <PagarSueldo
-          key={`${pagando.usuarioId}-${pagando.periodo}`}
+          key={`${pagando.usuarioId}-${pagando.fecha}`}
           usuarioInicial={pagando.usuarioId}
-          periodoInicial={pagando.periodo}
+          fechaInicial={pagando.fecha}
           onCerrar={() => setPagando(null)}
         />
       )}

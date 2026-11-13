@@ -274,11 +274,20 @@ export interface Pedido {
  */
 export type EstadoSolicitudCobro = 'solicitado' | 'ticket_emitido' | 'pagada' | 'rechazada';
 
+export interface RepartoMixto {
+  efectivo: number;
+  transferencia: number;
+  debito: number;
+  credito: number;
+}
+
 export interface SolicitudCobro {
   id: string;
   estado: EstadoSolicitudCobro;
   /** Lo que eligió la moza. Caja puede cambiarlo si el cliente paga de otra forma. */
   metodo_pago: MetodoPago;
+  /** Con pago mixto: cuánto paga con cada medio, según lo que le dijo el cliente a la moza. */
+  reparto?: RepartoMixto;
   /** Importe al pedir el cobro. Si la comanda ya no suma esto, la solicitud quedó vieja. */
   subtotal: number;
   descuento: number;
@@ -412,6 +421,9 @@ export interface CajaDiaria {
   estado: EstadoCajaDiaria;
   opened_at: string;
   closed_at?: string;
+  /** Quién hizo el cierre (puede no ser quien la abrió). */
+  cerrado_por_id?: string;
+  cerrado_por_nombre?: string;
 }
 
 export interface Gasto {

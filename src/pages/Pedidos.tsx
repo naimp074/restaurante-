@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2, ArrowLeftRight } from 'lucide-react';
-import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, TipoEventoComanda } from '../lib/types';
+import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, RepartoMixto, TipoEventoComanda } from '../lib/types';
 import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
 import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
 import { useCategorias } from '../lib/categoriasStore';
@@ -49,6 +49,25 @@ const textoEvento: Record<TipoEventoComanda, string> = {
   pago_anulado: 'Caja anuló el cobro',
   mesa_cambiada: 'Cambió de mesa',
 };
+const sinAcentos = (texto: string) => texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+/**
+ * Mesas que coinciden con lo que se escribe. Un número busca por número ("1" trae 1, 10, 11…,
+ * con la 1 primero); un texto busca en el nombre ("box", "vereda"). Sin búsqueda, todas.
+ */
+const filtrarMesas =(mesas: Mesa[], busqueda: string) => {
+  const ordenadas = [...mesas].sort((a, b) => a.numero - b.numero);
+  const q = sinAcentos(busqueda).replace(/^mesa\s*/, '');
+  if (!q) return ordenadas;
+  const coincide = (mesa: Mesa) => {
+    const nombre = sinAcentos(mesa.nombre || '');
+    if (/^\d+$/.test(q)) return String(mesa.numero).startsWith(q) || nombre.split(/\s+/).some(p => p.startsWith(q));
+    return nombre.includes(q) || `mesa ${mesa.numero}`.includes(q);
+  };
+  const exacta = (mesa: Mesa) => String(mesa.numero) === q || sinAcentos(mesa.nombre || '') === q;
+  return ordenadas.filter(coincide).sort((a, b) => Number(exacta(b)) - Number(exacta(a)));
+};
+
 // Esta pantalla es del salón: los pedidos para llevar, delivery y PedidosYa tienen su apartado.
 const pedidoAbierto = (pedido: Pedido) => esDeSalon(pedido) && !['cobrado', 'cuenta_corriente', 'cancelado'].includes(pedido.estado);
 
@@ -85,6 +104,8 @@ export default function Pedidos() {
   const mesasDisponibles = useMesas();
   const mozas = useMozas();
   const mesasLibres = mesasDisponibles.filter(m => estadoOperativoMesa(m, pedidos) === 'libre');
+  const [buscarMesa, setBuscarMesa] = useState('');
+  const mesasFiltradas = filtrarMesas(mesasDisponibles, buscarMesa);
 
   const filteredProductos = catalogoProductos.filter(p => {
     const matchCat = categoriaFiltro === 'todos' || p.categoria_id === categoriaFiltro;
@@ -251,12 +272,12 @@ export default function Pedidos() {
     }
   };
 
-  const solicitarCobro = (metodo: MetodoPago) => {
+  const solicitarCobro = (metodo: MetodoPago, reparto?: RepartoMixto) => {
     // Un doble toque no manda dos pedidos de cobro (y nuevaSolicitud rechaza si ya hay uno).
     if (cobroEnProceso.current) return;
     cobroEnProceso.current = true;
     setEnviandoCobro(true);
-    const error = guardarCobro(pedido => nuevaSolicitud(pedido, metodo, actor));
+    const error = guardarCobro(pedido => nuevaSolicitud(pedido, metodo, actor, undefined, reparto));
     cobroEnProceso.current = false;
     setEnviandoCobro(false);
     setCobroError(error);
@@ -383,9 +404,35 @@ export default function Pedidos() {
               <span className="text-xs font-medium text-emerald-700">{mesasLibres.length} libres</span>
             </div>
             <p className="text-xs text-slate-500 mt-1">Seleccioná una mesa y agregá su pedido.</p>
+            <div className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 focus-within:border-amber-400 focus-within:bg-white">
+              <Search size={15} className="shrink-0 text-slate-400" />
+              <input
+                type="search"
+                inputMode="search"
+                value={buscarMesa}
+                onChange={e => setBuscarMesa(e.target.value)}
+                onKeyDown={e => {
+                  // Enter abre la mesa si la búsqueda deja una sola (o el número exacto).
+                  if (e.key !== 'Enter') return;
+                  const elegida = mesasFiltradas.find(m => String(m.numero) === buscarMesa.trim()) || (mesasFiltradas.length === 1 ? mesasFiltradas[0] : null);
+                  if (elegida && elegida.estado !== 'cerrada') { seleccionarMesa(elegida); setBuscarMesa(''); }
+                }}
+                placeholder="Buscar mesa (número o nombre)"
+                aria-label="Buscar mesa por número o nombre"
+                className="min-h-[44px] w-full bg-transparent text-sm outline-none placeholder-slate-400"
+              />
+              {buscarMesa && (
+                <button type="button" onClick={() => setBuscarMesa('')} aria-label="Borrar búsqueda" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-200">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-1 gap-2 p-3 max-h-[40vh] md:max-h-[calc(100vh-260px)] overflow-y-auto">
-            {[...mesasDisponibles].sort((a, b) => a.numero - b.numero).map(mesa => {
+            {buscarMesa.trim() && mesasFiltradas.length === 0 && (
+              <p className="col-span-full py-6 text-center text-sm text-slate-500">No hay ninguna mesa «{buscarMesa.trim()}».</p>
+            )}
+            {mesasFiltradas.map(mesa => {
               const pedido = pedidos.find(item => item.mesa_id === mesa.id && pedidoAbierto(item));
               const cerrada = mesa.estado === 'cerrada';
               const seleccionada = selectedPedido?.mesa_id === mesa.id;
