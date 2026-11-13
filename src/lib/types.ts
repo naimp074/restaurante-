@@ -309,7 +309,8 @@ export type TipoEventoComanda =
   | 'ticket_anulado'
   | 'cobro_rechazado'
   | 'pagada'
-  | 'pago_anulado';
+  | 'pago_anulado'
+  | 'mesa_cambiada';
 
 export interface EventoComanda {
   id: string;

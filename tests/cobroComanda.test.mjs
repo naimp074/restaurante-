@@ -160,3 +160,27 @@ test('lo entregado solo se anula con permiso y motivo, y deja de cobrarse', () =
   const pedida = api.nuevaSolicitud(pedido, 'efectivo', moza, t0);
   assert.throws(() => api.anularItem(pedida, 'a', 'x', encargado), /Cancelalo/);
 });
+
+test('cambiar de mesa: la comanda entera pasa a una mesa libre y queda anotado', () => {
+  const mesa8 = { id: 'mesa-8', numero: 8, nombre: '', estado: 'libre' };
+  const pedida = api.nuevaSolicitud(mesaM2({ mesa: { id: 'mesa-2', numero: 2, nombre: '' } }), 'efectivo', moza, t0);
+  const movida = api.cambiarDeMesa(pedida, mesa8, [pedida], moza, t0);
+  assert.equal(movida.mesa_id, 'mesa-8');
+  assert.equal(movida.mesa.numero, 8);
+  assert.equal(movida.items.length, 3, 'los productos van con la comanda');
+  assert.equal(movida.solicitud_cobro.estado, 'solicitado', 'el pedido de cobro también');
+  assert.equal(movida.total, 14190);
+  assert.equal(movida.historial.at(-1).tipo, 'mesa_cambiada');
+  assert.equal(movida.historial.at(-1).detalle, 'Mesa 2 → Mesa 8');
+});
+
+test('cambiar de mesa: no a una ocupada, cerrada ni a la misma; no si la comanda está cerrada', () => {
+  const comanda = mesaM2({ mesa: { id: 'mesa-2', numero: 2, nombre: '' } });
+  const otra = mesaM2({ id: 'ped-2', mesa_id: 'mesa-8' });
+  assert.throws(() => api.cambiarDeMesa(comanda, { id: 'mesa-8', numero: 8, estado: 'ocupada' }, [comanda, otra], moza), /Mesa 8 ya tiene una comanda abierta/);
+  assert.throws(() => api.cambiarDeMesa(comanda, { id: 'mesa-9', numero: 9, estado: 'cerrada' }, [comanda], moza), /fuera de servicio/);
+  assert.throws(() => api.cambiarDeMesa(comanda, { id: 'mesa-2', numero: 2, estado: 'ocupada' }, [comanda], moza), /ya está en esa mesa/);
+  assert.throws(() => api.cambiarDeMesa(mesaM2({ estado: 'cobrado' }), { id: 'mesa-9', numero: 9, estado: 'libre' }, [], moza), /cerrada/);
+  const cobradaEnLaOtra = mesaM2({ id: 'ped-3', mesa_id: 'mesa-8', estado: 'cobrado' });
+  assert.equal(api.cambiarDeMesa(comanda, { id: 'mesa-8', numero: 8, estado: 'libre' }, [comanda, cobradaEnLaOtra], moza).mesa_id, 'mesa-8', 'una comanda ya cobrada no ocupa la mesa');
+});
