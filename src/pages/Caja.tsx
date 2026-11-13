@@ -151,9 +151,12 @@ const getPagoBreakdown = (pago: Pago) => {
 export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaProps) {
   const gastos = useGastos();
   const { user, modoDemo } = useAuth();
-  const cierreACiegas = user?.rol === 'cajero';
-  /** En Cobros, los totales de la caja (inicial, ventas, efectivo, esperado) los ve solo el admin. */
-  const verTotalesCaja = !cierreACiegas && (vista !== 'cobros' || user?.rol === 'admin');
+  /**
+   * Los importes de la caja (inicial, ventas, efectivo, esperado, arqueos, saldos) los ve solo el admin.
+   * Los demás cierran a ciegas: cuentan el efectivo sin ver cuánto debería haber.
+   */
+  const cierreACiegas = user?.rol !== 'admin';
+  const verTotalesCaja = !cierreACiegas;
   const [pedidos, setPedidos] = useState<Pedido[]>(
     () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
   );
