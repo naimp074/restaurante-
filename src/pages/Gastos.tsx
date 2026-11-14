@@ -17,6 +17,7 @@ import { dayKey } from '../lib/fechas';
 import { saveGastos, useGastos } from '../lib/gastosStore';
 import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
 import { nuevoId } from '../lib/ids';
+import { withStoreTransaction } from '../lib/storeSync';
 import { useUsuarios } from '../lib/usuariosStore';
 import { SueldosDelMes } from '../components/Sueldos';
 import { nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
@@ -139,6 +140,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const [traspasoDestinoId, setTraspasoDestinoId] = useState(cuentaBancoId);
   const [traspasoMonto, setTraspasoMonto] = useState('');
   const [traspasoError, setTraspasoError] = useState('');
+  // En un traspaso que toca la caja del día: si es efectivo del cajón o plata de transferencias/tarjeta.
+  const [traspasoEnEfectivo, setTraspasoEnEfectivo] = useState(true);
   const [empleadoId, setEmpleadoId] = useState('');
   const [periodo, setPeriodo] = useState(periodoActual());
   const usuarios = useUsuarios();
@@ -264,7 +267,12 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       sueldo_mes: empleado?.sueldo,
     };
 
-    registrarGasto(gasto);
+    try {
+      registrarGasto(gasto);
+    } catch (error) {
+      setGastoError(error instanceof Error ? error.message : 'No se pudo guardar el gasto.');
+      return;
+    }
     setCuentas(loadCuentasDinero());
     resetForm();
     setShowForm(false);
@@ -346,6 +354,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     setTraspasoError('');
   };
 
+  const tocaCajaDia = cuentaAbierta?.id === cuentaCajaDiaId || traspasoDestinoId === cuentaCajaDiaId;
+
   const guardarTraspaso = () => {
     const origenId = cuentaAbierta?.id;
     const montoNum = Number.parseFloat(traspasoMonto.replace(',', '.'));
@@ -374,15 +384,23 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     }
 
     const fecha = todayKey();
-    transferirEntreCuentas({
-      cuenta_origen_id: origenId,
-      cuenta_destino_id: traspasoDestinoId,
-      monto: montoNum,
-      descripcion: `Traspaso de ${origen.nombre} a ${destino.nombre}`,
-      fecha,
-    });
-    if (origenId === cuentaCajaDiaId) aplicarGastoEnCajaDia(fecha, montoNum, 1);
-    if (traspasoDestinoId === cuentaCajaDiaId) aplicarGastoEnCajaDia(fecha, montoNum, -1);
+    try {
+      withStoreTransaction(() => {
+        transferirEntreCuentas({
+          cuenta_origen_id: origenId,
+          cuenta_destino_id: traspasoDestinoId,
+          monto: montoNum,
+          descripcion: `Traspaso de ${origen.nombre} a ${destino.nombre}${tocaCajaDia && !traspasoEnEfectivo ? ' (transferencias/tarjeta)' : ''}`,
+          fecha,
+        });
+        // Solo el efectivo cambia lo que hay que contar en el cajón.
+        if (traspasoEnEfectivo && origenId === cuentaCajaDiaId) aplicarGastoEnCajaDia(fecha, montoNum, 1);
+        if (traspasoEnEfectivo && traspasoDestinoId === cuentaCajaDiaId) aplicarGastoEnCajaDia(fecha, montoNum, -1);
+      });
+    } catch (error) {
+      setTraspasoError(error instanceof Error ? error.message : 'No se pudo hacer el traspaso.');
+      return;
+    }
     setCuentas(loadCuentasDinero());
     setMovimientos(loadMovimientosFinancieros());
     setTraspasoMonto('');
@@ -599,6 +617,25 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                 className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
               />
             </div>
+
+            {tocaCajaDia && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">¿Qué plata de la caja del día?</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([[true, 'Efectivo del cajón'], [false, 'Transferencias o tarjeta']] as const).map(([valor, texto]) => (
+                    <button
+                      key={texto}
+                      type="button"
+                      onClick={() => setTraspasoEnEfectivo(valor)}
+                      className={`rounded-xl border px-3 py-2 text-sm font-medium ${traspasoEnEfectivo === valor ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {texto}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 mt-1.5">Solo el efectivo cambia lo que hay que contar al cerrar la caja.</p>
+              </div>
+            )}
 
             {traspasoError && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{traspasoError}</p>

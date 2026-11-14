@@ -330,7 +330,8 @@ export const registrarPagoProveedor = (data: {
   };
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
 
-  if (data.cuenta_origen_id === cuentaCajaDiaId) aplicarGastoEnCajaDia(pago.fecha, data.monto, 1);
+  // Solo el efectivo sale del cajón: un pago por transferencia o tarjeta no cambia lo que hay que contar.
+  if (data.cuenta_origen_id === cuentaCajaDiaId && data.metodo_pago === 'efectivo') aplicarGastoEnCajaDia(pago.fecha, data.monto, 1);
   return pago;
 });
 
@@ -381,7 +382,7 @@ export const registrarGastoCompra = (data: {
         cuenta_id: data.cuenta_origen_id, monto: data.monto_pagado, descripcion: data.concepto,
         origen: 'gasto', fecha: data.fecha, metodo_pago: data.metodo_pago,
       });
-      if (data.cuenta_origen_id === cuentaCajaDiaId) aplicarGastoEnCajaDia(data.fecha, data.monto_pagado, 1);
+      if (data.cuenta_origen_id === cuentaCajaDiaId && data.metodo_pago === 'efectivo') aplicarGastoEnCajaDia(data.fecha, data.monto_pagado, 1);
     }
   }
   saveGastos([gasto, ...loadGastos()]);

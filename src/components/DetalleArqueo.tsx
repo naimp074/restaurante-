@@ -61,8 +61,16 @@ const pagosDeLaCaja =(caja: CajaDiaria, pagos: Pago[]) => {
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 };
 
-function Diferencia({ valor }: { valor?: number }) {
+function Diferencia({ valor, esperado }: { valor?: number; esperado?: number }) {
   if (valor === undefined) return <span className="text-slate-400">—</span>;
+  // Esperado negativo: se anotaron más salidas de efectivo que lo que había. No puede "sobrar".
+  if (esperado !== undefined && esperado < -0.009) {
+    return (
+      <span className="font-semibold text-red-600" title="Se anotaron más gastos en efectivo que el efectivo que había en la caja">
+        Faltan {dinero(-esperado)}
+      </span>
+    );
+  }
   if (Math.abs(valor) < 0.01) return <span className="font-semibold text-emerald-600">Justo</span>;
   return (
     <span className={`font-semibold ${valor < 0 ? 'text-red-600' : 'text-amber-600'}`}>
@@ -155,7 +163,7 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
                       <td className="px-3 py-2 text-slate-600">Efectivo</td>
                       {!aCiegas && <td className="px-3 py-2 text-right">{dinero(caja.monto_esperado_efectivo)}</td>}
                       <td className="px-3 py-2 text-right font-semibold">{caja.monto_cierre_efectivo !== undefined ? dinero(caja.monto_cierre_efectivo) : '—'}</td>
-                      {!aCiegas && <td className="px-3 py-2 text-right"><Diferencia valor={caja.diferencia_efectivo} /></td>}
+                      {!aCiegas && <td className="px-3 py-2 text-right"><Diferencia valor={caja.diferencia_efectivo} esperado={caja.monto_esperado_efectivo} /></td>}
                     </tr>
                     <tr>
                       <td className="px-3 py-2 text-slate-600">Transferencia</td>
