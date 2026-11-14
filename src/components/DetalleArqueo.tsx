@@ -62,6 +62,19 @@ const pagosDeLaCaja =(caja: CajaDiaria, pagos: Pago[]) => {
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 };
 
+/**
+ * Los gastos y movimientos hechos mientras esta caja estuvo abierta (de la apertura al cierre),
+ * no todo lo del día ni lo acumulado: así cada turno ve solo lo suyo.
+ */
+const movimientosDeLaCaja = (caja: CajaDiaria, movimientos: MovimientoFinanciero[]) => {
+  const desde = caja.opened_at;
+  const hasta = caja.closed_at;
+  if (!desde) return movimientos.filter(mov => mov.fecha === caja.fecha);
+  return movimientos.filter(mov => mov.created_at
+    ? mov.created_at >= desde && (!hasta || mov.created_at <= hasta)
+    : mov.fecha === caja.fecha);
+};
+
 function Diferencia({ valor, esperado }: { valor?: number; esperado?: number }) {
   if (valor === undefined) return <span className="text-slate-400">—</span>;
   // Esperado negativo: se anotaron más salidas de efectivo que lo que había. No puede "sobrar".
@@ -91,8 +104,8 @@ function Fila({ label, valor, fuerte }: { label: string; valor: React.ReactNode;
 
 export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cuentas, aCiegas, onClose }: Props) {
   const cobros = pagosDeLaCaja(caja, pagos);
-  const movimientosDelDia = movimientos
-    .filter(mov => mov.fecha === caja.fecha && mov.origen !== 'venta')
+  const movimientosDelDia = movimientosDeLaCaja(caja, movimientos)
+    .filter(mov => mov.origen !== 'venta')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const gastosDelDia = resumenGastosCaja(movimientosDelDia);
   const apartadosDelDia = apartados.filter(apartado => apartado.fecha === caja.fecha);
