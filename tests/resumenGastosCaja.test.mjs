@@ -28,6 +28,7 @@ test('separa los gastos por medio y los proveedores aparte', () => {
     mov(3000, { origen: 'retiro' }),
     mov(99999, { tipo: 'transferencia', origen: 'transferencia_interna' }),
     mov(1000, { tipo: 'entrada', origen: 'ajuste' }),
+    mov(30000, { origen: 'ajuste', descripcion: 'Anulación de venta Mesa 5 - efectivo' }),
   ]);
   assert.deepEqual(resumen, { efectivo: 15000, proveedores: 110000, transferencia: 27000, tarjeta: 12000, otros: 3000, total: 167000 });
 });

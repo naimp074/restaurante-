@@ -20,7 +20,8 @@ const redondear = (n: number) => Math.round(n * 100) / 100;
 
 /** A qué renglón del resumen va un movimiento, o null si no es un gasto (entradas, traspasos entre cuentas). */
 export const categoriaGastoCaja = (mov: MovimientoFinanciero): CategoriaGastoCaja | null => {
-  if (mov.tipo !== 'salida' || mov.origen === 'venta') return null;
+  // Las anulaciones de venta (ajuste) ya se restaron de las ventas: no son gastos.
+  if (mov.tipo !== 'salida' || mov.origen === 'venta' || mov.origen === 'ajuste') return null;
   if (mov.origen === 'pago_proveedor' || mov.origen === 'compra' || mov.proveedor_id) return 'proveedores';
   if (mov.metodo_pago === 'efectivo') return 'efectivo';
   if (mov.metodo_pago && transferencias.includes(mov.metodo_pago)) return 'transferencia';
