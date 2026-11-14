@@ -11,19 +11,14 @@ export const saveCajasDiarias = (cajas: CajaDiaria[]) =>
 
 export const useCajas = () => useStore(cajasUpdatedEvent, loadCajasDiarias);
 
-const pesos = (n: number) => `$${n.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`;
-
 /**
  * Resta o devuelve un gasto de efectivo de la caja del día.
- * No deja sacar más efectivo del que hay en el cajón: corta el guardado (y la transacción) con el error.
+ * Deja pagar aunque en el cajón figure menos (a veces hay plata de más): lo esperado puede quedar en negativo.
  */
 export const aplicarGastoEnCajaDia = (fecha: string, monto: number, signo: 1 | -1) => {
   const cajas = loadCajasDiarias();
   const caja = cajas.find(item => item.fecha === fecha && item.estado === 'abierta');
   if (!caja) return;
-  if (signo === 1 && monto - caja.monto_esperado_efectivo > 0.009) {
-    throw new Error(`En la caja del día hay ${pesos(Math.max(0, caja.monto_esperado_efectivo))} en efectivo: no alcanza para sacar ${pesos(monto)}. Si se pagó por transferencia o tarjeta, elegí ese medio.`);
-  }
   saveCajasDiarias(cajas.map(item => (
     item.id !== caja.id
       ? item

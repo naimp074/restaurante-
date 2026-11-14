@@ -97,11 +97,11 @@ test('no deja pagar cero', () => {
   assert.throws(() => pagar({ monto: 0 }), /mayor que cero/);
 });
 
-test('caja del día: no deja sacar más efectivo del que hay en el cajón y no guarda nada', () => {
+test('caja del día: deja pagar aunque en el cajón figure menos (lo esperado queda en negativo)', () => {
   storage.set('restaurant-cajas-diarias', JSON.stringify([{ id: 'c1', fecha: '2026-11-04', estado: 'abierta', monto_esperado_efectivo: 100000 }]));
-  assert.throws(() => pagar({ metodo_pago: 'efectivo', desde_caja_dia: true, monto: 150000 }), /hay \$100\.000 en efectivo/);
-  assert.equal(api.loadGastos().length, 0, 'el gasto no quedó guardado');
-  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 100000);
+  pagar({ metodo_pago: 'efectivo', desde_caja_dia: true, monto: 150000 });
+  assert.equal(api.loadGastos().length, 1);
+  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, -50000);
 });
 
 test('pago a proveedor desde la caja del día por transferencia no resta efectivo del cajón', () => {
@@ -111,7 +111,8 @@ test('pago a proveedor desde la caja del día por transferencia no resta efectiv
   assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 50000);
   api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 20000 });
   assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 30000);
-  assert.throws(() => api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 40000 }), /no alcanza/);
+  api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 40000 });
+  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, -10000, 'se paga igual');
 });
 
 test('un gasto en efectivo con la cuenta Caja del día elegida a mano también baja el cajón', () => {

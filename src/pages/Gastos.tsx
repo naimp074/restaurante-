@@ -131,6 +131,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const [montoEfectivo, setMontoEfectivo] = useState('');
   const [montoTransferencia, setMontoTransferencia] = useState('');
   const [gastoError, setGastoError] = useState('');
+  // Se pagó con más efectivo del que figuraba en la caja del día: se guarda igual, con este aviso.
+  const [avisoGasto, setAvisoGasto] = useState('');
   const [showNuevaCuenta, setShowNuevaCuenta] = useState(false);
   const [nuevaCuentaNombre, setNuevaCuentaNombre] = useState('');
   const [nuevaCuentaTipo, setNuevaCuentaTipo] = useState<TipoCuentaDinero>('efectivo');
@@ -267,12 +269,17 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       sueldo_mes: empleado?.sueldo,
     };
 
+    const enCajon = cajaHoy?.monto_esperado_efectivo ?? 0;
+    const efectivoQueSale = (gasto.estado || 'pagado') === 'pagado' ? efectivoDelCajon(gasto) : 0;
     try {
       registrarGasto(gasto);
     } catch (error) {
       setGastoError(error instanceof Error ? error.message : 'No se pudo guardar el gasto.');
       return;
     }
+    setAvisoGasto(cajaHoy && efectivoQueSale - enCajon > 0.009
+      ? `Se guardó. En la caja del día figuraban ${formatMoney(Math.max(0, enCajon))} en efectivo y se pagaron ${formatMoney(efectivoQueSale)}. Si la plata que faltaba salió de otro lado, cargá un traspaso a la Caja del día así el cierre cuadra.`
+      : '');
     setCuentas(loadCuentasDinero());
     resetForm();
     setShowForm(false);
@@ -750,6 +757,12 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
 
   return (
     <div className="space-y-5">
+      {avisoGasto && (
+        <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <p>{avisoGasto}</p>
+          <button type="button" onClick={() => setAvisoGasto('')} className="text-amber-700 hover:text-amber-900" aria-label="Cerrar aviso"><X size={16} /></button>
+        </div>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
           <p className="text-xs text-slate-500 mb-1">Caja disponible hoy</p>
