@@ -11,6 +11,7 @@ import {
   cuentaCajaGrandeId,
   loadCuentasDinero,
   loadMovimientosFinancieros,
+  movimientosFinancierosStorageKey,
   registrarEntradaCuenta,
   registrarSalidaCuenta,
   transferirEntreCuentas,
@@ -18,7 +19,7 @@ import {
 import { loadDemoPedidos, saveDemoPedidos } from '../lib/demoStore';
 import { descontarStockPorVenta, reponerStockPorVenta } from '../lib/ventasStock';
 import { dayKey } from '../lib/fechas';
-import { withStoreTransaction, writeStore } from '../lib/storeSync';
+import { useStore, withStoreTransaction, writeStore } from '../lib/storeSync';
 import { calcularAjusteLista, useListasPrecios } from '../lib/listasPreciosStore';
 import { loadCajasDiarias, saveCajasDiarias, useCajas } from '../lib/cajaStore';
 import { loadPagos, savePagos, usePagos } from '../lib/pagosStore';
@@ -49,6 +50,7 @@ import {
 import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
 import { loadCategorias } from '../lib/categoriasStore';
 import { armarAvisoCierre, UMBRAL_FALTA_CAJA } from '../lib/avisoCierreCaja';
+import { recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
 import { enviarAvisoCierreCaja } from '../lib/enviarAvisoCierre';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
@@ -211,6 +213,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [nuevoApartadoMonto, setNuevoApartadoMonto] = useState('');
   const [cuentasDinero, setCuentasDinero] = useState(loadCuentasDinero);
   const [movimientosFinancieros, setMovimientosFinancieros] = useState(loadMovimientosFinancieros);
+  // Los movimientos al día (también los que llegan de otros equipos): de acá sale el efectivo esperado.
+  const movimientosVivos = useStore(`${movimientosFinancierosStorageKey}-updated`, loadMovimientosFinancieros);
   const listasPrecios = useListasPrecios();
   const actor: Actor = { id: user?.id, nombre: user ? [user.nombre, user.apellido].filter(Boolean).join(' ') : 'Caja', rol: user?.rol };
   const [devolviendo, setDevolviendo] = useState<'rechazar' | 'anular_ticket' | null>(null);
@@ -244,7 +248,13 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const historialCajas = [...cajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
   const apartadosHoy = apartadosCaja.filter(apartado => apartado.fecha === todayKey());
   const totalApartadosHoy = apartadosHoy.reduce((sum, apartado) => sum + apartado.monto, 0);
-  const efectivoEsperadoApartados = cajaDelDia?.monto_esperado_efectivo ?? 0;
+  /**
+   * El esperado en efectivo de la caja abierta se calcula con los movimientos de la Caja del día
+   * (cada cobro y cada gasto es un registro aparte), no con el número que se va sumando: ese número
+   * se podía pisar entre equipos y hacía sobrar o faltar plata en el cierre.
+   */
+  const esperadoCajaAbierta = cajaAbierta ? recalcularEsperadoEfectivo(cajaAbierta, movimientosVivos) : 0;
+  const efectivoEsperadoApartados = cajaAbierta ? esperadoCajaAbierta : cajaDelDia?.monto_esperado_efectivo ?? 0;
   const pagosProveedorHoy = movimientosFinancieros.filter(mov => mov.fecha === todayKey() && mov.origen === 'pago_proveedor');
   const totalPagosProveedorHoy = pagosProveedorHoy.reduce((sum, mov) => sum + mov.monto, 0);
   const clientesFiltrados = clientes
@@ -393,10 +403,12 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       return;
     }
 
+    // Se recalcula en el momento con todo lo que hay guardado.
+    const esperadoAlCerrar = recalcularEsperadoEfectivo(cajaAbierta, loadMovimientosFinancieros());
     const conteo = {
       fecha: cajaAbierta.fecha,
       cajero: cajaAbierta.cajero_nombre || (user ? `${user.nombre} ${user.apellido}`.trim() : 'Cajero'),
-      esperadoEfectivo: cajaAbierta.monto_esperado_efectivo,
+      esperadoEfectivo: esperadoAlCerrar,
       contadoEfectivo: efectivoContado,
       // No se cuenta: se toma como lo registrado, así el aviso de faltante mira solo el efectivo.
       esperadoTransferencia: cajaAbierta.transferencia,
@@ -406,7 +418,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
 
     // Si faltan más de $5.000 la caja no se cierra: se vuelve a contar, y los administradores se enteran por Gmail.
     if (aviso?.tipo === 'falta') {
-      const falta = cajaAbierta.monto_esperado_efectivo - efectivoContado;
+      const falta = esperadoAlCerrar - efectivoContado;
       const bloqueo = cierreACiegas
         ? `No se puede cerrar la caja: el efectivo contado no coincide, faltan más de ${formatMoney(UMBRAL_FALTA_CAJA)}. Volvé a contar el cajón.`
         : `No se puede cerrar la caja: faltan ${formatMoney(falta)} en efectivo. Volvé a contar el cajón.`;
@@ -435,7 +447,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           ? {
               ...caja,
               monto_cierre_efectivo: efectivoContado,
-              diferencia_efectivo: efectivoContado - caja.monto_esperado_efectivo,
+              monto_esperado_efectivo: esperadoAlCerrar,
+              diferencia_efectivo: efectivoContado - esperadoAlCerrar,
               estado: 'cerrada',
               closed_at: new Date().toISOString(),
               cerrado_por_id: user?.id,
@@ -1413,7 +1426,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </div>
           <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-4">
             <p className="text-xs text-amber-600 mb-1">Esperado efectivo</p>
-            <p className="text-lg font-bold text-amber-700">{formatMoney(cajaAbierta.monto_esperado_efectivo)}</p>
+            <p className="text-lg font-bold text-amber-700">{formatMoney(esperadoCajaAbierta)}</p>
           </div>
         </div>}
 
@@ -1982,7 +1995,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                     </div>
                     <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
                       <p className="text-xs text-amber-600">Esperado efectivo</p>
-                      <p className="text-lg font-bold text-amber-700">{formatMoney(cajaAbierta.monto_esperado_efectivo)}</p>
+                      <p className="text-lg font-bold text-amber-700">{formatMoney(esperadoCajaAbierta)}</p>
                     </div>
                     <div className="bg-purple-50 border border-purple-100 rounded-xl p-3">
                       <p className="text-xs text-purple-600">Tarjeta</p>
@@ -2002,7 +2015,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               )}
 
               {([
-                ['Efectivo en la caja', montoCierreEfectivo, setMontoCierreEfectivo, cajaAbierta.monto_esperado_efectivo, 'Contá los billetes del cajón. Las transferencias y tarjetas no hace falta contarlas.'],
+                ['Efectivo en la caja', montoCierreEfectivo, setMontoCierreEfectivo, esperadoCajaAbierta, 'Contá los billetes del cajón. Las transferencias y tarjetas no hace falta contarlas.'],
               ] as Array<[string, string, (value: string) => void, number, string]>).map(([etiqueta, valor, setValor, esperado, ayuda]) => {
                 const contado = montoContado(valor);
                 const diferencia = contado === null ? null : contado - esperado;

@@ -16,7 +16,7 @@ import RelojItem from '../components/RelojItem';
 import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
 import {
   anularItem, bloqueoEdicion, cambiarDeMesa, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
-  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, liberarComandaVacia, nombreMedio, nuevaSolicitud, puedeAnularItems, type Actor,
+  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, liberarComandaVacia, nombreMedio, seReabrioSinAnular, unirComandas, nuevaSolicitud, puedeAnularItems, type Actor,
 } from '../lib/cobroComanda';
 import SolicitarCobro from '../components/SolicitarCobro';
 import PedirMotivo from '../components/PedirMotivo';
@@ -49,6 +49,7 @@ const textoEvento: Record<TipoEventoComanda, string> = {
   pago_anulado: 'Caja anuló el cobro',
   mesa_cambiada: 'Cambió de mesa',
   comanda_liberada: 'Liberó la mesa',
+  comandas_unidas: 'Unió comandas',
 };
 const sinAcentos = (texto: string) => texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
@@ -335,6 +336,35 @@ export default function Pedidos() {
     }
   };
 
+  // Comandas abiertas en la misma mesa que la elegida (no debería haber más de una).
+  const otrasDeLaMesa = selectedPedido && !esBorrador
+    ? pedidos.filter(pedido => pedido.id !== selectedPedido.id && pedido.mesa_id === selectedPedido.mesa_id && pedidoAbierto(pedido))
+    : [];
+  const mesasDuplicadas = mesasDisponibles.filter(mesa => pedidos.filter(pedido => pedido.mesa_id === mesa.id && pedidoAbierto(pedido)).length > 1);
+
+  /** Pasa a esta comanda los productos de las otras abiertas en la misma mesa. */
+  const unirEnEsta = () => {
+    if (!selectedPedido) return;
+    const actuales = loadDemoPedidos();
+    let principal = actuales.find(pedido => pedido.id === selectedPedido.id);
+    if (!principal || !pedidoAbierto(principal)) { setPedidoError('La comanda ya no está abierta.'); return; }
+    const otras = actuales.filter(pedido => pedido.id !== principal!.id && pedido.mesa_id === principal!.mesa_id && pedidoAbierto(pedido));
+    try {
+      const cerradas: Pedido[] = [];
+      otras.forEach(otra => {
+        const { unida, cerrada } = unirComandas(principal!, otra, actor);
+        principal = unida;
+        cerradas.push(cerrada);
+      });
+      const cambios = new Map([principal, ...cerradas].map(pedido => [pedido.id, pedido]));
+      saveDemoPedidos(actuales.map(pedido => cambios.get(pedido.id) || pedido));
+      setSelectedPedido(principal);
+      setPedidoError('');
+    } catch (error) {
+      setPedidoError(error instanceof Error ? error.message : 'No se pudieron unir las comandas.');
+    }
+  };
+
   const retirarSolicitud = () => setPedidoError(guardarCobro(pedido => cancelarSolicitud(pedido, actor)));
 
   const abrirEdicion = () => {
@@ -455,6 +485,11 @@ export default function Pedidos() {
               )}
             </div>
           </div>
+          {mesasDuplicadas.length > 0 && (
+            <p role="alert" className="mx-3 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Con más de una comanda abierta: {mesasDuplicadas.map(mesa => mesa.nombre || `Mesa ${mesa.numero}`).join(', ')}. Tocala para unirlas.
+            </p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-1 gap-2 p-3 max-h-[40vh] md:max-h-[calc(100vh-260px)] overflow-y-auto">
             {buscarMesa.trim() && mesasFiltradas.length === 0 && (
               <p className="col-span-full py-6 text-center text-sm text-slate-500">No hay ninguna mesa «{buscarMesa.trim()}».</p>
@@ -564,6 +599,20 @@ export default function Pedidos() {
                       </select>
                     </label>
                   </div>
+                )}
+                {otrasDeLaMesa.length > 0 && (
+                  <div role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-semibold">Esta mesa tiene {otrasDeLaMesa.length + 1} comandas abiertas</p>
+                    <p className="mt-0.5">Se abrieron en dos equipos a la vez. Uní los productos en una sola para no cobrar de menos ni perder nada.</p>
+                    <button type="button" onClick={unirEnEsta} className="mt-2 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-400">
+                      Unir todo en esta comanda
+                    </button>
+                  </div>
+                )}
+                {!esBorrador && seReabrioSinAnular(selectedPedido) && (
+                  <p role="alert" className="mt-3 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+                    <strong>Atención:</strong> esta comanda ya figuraba como cobrada y se volvió a abrir sin que caja anulara el cobro. Revisá en Caja que no se cobre dos veces.
+                  </p>
                 )}
                 {pedidoError && <p role="alert" className="mt-3 text-sm text-red-600">{pedidoError}</p>}
                 {selectedPedido.solicitud_cobro && !esBorrador && (() => {

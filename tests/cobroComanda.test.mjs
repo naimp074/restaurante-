@@ -236,3 +236,26 @@ test('anular solo una unidad: cargaron 2 y era 1', () => {
   assert.throws(() => api.anularItem(pedido, 'a', 'x', encargado, t0, 3), /de 1 a 2/);
   assert.equal(api.anularItem(pedido, 'a', 'x', encargado, t0, 2).items.length, 2, 'todas las unidades: se tacha el renglón entero');
 });
+
+test('dos comandas abiertas en la misma mesa se unen en una y la otra se cierra sin cobro', () => {
+  const una = mesaM2({ items: [item('a', 'entregado', 1, 4730)], subtotal: 4730, total: 4730 });
+  const otra = mesaM2({ id: 'ped-2', estado: 'abierto', items: [item('x', 'pendiente', 2, 1000, { pedido_id: 'ped-2' })], subtotal: 2000, total: 2000 });
+  const { unida, cerrada } = api.unirComandas(una, otra, moza, t0);
+  assert.deepEqual(unida.items.map(i => i.id), ['a', 'x']);
+  assert.equal(unida.items[1].pedido_id, 'ped-1');
+  assert.equal(unida.items[1].sin_enviar, true, 'lo que la otra no mandó a cocina queda para mandar');
+  assert.equal(unida.total, 6730);
+  assert.equal(cerrada.estado, 'cancelado');
+  assert.equal(cerrada.total, 0);
+  assert.equal(unida.historial.at(-1).tipo, 'comandas_unidas');
+  const conCobro = api.nuevaSolicitud(una, 'efectivo', moza, t0);
+  assert.throws(() => api.unirComandas(conCobro, otra, moza), /cobro en caja/);
+});
+
+test('avisa si una comanda cobrada se reabrió sin que caja anulara el cobro', () => {
+  const pagada = api.marcarPagada(mesaM2(), 'pago-1', cajero, t0);
+  assert.equal(api.seReabrioSinAnular({ ...pagada, estado: 'cobrado' }), false);
+  assert.equal(api.seReabrioSinAnular({ ...pagada, estado: 'entregado' }), true, 'reabierta sin anular');
+  const anulada = api.conEvento({ ...pagada, estado: 'entregado' }, cajero, 'pago_anulado', 'devolución', t0);
+  assert.equal(api.seReabrioSinAnular(anulada), false, 'caja anuló el cobro: está bien que esté abierta');
+});

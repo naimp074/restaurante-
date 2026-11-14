@@ -44,6 +44,7 @@ const consulta = filasFn => {
     order: () => q,
     eq: (campo, valor) => { filtros.push(f => f[campo] === valor); return q; },
     gt: (campo, valor) => { filtros.push(f => f[campo] > valor); return q; },
+    in: (campo, valores) => { filtros.push(f => valores.includes(f[campo])); return q; },
     range: (a, b) => { desde = a; hasta = b; return q; },
     then: (ok, mal) => Promise.resolve({
       data: filasFn().filter(f => filtros.every(fn => fn(f)))
@@ -240,4 +241,67 @@ test('si el servidor rechaza un cambio por permisos, el dato local vuelve a lo d
   assert.deepEqual(leer('caja', 'restaurant-pagos'), [{ id: 'pg1', monto: 10 }]);
   assert.match(api.loadEstadoSync().error, /permiso/);
   assert.deepEqual(api.loadColaSync(), []);
+});
+
+// ---------- Choques: dos equipos cambian lo mismo antes de enterarse ----------
+const cajas = 'restaurant-cajas-diarias';
+const guardarCajas = lista => api.writeStore(cajas, lista, 'restaurant-cajas-updated');
+const cajaBase = { id: 'c1', fecha: '2026-11-14', estado: 'abierta', monto_inicial: 0, efectivo: 1000, tarjeta: 0, transferencia: 0, total_ventas: 1000, monto_esperado_efectivo: 1000 };
+
+const ambosCon = async (clave, guardar, valor) => {
+  await en('caja', async () => { guardar(valor); });
+  await en('caja', () => api.vaciarColaSync());
+  await en('tablet', () => api.hidratarDesdeRemoto());
+  assert.deepEqual(leer('tablet', clave), valor);
+};
+
+test('caja: un cobro en la PC y un gasto en el celular con copia vieja se suman los dos', async () => {
+  await ambosCon(cajas, guardarCajas, [cajaBase]);
+  // La PC cobra $500 en efectivo y lo sube.
+  await en('caja', async () => { guardarCajas([{ ...cajaBase, efectivo: 1500, total_ventas: 1500, monto_esperado_efectivo: 1500 }]); });
+  await en('caja', () => api.vaciarColaSync());
+  // El celular todavía no se enteró y carga un gasto de $300 sobre su copia vieja.
+  await en('tablet', async () => { guardarCajas([{ ...cajaBase, monto_esperado_efectivo: 700 }]); });
+  await en('tablet', () => api.vaciarColaSync());
+
+  const enServidor = servidor.filas.get(`${cajas}|#c1`).payload;
+  assert.equal(enServidor.monto_esperado_efectivo, 1200, 'antes quedaba en 700: se perdía el cobro');
+  assert.equal(enServidor.efectivo, 1500);
+  assert.equal(leer('tablet', cajas)[0].monto_esperado_efectivo, 1200);
+  await en('caja', () => api.hidratarDesdeRemoto());
+  assert.equal(leer('caja', cajas)[0].monto_esperado_efectivo, 1200);
+});
+
+test('comandas: una tablet con copia vieja no reabre una mesa que la caja ya cobró', async () => {
+  const abierta = { id: 'p1', estado: 'entregado', mesa: { numero: 5 }, items: [{ id: 'i1', subtotal: 100, estado: 'entregado' }], subtotal: 100, descuento: 0, recargo: 0, total: 100 };
+  await ambosCon(pedidos, guardarPedidos, [abierta]);
+  await en('caja', async () => { guardarPedidos([{ ...abierta, estado: 'cobrado' }]); });
+  await en('caja', () => api.vaciarColaSync());
+  await en('tablet', async () => { guardarPedidos([{ ...abierta, items: [...abierta.items, { id: 'i2', subtotal: 50, estado: 'pendiente' }] }]); });
+  await en('tablet', () => api.vaciarColaSync());
+
+  assert.equal(servidor.filas.get(`${pedidos}|#p1`).payload.estado, 'cobrado');
+  assert.equal(leer('tablet', pedidos)[0].estado, 'cobrado', 'la tablet toma la comanda cobrada');
+  assert.match(api.loadEstadoSync().error, /Mesa 5 ya estaba cerrada/);
+});
+
+test('comandas: si las dos siguen abiertas se juntan los productos de las dos', async () => {
+  const abierta = { id: 'p1', estado: 'abierto', mesa: { numero: 3 }, items: [], subtotal: 0, descuento: 0, recargo: 0, total: 0 };
+  await ambosCon(pedidos, guardarPedidos, [abierta]);
+  await en('caja', async () => { guardarPedidos([{ ...abierta, items: [{ id: 'a', subtotal: 100, estado: 'pendiente' }] }]); });
+  await en('caja', () => api.vaciarColaSync());
+  await en('tablet', async () => { guardarPedidos([{ ...abierta, items: [{ id: 'b', subtotal: 40, estado: 'pendiente' }] }]); });
+  await en('tablet', () => api.vaciarColaSync());
+
+  const final = servidor.filas.get(`${pedidos}|#p1`).payload;
+  assert.deepEqual(final.items.map(i => i.id).sort(), ['a', 'b']);
+  assert.equal(final.total, 140);
+});
+
+test('sin choque se sube igual que siempre (no se pierde nada)', async () => {
+  await ambosCon(cajas, guardarCajas, [cajaBase]);
+  await en('tablet', async () => { guardarCajas([{ ...cajaBase, monto_esperado_efectivo: 900 }]); });
+  await en('tablet', () => api.vaciarColaSync());
+  assert.equal(servidor.filas.get(`${cajas}|#c1`).payload.monto_esperado_efectivo, 900);
+  assert.equal(api.loadEstadoSync().error, '');
 });

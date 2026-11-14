@@ -338,6 +338,40 @@ const nombreMesa = (mesa?: Pick<Mesa, 'nombre' | 'numero'> | null) =>
   mesa ? (mesa.nombre && !/^\d+$/.test(mesa.nombre.trim()) ? mesa.nombre : `Mesa ${mesa.numero}`) : 'Sin mesa';
 
 /**
+ * Si se abrieron dos comandas en la misma mesa (dos equipos sin wifi a la vez), se pasan los productos
+ * de la otra a esta y la otra se cierra sin cobro. Queda anotado en las dos.
+ */
+export const unirComandas = (principal: Pedido, otra: Pedido, actor: Actor, at = new Date().toISOString()) => {
+  if (principal.id === otra.id) throw new Error('Es la misma comanda.');
+  if (cerrada(principal) || cerrada(otra)) throw new Error('Una de las comandas ya está cerrada.');
+  if (cobroEnCurso(principal) || cobroEnCurso(otra)) throw new Error('Hay un cobro en caja para una de las comandas. Cancelalo antes de unirlas.');
+  // Lo de la otra que cocina ya tiene sigue igual; lo que no se mandó queda marcado para mandar.
+  const pasados = (otra.items || []).map(item => ({
+    ...item,
+    pedido_id: principal.id,
+    sin_enviar: item.estado === 'pendiente' && principal.estado !== 'abierto' && (otra.estado === 'abierto' || item.sin_enviar) ? true : item.sin_enviar,
+    updated_at: at,
+  }));
+  const unida = conEvento(
+    conTotales({ ...principal, items: [...(principal.items || []), ...pasados], updated_at: at }),
+    actor, 'comandas_unidas', `Se sumaron ${pasados.length} productos de otra comanda de la misma mesa`, at,
+  );
+  const cerradaOtra = conEvento(
+    { ...otra, items: [], subtotal: 0, total: 0, estado: 'cancelado', hora_cierre: at, updated_at: at },
+    actor, 'comandas_unidas', 'Sus productos pasaron a la otra comanda de la mesa', at,
+  );
+  return { unida, cerrada: cerradaOtra };
+};
+
+/** Figuraba como cobrada y se volvió a abrir sin que caja anulara el cobro: hay que revisarla. */
+export const seReabrioSinAnular = (pedido: Pedido) => {
+  if (cerrada(pedido)) return false;
+  const historial = pedido.historial || [];
+  const ultimo = (tipo: string) => historial.map(evento => evento.tipo).lastIndexOf(tipo as EventoComanda['tipo']);
+  return ultimo('pagada') > ultimo('pago_anulado');
+};
+
+/**
  * Una comanda que quedó sin productos (la abrieron y no cargaron nada, o sacaron todo) se cierra
  * sin cobro y la mesa queda libre. Con algo cargado no: eso se cobra, o se saca/anula primero.
  */
