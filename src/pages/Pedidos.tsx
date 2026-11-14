@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2, ArrowLeftRight } from 'lucide-react';
+import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2, ArrowLeftRight, DoorOpen } from 'lucide-react';
 import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, RepartoMixto, TipoEventoComanda } from '../lib/types';
 import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
 import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
@@ -16,7 +16,7 @@ import RelojItem from '../components/RelojItem';
 import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
 import {
   anularItem, bloqueoEdicion, cambiarDeMesa, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
-  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, nombreMedio, nuevaSolicitud, puedeAnularItems, type Actor,
+  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, liberarComandaVacia, nombreMedio, nuevaSolicitud, puedeAnularItems, type Actor,
 } from '../lib/cobroComanda';
 import SolicitarCobro from '../components/SolicitarCobro';
 import PedirMotivo from '../components/PedirMotivo';
@@ -48,6 +48,7 @@ const textoEvento: Record<TipoEventoComanda, string> = {
   pagada: 'Caja registró el pago',
   pago_anulado: 'Caja anuló el cobro',
   mesa_cambiada: 'Cambió de mesa',
+  comanda_liberada: 'Liberó la mesa',
 };
 const sinAcentos = (texto: string) => texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
@@ -307,6 +308,33 @@ export default function Pedidos() {
     }
   };
 
+  /** Cierra una comanda sin productos y deja la mesa libre. Un borrador solo se descarta: nunca se guardó. */
+  const liberarMesa = () => {
+    if (!selectedPedido) return;
+    if (esBorrador) {
+      borradorId.current = null;
+      setSelectedPedido(null);
+      setShowAddProduct(false);
+      setPedidoError('');
+      return;
+    }
+    const actuales = loadDemoPedidos();
+    const guardado = actuales.find(pedido => pedido.id === selectedPedido.id);
+    if (!guardado || !pedidoAbierto(guardado)) { setPedidoError('La comanda ya no está abierta.'); return; }
+    try {
+      const liberada = liberarComandaVacia(guardado, actor);
+      withStoreTransaction(() => {
+        saveDemoPedidos(actuales.map(pedido => (pedido.id === liberada.id ? liberada : pedido)));
+        sincronizarEstadoMesa(guardado.mesa_id);
+      });
+      setSelectedPedido(null);
+      setShowAddProduct(false);
+      setPedidoError('');
+    } catch (error) {
+      setPedidoError(error instanceof Error ? error.message : 'No se pudo liberar la mesa.');
+    }
+  };
+
   const retirarSolicitud = () => setPedidoError(guardarCobro(pedido => cancelarSolicitud(pedido, actor)));
 
   const abrirEdicion = () => {
@@ -371,9 +399,8 @@ export default function Pedidos() {
     const actuales = loadDemoPedidos();
     if (!mesa || estadoOperativoMesa(mesa, actuales) !== 'libre' || mesaTienePedidoAbierto(newMesaId, actuales)) return;
     const newPedido = prepararPedido(mesa, newPersonas, newMozaId);
-    borradorId.current = null;
-    saveDemoPedidos([...actuales, newPedido]);
-    ocuparMesa(newMesaId, newMozaId);
+    // Se guarda (y ocupa la mesa) recién con el primer producto: una comanda vacía no deja la mesa ocupada.
+    borradorId.current = newPedido.id;
     setSelectedPedido(newPedido);
     setShowNewOrder(false);
     setShowAddProduct(true);
@@ -489,6 +516,17 @@ export default function Pedidos() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {!tieneItems && !bloqueo && (
+                      <button
+                        type="button"
+                        onClick={liberarMesa}
+                        title="La comanda no tiene productos: se cierra y la mesa queda libre"
+                        className="flex items-center gap-2 border border-emerald-300 bg-white hover:bg-emerald-50 text-emerald-700 text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                      >
+                        <DoorOpen size={14} />
+                        Liberar mesa
+                      </button>
+                    )}
                     {!esBorrador && (
                       <button
                         type="button"

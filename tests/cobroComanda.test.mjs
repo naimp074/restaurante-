@@ -200,3 +200,22 @@ test('cambiar de mesa: no a una ocupada, cerrada ni a la misma; no si la comanda
   const cobradaEnLaOtra = mesaM2({ id: 'ped-3', mesa_id: 'mesa-8', estado: 'cobrado' });
   assert.equal(api.cambiarDeMesa(comanda, { id: 'mesa-8', numero: 8, estado: 'libre' }, [comanda, cobradaEnLaOtra], moza).mesa_id, 'mesa-8', 'una comanda ya cobrada no ocupa la mesa');
 });
+
+test('liberar mesa: una comanda sin productos se cierra sin cobro y la mesa queda libre', () => {
+  const vacia = mesaM2({ estado: 'abierto', items: [], subtotal: 0, total: 0 });
+  assert.equal(api.estadoVisualMesa({ id: 'mesa-2', estado: 'ocupada' }, [vacia]), 'ocupada');
+  const liberada = api.liberarComandaVacia(vacia, moza, t0);
+  assert.equal(liberada.estado, 'cancelado');
+  assert.equal(liberada.hora_cierre, t0);
+  assert.equal(liberada.historial.at(-1).tipo, 'comanda_liberada');
+  assert.equal(api.estadoVisualMesa({ id: 'mesa-2', estado: 'ocupada' }, [liberada]), 'libre');
+  const todoAnulado = mesaM2({ items: [item('a', 'cancelado', 1, 4730)] });
+  assert.equal(api.liberarComandaVacia(todoAnulado, encargado, t0).estado, 'cancelado', 'con todo anulado también');
+});
+
+test('liberar mesa: no con productos, con cobro en caja ni si ya está cerrada', () => {
+  assert.throws(() => api.liberarComandaVacia(mesaM2(), moza), /tiene productos/);
+  const conCobro = api.nuevaSolicitud(mesaM2(), 'efectivo', moza, t0);
+  assert.throws(() => api.liberarComandaVacia({ ...conCobro, items: [] }, moza), /cobro en caja/);
+  assert.throws(() => api.liberarComandaVacia(mesaM2({ estado: 'cobrado', items: [] }), moza), /cerrada/);
+});

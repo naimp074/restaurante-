@@ -318,6 +318,18 @@ const nombreMesa = (mesa?: Pick<Mesa, 'nombre' | 'numero'> | null) =>
   mesa ? (mesa.nombre && !/^\d+$/.test(mesa.nombre.trim()) ? mesa.nombre : `Mesa ${mesa.numero}`) : 'Sin mesa';
 
 /**
+ * Una comanda que quedó sin productos (la abrieron y no cargaron nada, o sacaron todo) se cierra
+ * sin cobro y la mesa queda libre. Con algo cargado no: eso se cobra, o se saca/anula primero.
+ */
+export const liberarComandaVacia = (pedido: Pedido, actor: Actor, at = new Date().toISOString()): Pedido => {
+  if (cerrada(pedido)) throw new Error('La comanda ya está cerrada.');
+  if (cobroEnCurso(pedido)) throw new Error('Hay un cobro en caja para esta comanda.');
+  if (vivos(pedido).length > 0) throw new Error('La comanda tiene productos: cobrala, o sacá o anulá los productos antes de liberar la mesa.');
+  const liberada: Pedido = { ...pedido, estado: 'cancelado', hora_cierre: at, updated_at: at };
+  return conEvento(liberada, actor, 'comanda_liberada', 'Comanda sin productos', at);
+};
+
+/**
  * Los clientes se cambian de mesa: la comanda entera (productos, lo que ya está en cocina, el
  * pedido de cobro) pasa a la mesa nueva. La de antes queda libre. Solo a una mesa libre.
  */
