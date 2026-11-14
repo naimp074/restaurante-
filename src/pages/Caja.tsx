@@ -1054,8 +1054,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setShowTicket(false);
   };
 
-  const ventaHoy = pagosRegistrados.reduce((s, p) => s + p.total_cobrado, 0);
-
   const renderApartadosCaja = () => (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div className="p-4 border-b border-slate-100">
@@ -1370,10 +1368,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             <p className="text-xs text-slate-500 mb-1">Caja inicial</p>
             <p className="text-xl font-bold text-slate-800">{formatMoney(cajaAbierta.monto_inicial)}</p>
           </div>
-          <div className="bg-white border border-slate-200 rounded-xl p-4">
-            <p className="text-xs text-slate-500 mb-1">Total ventas</p>
-            <p className="text-xl font-bold text-slate-800">{formatMoney(cajaAbierta.total_ventas || ventaHoy)}</p>
-          </div>
           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
             <p className="text-xs text-emerald-600 mb-1">Efectivo</p>
             <p className="text-lg font-bold text-emerald-700">{formatMoney(cajaAbierta.efectivo)}</p>
@@ -1386,7 +1380,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             <p className="text-xs text-blue-600 mb-1">Transferencia</p>
             <p className="text-lg font-bold text-blue-700">{formatMoney(cajaAbierta.transferencia)}</p>
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-xl p-4">
             <p className="text-xs text-amber-600 mb-1">Esperado efectivo</p>
             <p className="text-lg font-bold text-amber-700">{formatMoney(cajaAbierta.monto_esperado_efectivo)}</p>
           </div>
