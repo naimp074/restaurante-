@@ -4,6 +4,7 @@ import type { CajaDiaria, CuentaDinero, MetodoPago, MovimientoFinanciero, Pago }
 import { etiquetaPedido } from '../lib/pedidosCanal';
 import { gastosDeCategoria, resumenGastosCaja, type CategoriaGastoCaja } from '../lib/resumenGastosCaja';
 import { movimientosDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
+import { productosVendidos, ventasDeMedio, type MedioVenta } from '../lib/ventasCaja';
 
 export interface ApartadoArqueo {
   id: string;
@@ -93,6 +94,14 @@ function Fila({ label, valor, fuerte }: { label: string; valor: React.ReactNode;
   );
 }
 
+type RenglonVenta = MedioVenta | 'total';
+
+const renglonesVenta: { id: MedioVenta; label: string }[] = [
+  { id: 'efectivo', label: 'Efectivo' },
+  { id: 'tarjeta', label: 'Tarjeta' },
+  { id: 'transferencia', label: 'Transferencia' },
+];
+
 type RenglonGasto = CategoriaGastoCaja | 'total';
 
 const renglonesGasto: { id: RenglonGasto; label: string }[] = [
@@ -114,6 +123,54 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
   const esperadoMal = Math.abs(esperadoRehecho - caja.monto_esperado_efectivo) > 0.009;
   // Renglón de "Gastos del día" desplegado para ver los gastos uno por uno.
   const [gastoAbierto, setGastoAbierto] = useState<RenglonGasto | null>(null);
+  // Renglón de "Ventas del día" desplegado para ver los cobros uno por uno.
+  const [ventaAbierta, setVentaAbierta] = useState<RenglonVenta | null>(null);
+
+  const renglonVenta = (id: RenglonVenta, label: string, valor: number, fuerte = false) => {
+    const abierto = ventaAbierta === id;
+    const lista = abierto ? ventasDeMedio(cobros, id) : [];
+    return (
+      <div key={id}>
+        <button
+          type="button"
+          onClick={() => setVentaAbierta(abierto ? null : id)}
+          aria-expanded={abierto}
+          className="flex w-full items-center justify-between gap-3 py-1.5 text-left text-sm hover:bg-slate-50"
+        >
+          <span className="flex items-center gap-1 text-slate-500">
+            <ChevronDown size={14} className={`transition-transform ${abierto ? 'rotate-180' : ''}`} />
+            {label}
+          </span>
+          <span className={fuerte ? 'font-bold text-slate-800' : 'text-slate-700'}>{dinero(valor)}</span>
+        </button>
+        {abierto && (
+          <div className="mb-2 max-h-72 overflow-y-auto rounded-lg bg-slate-50 px-2 py-1">
+            {lista.length === 0 ? (
+              <p className="py-1.5 text-xs text-slate-400">No hubo ventas acá.</p>
+            ) : lista.map(({ pago, monto }) => {
+              const productos = productosVendidos(pago.pedido);
+              return (
+                <div key={pago.id} className="flex items-start justify-between gap-3 py-1.5 text-xs">
+                  <div className="min-w-0">
+                    <p className="text-slate-700">
+                      {pago.pedido ? etiquetaPedido(pago.pedido) : 'Cobro'}
+                      {pago.comprador_nombre && <span className="text-slate-400"> · {pago.comprador_nombre}</span>}
+                    </p>
+                    {productos && <p className="text-slate-500">{productos}</p>}
+                    <p className="text-slate-400">
+                      {hora(pago.created_at)} · {nombresMetodo[pago.metodo_pago] || pago.metodo_pago}
+                      {pago.metodo_pago === 'mixto' && id !== 'total' && ` · parte de ${dinero(pago.total_cobrado ?? pago.monto)}`}
+                    </p>
+                  </div>
+                  <span className="whitespace-nowrap font-semibold text-emerald-700">{dinero(monto)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
   const apartadosDelDia = apartados.filter(apartado => apartado.fecha === caja.fecha);
   const nombreCuenta = (id?: string) => cuentas.find(cuenta => cuenta.id === id)?.nombre || '—';
   const abierta = caja.estado === 'abierta';
@@ -224,12 +281,10 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
               <h4 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-800"><Receipt size={15} />Ventas del día</h4>
               <div className="divide-y divide-slate-50 rounded-xl border border-slate-100 px-3">
                 <Fila label="Fondo inicial" valor={dinero(caja.monto_inicial)} />
-                <Fila label="Efectivo" valor={dinero(caja.efectivo)} />
-                <Fila label="Tarjeta" valor={dinero(caja.tarjeta)} />
-                <Fila label="Transferencia" valor={dinero(caja.transferencia)} />
+                {renglonesVenta.map(renglon => renglonVenta(renglon.id, renglon.label, caja[renglon.id]))}
                 {!!caja.ventas_cuenta_corriente && <Fila label="Fiado a cuenta corriente" valor={dinero(caja.ventas_cuenta_corriente)} />}
                 {!!caja.cobros_cuenta_corriente && <Fila label="Cobros de cuenta corriente" valor={dinero(caja.cobros_cuenta_corriente)} />}
-                <Fila label="Total vendido" valor={dinero(caja.total_ventas)} fuerte />
+                {renglonVenta('total', 'Total vendido', caja.total_ventas, true)}
               </div>
             </section>
           )}
