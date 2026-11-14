@@ -3,6 +3,7 @@ import { X, Lock, Unlock, Wallet, ArrowLeftRight, Receipt, PiggyBank, HandCoins,
 import type { CajaDiaria, CuentaDinero, MetodoPago, MovimientoFinanciero, Pago } from '../lib/types';
 import { etiquetaPedido } from '../lib/pedidosCanal';
 import { gastosDeCategoria, resumenGastosCaja, type CategoriaGastoCaja } from '../lib/resumenGastosCaja';
+import { movimientosDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
 
 export interface ApartadoArqueo {
   id: string;
@@ -21,6 +22,8 @@ interface Props {
   /** Cierre a ciegas (cajero): no ve lo esperado ni las diferencias. */
   aCiegas: boolean;
   onClose: () => void;
+  /** Guarda el esperado rehecho con los movimientos (solo admin). */
+  onCorregirEsperado?: (esperado: number) => void;
 }
 
 const dinero = (valor: number) =>
@@ -63,19 +66,6 @@ const pagosDeLaCaja =(caja: CajaDiaria, pagos: Pago[]) => {
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 };
 
-/**
- * Los gastos y movimientos hechos mientras esta caja estuvo abierta (de la apertura al cierre),
- * no todo lo del día ni lo acumulado: así cada turno ve solo lo suyo.
- */
-const movimientosDeLaCaja = (caja: CajaDiaria, movimientos: MovimientoFinanciero[]) => {
-  const desde = caja.opened_at;
-  const hasta = caja.closed_at;
-  if (!desde) return movimientos.filter(mov => mov.fecha === caja.fecha);
-  return movimientos.filter(mov => mov.created_at
-    ? mov.created_at >= desde && (!hasta || mov.created_at <= hasta)
-    : mov.fecha === caja.fecha);
-};
-
 function Diferencia({ valor, esperado }: { valor?: number; esperado?: number }) {
   if (valor === undefined) return <span className="text-slate-400">—</span>;
   // Esperado negativo: se anotaron más salidas de efectivo que lo que había. No puede "sobrar".
@@ -114,12 +104,14 @@ const renglonesGasto: { id: RenglonGasto; label: string }[] = [
   { id: 'total', label: 'Total gastado' },
 ];
 
-export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cuentas, aCiegas, onClose }: Props) {
+export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cuentas, aCiegas, onClose, onCorregirEsperado }: Props) {
   const cobros = pagosDeLaCaja(caja, pagos);
   const movimientosDelDia = movimientosDeLaCaja(caja, movimientos)
     .filter(mov => mov.origen !== 'venta')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const gastosDelDia = resumenGastosCaja(movimientosDelDia);
+  const esperadoRehecho = recalcularEsperadoEfectivo(caja, movimientos);
+  const esperadoMal = Math.abs(esperadoRehecho - caja.monto_esperado_efectivo) > 0.009;
   // Renglón de "Gastos del día" desplegado para ver los gastos uno por uno.
   const [gastoAbierto, setGastoAbierto] = useState<RenglonGasto | null>(null);
   const apartadosDelDia = apartados.filter(apartado => apartado.fecha === caja.fecha);
@@ -203,6 +195,26 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
                   </tbody>
                 </table>
               </div>
+            </section>
+          )}
+
+          {/* El esperado guardado no coincide con lo que pasó por la Caja del día: se puede corregir */}
+          {!aCiegas && esperadoMal && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+              <p className="font-semibold text-amber-800">El esperado en efectivo no coincide con los movimientos</p>
+              <p className="mt-1 text-amber-800">
+                Guardado: {dinero(caja.monto_esperado_efectivo)} · Según ventas y gastos en efectivo de la Caja del día: <strong>{dinero(esperadoRehecho)}</strong>
+                {caja.monto_cierre_efectivo !== undefined && <> · Con eso, la diferencia queda en <strong>{dinero(caja.monto_cierre_efectivo - esperadoRehecho)}</strong></>}
+              </p>
+              {onCorregirEsperado && (
+                <button
+                  type="button"
+                  onClick={() => onCorregirEsperado(esperadoRehecho)}
+                  className="mt-2 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-400"
+                >
+                  Corregir esperado a {dinero(esperadoRehecho)}
+                </button>
+              )}
             </section>
           )}
 

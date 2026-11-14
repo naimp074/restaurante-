@@ -1304,6 +1304,15 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         cuentas={cuentasDinero}
         aCiegas={cierreACiegas}
         onClose={() => setArqueoAbierto(null)}
+        onCorregirEsperado={cierreACiegas ? undefined : esperado => saveCajasDiarias(loadCajasDiarias().map(caja => (
+          caja.id !== arqueoAbierto.id
+            ? caja
+            : {
+                ...caja,
+                monto_esperado_efectivo: esperado,
+                diferencia_efectivo: caja.monto_cierre_efectivo !== undefined ? caja.monto_cierre_efectivo - esperado : caja.diferencia_efectivo,
+              }
+        )))}
       />
     )}
     </>
