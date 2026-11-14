@@ -2,7 +2,7 @@ import type { Gasto, Profile } from './types';
 import { dayKey } from './fechas';
 import { loadGastos, saveGastos } from './gastosStore';
 import { aplicarGastoEnCajaDia } from './cajaStore';
-import { registrarSalidaCuenta } from './finance';
+import { cuentaCajaDiaId, registrarSalidaCuenta } from './finance';
 import { withStoreTransaction } from './storeSync';
 import { nuevoId } from './ids';
 
@@ -80,14 +80,24 @@ export const estadoDeCuenta = (usuario: Pick<Profile, 'id' | 'sueldo'>, gastos: 
  * Guarda el gasto y, si está pagado, descuenta la plata de su cuenta (y de la caja del día si
  * salió de ahí en efectivo). Es lo que hace "Nuevo gasto"; el pago rápido de sueldo usa lo mismo.
  */
+/**
+ * Cuánto de un gasto sale en efectivo del cajón: lo que se paga en efectivo desde la cuenta Caja del día,
+ * se haya elegido el alcance "Caja del día" o la cuenta a mano con alcance "General".
+ */
+export const efectivoDelCajon = (gasto: Gasto) => {
+  if (gasto.metodo_pago === 'mixto') {
+    return (gasto.pagos_divididos || [])
+      .filter(parte => parte.metodo_pago === 'efectivo' && (parte.cuenta_id === cuentaCajaDiaId || gasto.alcance === 'caja_dia'))
+      .reduce((suma, parte) => suma + parte.monto, 0);
+  }
+  if (gasto.metodo_pago !== 'efectivo') return 0;
+  return gasto.cuenta_origen_id === cuentaCajaDiaId || gasto.alcance === 'caja_dia' ? gasto.monto : 0;
+};
+
 export const registrarGasto = (gasto: Gasto) => withStoreTransaction(() => {
   saveGastos([gasto, ...loadGastos()]);
   if ((gasto.estado || 'pagado') !== 'pagado') return gasto;
-  const efectivoCaja = gasto.alcance === 'caja_dia'
-    ? gasto.metodo_pago === 'mixto'
-      ? gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'efectivo')?.monto || 0
-      : gasto.metodo_pago === 'efectivo' ? gasto.monto : 0
-    : 0;
+  const efectivoCaja = efectivoDelCajon(gasto);
   if (efectivoCaja > 0) aplicarGastoEnCajaDia(gasto.fecha, efectivoCaja, 1);
   if (gasto.metodo_pago === 'mixto' && gasto.pagos_divididos?.length) {
     gasto.pagos_divididos.forEach(parte => registrarSalidaCuenta({

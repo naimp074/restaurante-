@@ -20,7 +20,7 @@ import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
 import { useUsuarios } from '../lib/usuariosStore';
 import { SueldosDelMes } from '../components/Sueldos';
-import { nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
+import { efectivoDelCajon, nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -329,10 +329,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       });
       setCuentas(loadCuentasDinero());
     }
-    if (gasto && (gasto.estado || 'pagado') === 'pagado' && gasto.alcance === 'caja_dia') {
-      const efectivo = gasto.metodo_pago === 'mixto'
-        ? (gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'efectivo')?.monto || 0)
-        : gasto.metodo_pago === 'efectivo' ? gasto.monto : 0;
+    if (gasto && (gasto.estado || 'pagado') === 'pagado') {
+      const efectivo = efectivoDelCajon(gasto);
       if (efectivo > 0) aplicarGastoEnCajaDia(gasto.fecha, efectivo, -1);
     }
     saveGastos(gastos.filter(item => item.id !== gastoId));

@@ -113,3 +113,11 @@ test('pago a proveedor desde la caja del día por transferencia no resta efectiv
   assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 30000);
   assert.throws(() => api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 40000 }), /no alcanza/);
 });
+
+test('un gasto en efectivo con la cuenta Caja del día elegida a mano también baja el cajón', () => {
+  storage.set('restaurant-cajas-diarias', JSON.stringify([{ id: 'c1', fecha: '2026-11-04', estado: 'abierta', monto_esperado_efectivo: 300000 }]));
+  pagar({ metodo_pago: 'efectivo', desde_caja_dia: false, cuenta_id: api.cuentaCajaDiaId, monto: 12500 });
+  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 287500);
+  pagar({ metodo_pago: 'efectivo', desde_caja_dia: false, cuenta_id: api.cuentaCajaGrandeId, monto: 10000 });
+  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 287500, 'desde la caja grande no toca el cajón');
+});
