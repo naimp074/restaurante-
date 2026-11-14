@@ -105,11 +105,12 @@ const renglonesVenta: { id: MedioVenta; label: string }[] = [
 type RenglonGasto = CategoriaGastoCaja | 'total';
 
 const renglonesGasto: { id: RenglonGasto; label: string }[] = [
-  { id: 'efectivo', label: 'Gastos en efectivo' },
+  { id: 'efectivo', label: 'Gastos en efectivo (caja del día)' },
+  { id: 'cajaGrande', label: 'Gastos de caja grande' },
   { id: 'proveedores', label: 'Proveedores' },
   { id: 'transferencia', label: 'Transferencia' },
   { id: 'tarjeta', label: 'Tarjeta' },
-  { id: 'otros', label: 'Otros (retiros, sin medio anotado)' },
+  { id: 'otros', label: 'Otros (otras cuentas, retiros)' },
   { id: 'total', label: 'Total gastado' },
 ];
 

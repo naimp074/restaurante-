@@ -1,12 +1,16 @@
 import type { MetodoPago, MovimientoFinanciero } from './types';
+import { cuentaCajaDiaId, cuentaCajaGrandeId } from './finance';
 
 /** En qué se fue la plata del día, para el arqueo. Los proveedores van aparte, se paguen como se paguen. */
 export type ResumenGastosCaja = {
+  /** En efectivo, de la caja del día (el cajón). */
   efectivo: number;
+  /** Lo que salió de la caja grande (no toca el cajón del turno). */
+  cajaGrande: number;
   proveedores: number;
   transferencia: number;
   tarjeta: number;
-  /** Salidas sin medio de pago anotado (retiros, ajustes viejos). */
+  /** Efectivo de otras cuentas y salidas sin medio de pago anotado (retiros). */
   otros: number;
   total: number;
 };
@@ -23,7 +27,8 @@ export const categoriaGastoCaja = (mov: MovimientoFinanciero): CategoriaGastoCaj
   // Las anulaciones de venta (ajuste) ya se restaron de las ventas: no son gastos.
   if (mov.tipo !== 'salida' || mov.origen === 'venta' || mov.origen === 'ajuste') return null;
   if (mov.origen === 'pago_proveedor' || mov.origen === 'compra' || mov.proveedor_id) return 'proveedores';
-  if (mov.metodo_pago === 'efectivo') return 'efectivo';
+  if (mov.cuenta_id === cuentaCajaGrandeId) return 'cajaGrande';
+  if (mov.metodo_pago === 'efectivo') return mov.cuenta_id === cuentaCajaDiaId ? 'efectivo' : 'otros';
   if (mov.metodo_pago && transferencias.includes(mov.metodo_pago)) return 'transferencia';
   if (mov.metodo_pago && tarjetas.includes(mov.metodo_pago)) return 'tarjeta';
   return 'otros';
@@ -37,7 +42,7 @@ export const gastosDeCategoria = (movimientos: MovimientoFinanciero[], categoria
   });
 
 export const resumenGastosCaja = (movimientos: MovimientoFinanciero[]): ResumenGastosCaja => {
-  const resumen = { efectivo: 0, proveedores: 0, transferencia: 0, tarjeta: 0, otros: 0, total: 0 };
+  const resumen = { efectivo: 0, cajaGrande: 0, proveedores: 0, transferencia: 0, tarjeta: 0, otros: 0, total: 0 };
   for (const mov of movimientos) {
     const categoria = categoriaGastoCaja(mov);
     if (!categoria) continue;

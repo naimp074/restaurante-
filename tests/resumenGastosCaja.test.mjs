@@ -7,14 +7,15 @@ import { build } from 'esbuild';
 // Resumen de gastos del arqueo: efectivo, proveedores, transferencia y tarjeta.
 const compiled = await build({
   stdin: { contents: `export * from './src/lib/resumenGastosCaja';`, resolveDir: process.cwd() },
-  bundle: true, platform: 'node', format: 'cjs', write: false,
+  bundle: true, platform: 'node', format: 'cjs', write: false, define: { 'import.meta.env': '{}' },
 });
 const mod = new Module(path.resolve('tests/resumenGastosCaja.compiled.cjs'));
 mod.filename = path.resolve('tests/resumenGastosCaja.compiled.cjs');
+mod.paths = Module._nodeModulePaths(process.cwd());
 mod._compile(compiled.outputFiles[0].text, mod.filename);
 const { resumenGastosCaja, gastosDeCategoria } = mod.exports;
 
-const mov = (monto, extra) => ({ id: `m-${monto}`, fecha: '2026-11-13', tipo: 'salida', origen: 'gasto', cuenta_id: 'c', monto, created_at: '', ...extra });
+const mov = (monto, extra) => ({ id: `m-${monto}`, fecha: '2026-11-13', tipo: 'salida', origen: 'gasto', cuenta_id: 'cuenta-caja-dia', monto, created_at: '', ...extra });
 
 test('separa los gastos por medio y los proveedores aparte', () => {
   const resumen = resumenGastosCaja([
@@ -26,11 +27,13 @@ test('separa los gastos por medio y los proveedores aparte', () => {
     mov(7000, { metodo_pago: 'mercado_pago' }),
     mov(12000, { metodo_pago: 'debito' }),
     mov(3000, { origen: 'retiro' }),
+    mov(40000, { metodo_pago: 'efectivo', cuenta_id: 'cuenta-caja-grande' }),
+    mov(2500, { metodo_pago: 'efectivo', cuenta_id: 'cuenta-efectivo' }),
     mov(99999, { tipo: 'transferencia', origen: 'transferencia_interna' }),
     mov(1000, { tipo: 'entrada', origen: 'ajuste' }),
     mov(30000, { origen: 'ajuste', descripcion: 'Anulación de venta Mesa 5 - efectivo' }),
   ]);
-  assert.deepEqual(resumen, { efectivo: 15000, proveedores: 110000, transferencia: 27000, tarjeta: 12000, otros: 3000, total: 167000 });
+  assert.deepEqual(resumen, { efectivo: 15000, cajaGrande: 40000, proveedores: 110000, transferencia: 27000, tarjeta: 12000, otros: 5500, total: 209500 });
 });
 
 test('sin movimientos da todo en cero', () => {
