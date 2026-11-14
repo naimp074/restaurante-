@@ -12,7 +12,7 @@ const compiled = await build({
 const mod = new Module(path.resolve('tests/resumenGastosCaja.compiled.cjs'));
 mod.filename = path.resolve('tests/resumenGastosCaja.compiled.cjs');
 mod._compile(compiled.outputFiles[0].text, mod.filename);
-const { resumenGastosCaja } = mod.exports;
+const { resumenGastosCaja, gastosDeCategoria } = mod.exports;
 
 const mov = (monto, extra) => ({ id: `m-${monto}`, fecha: '2026-11-13', tipo: 'salida', origen: 'gasto', cuenta_id: 'c', monto, created_at: '', ...extra });
 
@@ -34,4 +34,17 @@ test('separa los gastos por medio y los proveedores aparte', () => {
 
 test('sin movimientos da todo en cero', () => {
   assert.equal(resumenGastosCaja([]).total, 0);
+});
+
+test('al tocar un renglón se ven sus gastos uno por uno; total trae todos', () => {
+  const movs = [
+    mov(10000, { metodo_pago: 'efectivo' }),
+    mov(80000, { origen: 'pago_proveedor', metodo_pago: 'transferencia' }),
+    mov(20000, { metodo_pago: 'transferencia' }),
+    mov(99999, { tipo: 'transferencia', origen: 'transferencia_interna' }),
+  ];
+  assert.deepEqual(gastosDeCategoria(movs, 'efectivo').map(m => m.monto), [10000]);
+  assert.deepEqual(gastosDeCategoria(movs, 'transferencia').map(m => m.monto), [20000]);
+  assert.deepEqual(gastosDeCategoria(movs, 'proveedores').map(m => m.monto), [80000]);
+  assert.deepEqual(gastosDeCategoria(movs, 'total').map(m => m.monto), [10000, 80000, 20000]);
 });

@@ -1,7 +1,8 @@
-import { X, Lock, Unlock, Wallet, ArrowLeftRight, Receipt, PiggyBank, HandCoins } from 'lucide-react';
+import { useState } from 'react';
+import { X, Lock, Unlock, Wallet, ArrowLeftRight, Receipt, PiggyBank, HandCoins, ChevronDown } from 'lucide-react';
 import type { CajaDiaria, CuentaDinero, MetodoPago, MovimientoFinanciero, Pago } from '../lib/types';
 import { etiquetaPedido } from '../lib/pedidosCanal';
-import { resumenGastosCaja } from '../lib/resumenGastosCaja';
+import { gastosDeCategoria, resumenGastosCaja, type CategoriaGastoCaja } from '../lib/resumenGastosCaja';
 
 export interface ApartadoArqueo {
   id: string;
@@ -102,12 +103,25 @@ function Fila({ label, valor, fuerte }: { label: string; valor: React.ReactNode;
   );
 }
 
+type RenglonGasto = CategoriaGastoCaja | 'total';
+
+const renglonesGasto: { id: RenglonGasto; label: string }[] = [
+  { id: 'efectivo', label: 'Gastos en efectivo' },
+  { id: 'proveedores', label: 'Proveedores' },
+  { id: 'transferencia', label: 'Transferencia' },
+  { id: 'tarjeta', label: 'Tarjeta' },
+  { id: 'otros', label: 'Otros (retiros, sin medio anotado)' },
+  { id: 'total', label: 'Total gastado' },
+];
+
 export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cuentas, aCiegas, onClose }: Props) {
   const cobros = pagosDeLaCaja(caja, pagos);
   const movimientosDelDia = movimientosDeLaCaja(caja, movimientos)
     .filter(mov => mov.origen !== 'venta')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
   const gastosDelDia = resumenGastosCaja(movimientosDelDia);
+  // Renglón de "Gastos del día" desplegado para ver los gastos uno por uno.
+  const [gastoAbierto, setGastoAbierto] = useState<RenglonGasto | null>(null);
   const apartadosDelDia = apartados.filter(apartado => apartado.fecha === caja.fecha);
   const nombreCuenta = (id?: string) => cuentas.find(cuenta => cuenta.id === id)?.nombre || '—';
   const abierta = caja.estado === 'abierta';
@@ -213,12 +227,49 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
             <section>
               <h4 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-800"><HandCoins size={15} />Gastos del día</h4>
               <div className="divide-y divide-slate-50 rounded-xl border border-slate-100 px-3">
-                <Fila label="Gastos en efectivo" valor={dinero(gastosDelDia.efectivo)} />
-                <Fila label="Proveedores" valor={dinero(gastosDelDia.proveedores)} />
-                <Fila label="Transferencia" valor={dinero(gastosDelDia.transferencia)} />
-                <Fila label="Tarjeta" valor={dinero(gastosDelDia.tarjeta)} />
-                {gastosDelDia.otros > 0 && <Fila label="Otros (retiros, sin medio anotado)" valor={dinero(gastosDelDia.otros)} />}
-                <Fila label="Total gastado" valor={dinero(gastosDelDia.total)} fuerte />
+                {renglonesGasto
+                  .filter(renglon => renglon.id !== 'otros' || gastosDelDia.otros > 0)
+                  .map(renglon => {
+                    const abierto = gastoAbierto === renglon.id;
+                    const lista = abierto ? gastosDeCategoria(movimientosDelDia, renglon.id) : [];
+                    const total = renglon.id === 'total';
+                    return (
+                      <div key={renglon.id}>
+                        <button
+                          type="button"
+                          onClick={() => setGastoAbierto(abierto ? null : renglon.id)}
+                          aria-expanded={abierto}
+                          className="flex w-full items-center justify-between gap-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                        >
+                          <span className="flex items-center gap-1 text-slate-500">
+                            <ChevronDown size={14} className={`transition-transform ${abierto ? 'rotate-180' : ''}`} />
+                            {renglon.label}
+                          </span>
+                          <span className={total ? 'font-bold text-slate-800' : 'text-slate-700'}>{dinero(gastosDelDia[renglon.id])}</span>
+                        </button>
+                        {abierto && (
+                          <div className="mb-2 rounded-lg bg-slate-50 px-2 py-1">
+                            {lista.length === 0 ? (
+                              <p className="py-1.5 text-xs text-slate-400">No hubo gastos acá.</p>
+                            ) : lista.map(mov => (
+                              <div key={mov.id} className="flex items-start justify-between gap-3 py-1.5 text-xs">
+                                <div className="min-w-0">
+                                  <p className="text-slate-700">{mov.descripcion || nombresOrigen[mov.origen]}</p>
+                                  <p className="text-slate-400">
+                                    {hora(mov.created_at)}
+                                    {mov.metodo_pago && ` · ${nombresMetodo[mov.metodo_pago] || mov.metodo_pago}`}
+                                    {` · ${nombreCuenta(mov.cuenta_id)}`}
+                                    {mov.creado_por && ` · ${mov.creado_por}`}
+                                  </p>
+                                </div>
+                                <span className="whitespace-nowrap font-semibold text-red-600">−{dinero(mov.monto)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </section>
           )}
