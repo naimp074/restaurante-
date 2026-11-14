@@ -48,7 +48,7 @@ import {
 } from '../lib/facturacion';
 import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
 import { loadCategorias } from '../lib/categoriasStore';
-import { armarAvisoCierre } from '../lib/avisoCierreCaja';
+import { armarAvisoCierre, UMBRAL_FALTA_CAJA } from '../lib/avisoCierreCaja';
 import { enviarAvisoCierreCaja } from '../lib/enviarAvisoCierre';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
@@ -201,6 +201,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [montoCierreEfectivo, setMontoCierreEfectivo] = useState('');
   const [cierreError, setCierreError] = useState('');
   const [cerrandoCaja, setCerrandoCaja] = useState(false);
+  // Conteos con falta que ya se avisaron por Gmail: volver a tocar "Cerrar" con el mismo monto no manda otro mail.
+  const faltasAvisadas = useRef(new Set<string>());
   const [mensajeCierre, setMensajeCierre] = useState('');
   const [mensajeCierreError, setMensajeCierreError] = useState(false);
   const [showCierreCaja, setShowCierreCaja] = useState(false);
@@ -402,6 +404,29 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     };
     const aviso = armarAvisoCierre(conteo);
 
+    // Si faltan más de $5.000 la caja no se cierra: se vuelve a contar, y los administradores se enteran por Gmail.
+    if (aviso?.tipo === 'falta') {
+      const falta = cajaAbierta.monto_esperado_efectivo - efectivoContado;
+      const bloqueo = cierreACiegas
+        ? `No se puede cerrar la caja: el efectivo contado no coincide, faltan más de ${formatMoney(UMBRAL_FALTA_CAJA)}. Volvé a contar el cajón.`
+        : `No se puede cerrar la caja: faltan ${formatMoney(falta)} en efectivo. Volvé a contar el cajón.`;
+      setCierreError(bloqueo);
+      const clave = `${cajaAbierta.id}:${efectivoContado}`;
+      if (modoDemo || faltasAvisadas.current.has(clave)) return;
+      faltasAvisadas.current.add(clave);
+      setCerrandoCaja(true);
+      try {
+        const enviado = await enviarAvisoCierreCaja(conteo);
+        setCierreError(enviado ? `${bloqueo} Se avisó a los administradores por Gmail.` : bloqueo);
+      } catch (error) {
+        faltasAvisadas.current.delete(clave);
+        setCierreError(`${bloqueo} No pude avisar por Gmail. ${error instanceof Error ? error.message : ''}`.trim());
+      } finally {
+        setCerrandoCaja(false);
+      }
+      return;
+    }
+
     setCierreError('');
     setCerrandoCaja(true);
     try {
@@ -435,10 +460,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     if (!aviso || modoDemo) return;
 
     try {
-      const enviado = await enviarAvisoCierreCaja(conteo);
-      if (aviso.tipo === 'falta' && enviado && !cierreACiegas) {
-        setMensajeCierre('Caja cerrada. Se avisó al administrador que está faltando plata.');
-      }
+      await enviarAvisoCierreCaja(conteo);
     } catch (error) {
       setMensajeCierreError(true);
       setMensajeCierre(`La caja quedó cerrada, pero no pude avisar por Gmail. ${error instanceof Error ? error.message : ''}`.trim());
