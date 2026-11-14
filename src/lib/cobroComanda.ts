@@ -100,8 +100,8 @@ export const itemsParaCocina = (pedido: Pedido) => (pedido.items || []).filter(i
 /** Cocina todavía no lo empezó: se puede corregir o sacar sin anular. */
 export const itemEditable = (item: PedidoItem) => item.estado === 'pendiente';
 
-/** Anular algo que ya salió de cocina queda para quien maneja la plata. */
-export const puedeAnularItems = (rol?: Rol) => rol === 'admin' || rol === 'encargado';
+/** Cualquier usuario con sesión puede anular (con motivo): queda registrado quién fue. */
+export const puedeAnularItems = (rol?: Rol) => Boolean(rol);
 
 export const subtotalDe = (items: PedidoItem[] = []) =>
   items.filter(item => item.estado !== 'cancelado').reduce((suma, item) => suma + item.subtotal, 0);
@@ -311,7 +311,7 @@ export const anularItem = (
   at = new Date().toISOString(),
   cantidad?: number,
 ): Pedido => {
-  if (!puedeAnularItems(actor.rol)) throw new Error('Solo un encargado o un administrador puede anular productos que ya salieron de cocina.');
+  if (!puedeAnularItems(actor.rol)) throw new Error('Entrá con tu usuario para anular productos.');
   const bloqueo = bloqueoEdicion(pedido);
   if (bloqueo) throw new Error(bloqueo);
   const texto = motivo.trim();

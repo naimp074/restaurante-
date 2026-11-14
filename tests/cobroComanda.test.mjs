@@ -164,7 +164,8 @@ test('corregir lo que cocina no empezó recalcula y queda anotado', () => {
 
 test('lo entregado solo se anula con permiso y motivo, y deja de cobrarse', () => {
   const pedido = mesaM2();
-  assert.throws(() => api.anularItem(pedido, 'a', 'se cayó', moza), /encargado/);
+  assert.throws(() => api.anularItem(pedido, 'a', 'se cayó', { nombre: 'Sin usuario' }), /usuario/);
+  assert.equal(api.anularItem(pedido, 'a', 'se cayó', moza).items[0].anulado_por, 'Ana Pérez', 'una moza también puede');
   assert.throws(() => api.anularItem(pedido, 'a', ' ', encargado), /motivo/);
   const anulado = api.anularItem(pedido, 'a', 'se cayó', encargado, t0);
   assert.equal(anulado.items.length, 3, 'queda en la comanda');
