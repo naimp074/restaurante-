@@ -1,6 +1,7 @@
-import { X, Lock, Unlock, Wallet, ArrowLeftRight, Receipt, PiggyBank } from 'lucide-react';
+import { X, Lock, Unlock, Wallet, ArrowLeftRight, Receipt, PiggyBank, HandCoins } from 'lucide-react';
 import type { CajaDiaria, CuentaDinero, MetodoPago, MovimientoFinanciero, Pago } from '../lib/types';
 import { etiquetaPedido } from '../lib/pedidosCanal';
+import { resumenGastosCaja } from '../lib/resumenGastosCaja';
 
 export interface ApartadoArqueo {
   id: string;
@@ -93,6 +94,7 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
   const movimientosDelDia = movimientos
     .filter(mov => mov.fecha === caja.fecha && mov.origen !== 'venta')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const gastosDelDia = resumenGastosCaja(movimientosDelDia);
   const apartadosDelDia = apartados.filter(apartado => apartado.fecha === caja.fecha);
   const nombreCuenta = (id?: string) => cuentas.find(cuenta => cuenta.id === id)?.nombre || '—';
   const abierta = caja.estado === 'abierta';
@@ -189,6 +191,21 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
                 {!!caja.ventas_cuenta_corriente && <Fila label="Fiado a cuenta corriente" valor={dinero(caja.ventas_cuenta_corriente)} />}
                 {!!caja.cobros_cuenta_corriente && <Fila label="Cobros de cuenta corriente" valor={dinero(caja.cobros_cuenta_corriente)} />}
                 <Fila label="Total vendido" valor={dinero(caja.total_ventas)} fuerte />
+              </div>
+            </section>
+          )}
+
+          {/* En qué se gastó: el detalle uno por uno está más abajo, en Movimientos de plata */}
+          {!aCiegas && (
+            <section>
+              <h4 className="mb-1 flex items-center gap-1.5 text-sm font-semibold text-slate-800"><HandCoins size={15} />Gastos del día</h4>
+              <div className="divide-y divide-slate-50 rounded-xl border border-slate-100 px-3">
+                <Fila label="Gastos en efectivo" valor={dinero(gastosDelDia.efectivo)} />
+                <Fila label="Proveedores" valor={dinero(gastosDelDia.proveedores)} />
+                <Fila label="Transferencia" valor={dinero(gastosDelDia.transferencia)} />
+                <Fila label="Tarjeta" valor={dinero(gastosDelDia.tarjeta)} />
+                {gastosDelDia.otros > 0 && <Fila label="Otros (retiros, sin medio anotado)" valor={dinero(gastosDelDia.otros)} />}
+                <Fila label="Total gastado" valor={dinero(gastosDelDia.total)} fuerte />
               </div>
             </section>
           )}
