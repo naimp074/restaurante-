@@ -343,10 +343,10 @@ export default function Pedidos() {
     window.setTimeout(() => panelProductos.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
   };
 
-  const confirmarAnulacion = (motivo: string) => {
+  const confirmarAnulacion = (motivo: string, cantidad: number) => {
     if (!selectedPedido || !anulando) return;
     try {
-      updatePedido(anularItem(selectedPedido, anulando.id, motivo, actor));
+      updatePedido(anularItem(selectedPedido, anulando.id, motivo, actor, undefined, cantidad));
       setAnulando(null);
       setAnularError('');
     } catch (error) {
@@ -952,7 +952,8 @@ export default function Pedidos() {
 
       {anulando && (
         <PedirMotivo
-          titulo={`Anular ${anulando.cantidad}x ${anulando.producto?.nombre || 'producto'}`}
+          titulo={`Anular ${anulando.producto?.nombre || 'producto'}`}
+          cantidadMaxima={anulando.cantidad}
           descripcion="Cocina ya lo preparó o lo entregó. Queda tachado en la comanda, no se cobra y se registra quién lo anuló y por qué."
           placeholder="Ej: se cayó el plato, el cliente lo rechazó…"
           textoConfirmar="Anular producto"

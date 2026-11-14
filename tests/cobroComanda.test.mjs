@@ -219,3 +219,19 @@ test('liberar mesa: no con productos, con cobro en caja ni si ya está cerrada',
   assert.throws(() => api.liberarComandaVacia({ ...conCobro, items: [] }, moza), /cobro en caja/);
   assert.throws(() => api.liberarComandaVacia(mesaM2({ estado: 'cobrado', items: [] }), moza), /cerrada/);
 });
+
+test('anular solo una unidad: cargaron 2 y era 1', () => {
+  const pedido = mesaM2({ items: [item('a', 'entregado', 2, 4730), item('b', 'entregado', 1, 5000)], subtotal: 14460, total: 14460 });
+  const anulado = api.anularItem(pedido, 'a', 'cargado de más', encargado, t0, 1);
+  assert.equal(anulado.items.length, 3);
+  assert.equal(anulado.items[0].cantidad, 1);
+  assert.equal(anulado.items[0].estado, 'entregado', 'el que quedó sigue igual');
+  assert.equal(anulado.items[0].subtotal, 4730);
+  assert.equal(anulado.items[1].cantidad, 1);
+  assert.equal(anulado.items[1].estado, 'cancelado');
+  assert.notEqual(anulado.items[1].id, 'a');
+  assert.equal(anulado.total, 9730);
+  assert.match(anulado.historial.at(-1).detalle, /^1x Desayuno a: cargado de más/);
+  assert.throws(() => api.anularItem(pedido, 'a', 'x', encargado, t0, 3), /de 1 a 2/);
+  assert.equal(api.anularItem(pedido, 'a', 'x', encargado, t0, 2).items.length, 2, 'todas las unidades: se tacha el renglón entero');
+});

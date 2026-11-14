@@ -298,8 +298,19 @@ export const corregirItemPendiente = (
   return conEvento(corregido, actor, cantidad <= 0 ? 'item_eliminado' : 'item_modificado', detalle, at);
 };
 
-/** Anula un ítem que cocina ya empezó, preparó o entregó. Queda en la comanda tachado. */
-export const anularItem = (pedido: Pedido, itemId: string, motivo: string, actor: Actor, at = new Date().toISOString()): Pedido => {
+/**
+ * Anula un ítem que cocina ya empezó, preparó o entregó. Queda en la comanda tachado.
+ * Con `cantidad` menor a la del renglón se anulan solo esas unidades (cargaron 2 y era 1):
+ * el renglón sigue con el resto y lo anulado queda aparte, tachado.
+ */
+export const anularItem = (
+  pedido: Pedido,
+  itemId: string,
+  motivo: string,
+  actor: Actor,
+  at = new Date().toISOString(),
+  cantidad?: number,
+): Pedido => {
   if (!puedeAnularItems(actor.rol)) throw new Error('Solo un encargado o un administrador puede anular productos que ya salieron de cocina.');
   const bloqueo = bloqueoEdicion(pedido);
   if (bloqueo) throw new Error(bloqueo);
@@ -307,11 +318,20 @@ export const anularItem = (pedido: Pedido, itemId: string, motivo: string, actor
   if (!texto) throw new Error('Escribí el motivo de la anulación.');
   const item = (pedido.items || []).find(i => i.id === itemId);
   if (!item || item.estado === 'cancelado') throw new Error('Ese producto ya no está en la comanda.');
-  const items = (pedido.items || []).map(i => (i.id === itemId
-    ? { ...i, estado: 'cancelado' as const, anulado_por: actor.nombre, motivo_anulacion: texto, updated_at: at }
-    : i));
+  const unidades = cantidad ?? item.cantidad;
+  if (!Number.isInteger(unidades) || unidades <= 0 || unidades > item.cantidad) throw new Error(`Elegí cuántos anular (de 1 a ${item.cantidad}).`);
+  const marca = { estado: 'cancelado' as const, anulado_por: actor.nombre, motivo_anulacion: texto, updated_at: at };
+  const items = (pedido.items || []).flatMap(i => {
+    if (i.id !== itemId) return [i];
+    if (unidades === i.cantidad) return [{ ...i, ...marca }];
+    const resto = i.cantidad - unidades;
+    return [
+      { ...i, cantidad: resto, subtotal: resto * i.precio_unitario, updated_at: at },
+      { ...i, ...marca, id: nuevoId('item'), cantidad: unidades, subtotal: unidades * i.precio_unitario },
+    ];
+  });
   const anulado = conTotales({ ...pedido, items, updated_at: at });
-  return conEvento(anulado, actor, 'item_anulado', `${describir(item)}: ${texto}`, at);
+  return conEvento(anulado, actor, 'item_anulado', `${unidades}x ${item.producto?.nombre || 'Producto'}: ${texto}`, at);
 };
 
 const nombreMesa = (mesa?: Pick<Mesa, 'nombre' | 'numero'> | null) =>
