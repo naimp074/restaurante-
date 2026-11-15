@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, Pencil, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, Pencil, History, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote } from 'lucide-react';
 import type { AlcanceGasto, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, PageId, Proveedor, TipoCuentaDinero } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -20,6 +20,7 @@ import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
 import { useUsuarios } from '../lib/usuariosStore';
 import { SueldosDelMes } from '../components/Sueldos';
+import { gastosRecuperables } from '../lib/gastosRecuperables';
 import { efectivoDelCajon, nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
@@ -132,6 +133,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const [montoTransferencia, setMontoTransferencia] = useState('');
   const [gastoError, setGastoError] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [showRecuperar, setShowRecuperar] = useState(false);
+  const [aRecuperar, setARecuperar] = useState<Set<string>>(new Set());
   // Se pagó con más efectivo del que figuraba en la caja del día: se guarda igual, con este aviso.
   const [avisoGasto, setAvisoGasto] = useState('');
   const [showNuevaCuenta, setShowNuevaCuenta] = useState(false);
@@ -188,6 +191,26 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     .filter(gasto => filtroCuenta === 'todos' || gasto.cuenta_origen_id === filtroCuenta || gasto.pagos_divididos?.some(parte => parte.cuenta_id === filtroCuenta))
     // Los más nuevos arriba, sin importar en qué orden llegaron de la sincronización.
     .sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.created_at || '').localeCompare(a.created_at || ''));
+
+  const recuperables = useMemo(() => gastosRecuperables(gastos, movimientos, usuarios), [gastos, movimientos, usuarios]);
+
+  const abrirRecuperar = () => {
+    setARecuperar(new Set(recuperables.map(item => item.gasto.id)));
+    setShowRecuperar(true);
+  };
+
+  const recuperarGastos = () => {
+    withStoreTransaction(() => {
+      // Se vuelve a calcular con lo guardado ahora, por si llegó algo de otro equipo.
+      const actuales = loadGastos();
+      const nuevos = gastosRecuperables(actuales, loadMovimientosFinancieros(), usuarios)
+        .map(item => item.gasto)
+        .filter(gasto => aRecuperar.has(gasto.id) && !actuales.some(item => item.id === gasto.id));
+      // Solo se agrega el gasto: la plata ya se había descontado cuando se pagó.
+      if (nuevos.length) saveGastos([...nuevos, ...actuales]);
+    });
+    setShowRecuperar(false);
+  };
 
   const resetForm = () => {
     setTipoConcepto('');
@@ -885,6 +908,16 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
           <h2 className="font-semibold text-slate-800">Pagos</h2>
           <p className="text-sm text-slate-500">Registrá pagos de sueldos, fijos, variables y extras</p>
         </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+        {recuperables.length > 0 && (
+          <button
+            onClick={abrirRecuperar}
+            className="flex items-center gap-2 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+          >
+            <History size={14} />
+            Recuperar gastos ({recuperables.length})
+          </button>
+        )}
         <button
           onClick={() => { resetForm(); setShowForm(true); }}
           className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
@@ -892,6 +925,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
           <Plus size={14} />
           Nuevo gasto
         </button>
+        </div>
       </div>
 
       <SueldosDelMes />
@@ -1321,6 +1355,68 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
               >
                 <Check size={16} />
                 {editandoId ? 'Guardar cambios' : 'Guardar gasto'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRecuperar && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-800">Recuperar gastos</h3>
+                <p className="text-sm text-slate-500">
+                  Esta plata salió de las cuentas pero el gasto no quedó en la lista (pasaba cuando se pagaba desde la caja con un usuario de caja).
+                  Se agregan a la lista <strong>sin volver a descontar la plata</strong>. Destildá los que no quieras recuperar.
+                </p>
+              </div>
+              <button onClick={() => setShowRecuperar(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto divide-y divide-slate-100">
+              {recuperables.map(({ gasto }) => (
+                <label key={gasto.id} className="flex items-center gap-3 px-6 py-3 hover:bg-slate-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={aRecuperar.has(gasto.id)}
+                    onChange={e => setARecuperar(prev => {
+                      const siguiente = new Set(prev);
+                      if (e.target.checked) siguiente.add(gasto.id);
+                      else siguiente.delete(gasto.id);
+                      return siguiente;
+                    })}
+                    className="h-4 w-4 accent-amber-500"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{gasto.concepto}</p>
+                    <p className="text-xs text-slate-400">
+                      {new Date(`${gasto.fecha}T00:00:00`).toLocaleDateString('es-AR')}
+                      {' · '}{nombreCuenta(gasto.cuenta_origen_id)}
+                      {' · '}{metodosConfig[gasto.metodo_pago]}
+                      {gasto.creado_por ? ` · ${gasto.creado_por}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-sm font-bold text-red-600">-{formatMoney(gasto.monto)}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-3 p-6 border-t border-slate-100">
+              <button
+                onClick={() => setShowRecuperar(false)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={recuperarGastos}
+                disabled={aRecuperar.size === 0}
+                className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Check size={16} />
+                Recuperar {aRecuperar.size} {aRecuperar.size === 1 ? 'gasto' : 'gastos'}
               </button>
             </div>
           </div>

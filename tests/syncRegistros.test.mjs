@@ -173,6 +173,8 @@ test('los permisos por rol coinciden con lo que hace cada pantalla', () => {
   assert.equal(api.puedeEscribirRegistro('moza', 'u1', pedidos, '#p1'), true);
   assert.equal(api.puedeEscribirRegistro('moza', 'u1', 'restaurant-pagos', '#x'), false);
   assert.equal(api.puedeEscribirRegistro('cajero', 'u1', 'restaurant-pagos', '#x'), true);
+  assert.equal(api.puedeEscribirRegistro('cajero', 'u1', 'restaurant-gastos', '#gasto-1'), true);
+  assert.equal(api.puedeEscribirRegistro('moza', 'u1', 'restaurant-gastos', '#gasto-1'), false);
   assert.equal(api.puedeEscribirRegistro('cajero', 'u1', 'restaurant-productos', '#x'), false);
   assert.equal(api.puedeEscribirRegistro('cocina', 'u1', 'restaurant-usuarios', '#u1'), true);
   assert.equal(api.puedeEscribirRegistro('cocina', 'u1', 'restaurant-usuarios', '#u2'), false);
