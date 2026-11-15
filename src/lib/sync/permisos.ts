@@ -13,6 +13,8 @@ const clavesCajero = new Set([
   'restaurant-cajas-diarias',
   'restaurant-apartados-caja',
   'restaurant-pagos',
+  // Los gastos y sueldos que se pagan desde la caja del día.
+  'restaurant-gastos',
   'restaurant-cuentas-dinero',
   'restaurant-movimientos-financieros',
   'restaurant-cuenta-corriente',
