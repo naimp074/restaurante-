@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote } from 'lucide-react';
+import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, Pencil, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote } from 'lucide-react';
 import type { AlcanceGasto, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, PageId, Proveedor, TipoCuentaDinero } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -14,7 +14,7 @@ import {
 } from '../lib/finance';
 import { loadProveedores } from '../lib/proveedoresStore';
 import { dayKey } from '../lib/fechas';
-import { saveGastos, useGastos } from '../lib/gastosStore';
+import { loadGastos, saveGastos, useGastos } from '../lib/gastosStore';
 import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
 import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
@@ -131,6 +131,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const [montoEfectivo, setMontoEfectivo] = useState('');
   const [montoTransferencia, setMontoTransferencia] = useState('');
   const [gastoError, setGastoError] = useState('');
+  const [editandoId, setEditandoId] = useState<string | null>(null);
   // Se pagó con más efectivo del que figuraba en la caja del día: se guarda igual, con este aviso.
   const [avisoGasto, setAvisoGasto] = useState('');
   const [showNuevaCuenta, setShowNuevaCuenta] = useState(false);
@@ -208,6 +209,48 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     setGastoError('');
     setEmpleadoId('');
     setPeriodo(periodoActual());
+    setEditandoId(null);
+  };
+
+  const cerrarForm = () => {
+    resetForm();
+    setShowForm(false);
+  };
+
+  const abrirEdicion = (gasto: Gasto) => {
+    if (gasto.compra_id) return;
+    resetForm();
+    const tipo = (tiposConcepto as readonly string[]).includes(gasto.concepto)
+      ? gasto.concepto as TipoConcepto
+      : gasto.proveedor_id && gasto.concepto.startsWith('Proveedor - ') ? 'Proveedor' : 'Otros';
+    setTipoConcepto(tipo);
+    setConcepto(tipo === 'Otros' ? gasto.concepto : '');
+    setCategoria(gasto.categoria);
+    setAlcance(gasto.alcance);
+    setMetodoPago(gasto.metodo_pago);
+    setMonto(String(gasto.monto));
+    setFecha(gasto.fecha);
+    setObservaciones(gasto.observaciones || '');
+    if (gasto.cuenta_origen_id && gasto.cuenta_origen_id !== cuentaCajaDiaId) setCuentaOrigenId(gasto.cuenta_origen_id);
+    setProveedorId(gasto.proveedor_id || '');
+    setComprobante(gasto.comprobante || '');
+    setEstado(gasto.estado || 'pagado');
+    setVencimiento(gasto.vencimiento || gasto.fecha);
+    setRecurrente(Boolean(gasto.recurrente));
+    const parteEfectivo = gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'efectivo');
+    const parteTransferencia = gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'transferencia');
+    if (parteEfectivo) {
+      setMontoEfectivo(String(parteEfectivo.monto));
+      if (parteEfectivo.cuenta_id !== cuentaCajaDiaId) setCuentaEfectivoId(parteEfectivo.cuenta_id);
+    }
+    if (parteTransferencia) {
+      setMontoTransferencia(String(parteTransferencia.monto));
+      setCuentaTransferenciaId(parteTransferencia.cuenta_id);
+    }
+    setEmpleadoId(gasto.empleado_id || '');
+    if (gasto.periodo) setPeriodo(gasto.periodo);
+    setEditandoId(gasto.id);
+    setShowForm(true);
   };
 
   const saveGasto = () => {
@@ -241,9 +284,15 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       return;
     }
     const empleado = categoria === 'sueldo' ? usuarios.find(u => u.id === empleadoId) : undefined;
+    const original = editandoId ? gastos.find(item => item.id === editandoId) : undefined;
+    if (editandoId && !original) {
+      setGastoError('Este gasto ya no existe. Cerrá el formulario y volvé a intentar.');
+      return;
+    }
 
     const gasto: Gasto = {
-      id: nuevoId('gasto'),
+      ...(original ?? {}),
+      id: original?.id ?? nuevoId('gasto'),
       fecha,
       concepto: conceptoFinal,
       categoria,
@@ -251,8 +300,8 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       metodo_pago: metodoPago,
       monto: parsedMonto,
       observaciones: observaciones.trim(),
-      created_at: new Date().toISOString(),
-      creado_por: user ? `${user.nombre} ${user.apellido}` : undefined,
+      created_at: original?.created_at ?? new Date().toISOString(),
+      creado_por: original ? original.creado_por : user ? `${user.nombre} ${user.apellido}` : undefined,
       cuenta_origen_id: alcance === 'caja_dia' && metodoPago === 'efectivo' ? cuentaCajaDiaId : cuentaOrigenId,
       pagos_divididos: metodoPago === 'mixto' ? [
         { metodo_pago: 'efectivo', cuenta_id: alcance === 'caja_dia' ? cuentaCajaDiaId : cuentaEfectivoId, monto: efectivoMixto },
@@ -272,7 +321,22 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     const enCajon = cajaHoy?.monto_esperado_efectivo ?? 0;
     const efectivoQueSale = (gasto.estado || 'pagado') === 'pagado' ? efectivoDelCajon(gasto) : 0;
     try {
-      registrarGasto(gasto);
+      if (original) {
+        withStoreTransaction(() => {
+          const posicion = loadGastos().findIndex(item => item.id === original.id);
+          revertirGasto(original, 'Edicion de gasto');
+          saveGastos(loadGastos().filter(item => item.id !== original.id));
+          registrarGasto(gasto);
+          // registrarGasto lo agrega arriba; lo dejamos en el lugar que tenía.
+          if (posicion > 0) {
+            const resto = loadGastos().filter(item => item.id !== gasto.id);
+            resto.splice(posicion, 0, gasto);
+            saveGastos(resto);
+          }
+        });
+      } else {
+        registrarGasto(gasto);
+      }
     } catch (error) {
       setGastoError(error instanceof Error ? error.message : 'No se pudo guardar el gasto.');
       return;
@@ -316,31 +380,41 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     setNuevaCuentaError('');
   };
 
-  const deleteGasto = (gastoId: string) => {
-    const gasto = gastos.find(item => item.id === gastoId);
-    if (gasto?.compra_id) return;
-    if ((gasto?.estado || 'pagado') === 'pagado' && gasto?.pagos_divididos?.length) {
+  /** Devuelve la plata a las cuentas y a la caja del día, como si el gasto no se hubiera pagado. */
+  const revertirGasto = (gasto: Gasto, motivo: string) => {
+    if ((gasto.estado || 'pagado') === 'pagado' && gasto.pagos_divididos?.length) {
       gasto.pagos_divididos.forEach(parte => registrarEntradaCuenta({
         cuenta_id: parte.cuenta_id, monto: parte.monto,
-        descripcion: `Anulacion de gasto: ${gasto.concepto} (${metodosConfig[parte.metodo_pago]})`,
+        descripcion: `${motivo}: ${gasto.concepto} (${metodosConfig[parte.metodo_pago]})`,
         origen: 'ajuste', fecha: todayKey(),
       }));
       setCuentas(loadCuentasDinero());
-    } else if ((gasto?.estado || 'pagado') === 'pagado' && gasto?.cuenta_origen_id) {
+    } else if ((gasto.estado || 'pagado') === 'pagado' && gasto.cuenta_origen_id) {
       registrarEntradaCuenta({
         cuenta_id: gasto.alcance === 'caja_dia' && gasto.metodo_pago === 'efectivo' ? cuentaCajaDiaId : gasto.cuenta_origen_id,
         monto: gasto.monto,
-        descripcion: `Anulacion de gasto: ${gasto.concepto}`,
+        descripcion: `${motivo}: ${gasto.concepto}`,
         origen: 'ajuste',
         fecha: todayKey(),
       });
       setCuentas(loadCuentasDinero());
     }
-    if (gasto && (gasto.estado || 'pagado') === 'pagado') {
+    if ((gasto.estado || 'pagado') === 'pagado') {
       const efectivo = efectivoDelCajon(gasto);
       if (efectivo > 0) aplicarGastoEnCajaDia(gasto.fecha, efectivo, -1);
     }
-    saveGastos(gastos.filter(item => item.id !== gastoId));
+  };
+
+  const deleteGasto = (gastoId: string) => {
+    const gasto = gastos.find(item => item.id === gastoId);
+    if (!gasto || gasto.compra_id) return;
+    if (!window.confirm(`¿Borrar el gasto "${gasto.concepto}" de ${formatMoney(gasto.monto)}? Si estaba pagado, la plata vuelve a su cuenta.`)) return;
+    withStoreTransaction(() => {
+      revertirGasto(gasto, 'Anulacion de gasto');
+      saveGastos(loadGastos().filter(item => item.id !== gastoId));
+    });
+    setCuentas(loadCuentasDinero());
+    if (editandoId === gastoId) cerrarForm();
   };
 
   const totalByCategoria = (target: CategoriaGasto) =>
@@ -810,7 +884,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
           <p className="text-sm text-slate-500">Registrá pagos de sueldos, fijos, variables y extras</p>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => { resetForm(); setShowForm(true); }}
           className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
         >
           <Plus size={14} />
@@ -915,13 +989,26 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                     </td>
                     <td className="py-3 px-4 text-right text-sm font-bold text-red-600">-{formatMoney(gasto.monto)}</td>
                     <td className="py-3 px-4 text-center">
-                      {gasto.compra_id ? <span className="text-xs text-slate-400">Compra de stock</span> : <button
-                        onClick={() => deleteGasto(gasto.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                        title="Eliminar gasto"
-                      >
-                        <Trash2 size={14} />
-                      </button>}
+                      {gasto.compra_id ? <span className="text-xs text-slate-400">Compra de stock</span> : (
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => abrirEdicion(gasto)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                            title="Editar gasto"
+                            aria-label={`Editar gasto ${gasto.concepto}`}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => deleteGasto(gasto.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                            title="Eliminar gasto"
+                            aria-label={`Eliminar gasto ${gasto.concepto}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
@@ -943,10 +1030,10 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
-                <h3 className="font-bold text-slate-800">Nuevo gasto</h3>
-                <p className="text-sm text-slate-500">El gasto se descontará según el alcance elegido</p>
+                <h3 className="font-bold text-slate-800">{editandoId ? 'Editar gasto' : 'Nuevo gasto'}</h3>
+                <p className="text-sm text-slate-500">{editandoId ? 'Se devuelve lo descontado antes y se vuelve a descontar con los datos nuevos' : 'El gasto se descontará según el alcance elegido'}</p>
               </div>
-              <button onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={cerrarForm} className="text-slate-400 hover:text-slate-600">
                 <X size={18} />
               </button>
             </div>
@@ -1221,7 +1308,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
 
             <div className="flex gap-3 p-6 border-t border-slate-100">
               <button
-                onClick={() => setShowForm(false)}
+                onClick={cerrarForm}
                 className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
               >
                 Cancelar
@@ -1231,7 +1318,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
                 className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400 flex items-center justify-center gap-2"
               >
                 <Check size={16} />
-                Guardar gasto
+                {editandoId ? 'Guardar cambios' : 'Guardar gasto'}
               </button>
             </div>
           </div>
