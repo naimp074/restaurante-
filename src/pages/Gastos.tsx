@@ -185,7 +185,9 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const disponibleCajaHoy = (cajaHoy?.monto_esperado_efectivo ?? 0) + (cajaHoy?.tarjeta ?? 0) + (cajaHoy?.transferencia ?? 0);
   const gastosFiltrados = gastos
     .filter(gasto => filtroEstado === 'todos' || (gasto.estado || 'pagado') === filtroEstado)
-    .filter(gasto => filtroCuenta === 'todos' || gasto.cuenta_origen_id === filtroCuenta || gasto.pagos_divididos?.some(parte => parte.cuenta_id === filtroCuenta));
+    .filter(gasto => filtroCuenta === 'todos' || gasto.cuenta_origen_id === filtroCuenta || gasto.pagos_divididos?.some(parte => parte.cuenta_id === filtroCuenta))
+    // Los más nuevos arriba, sin importar en qué orden llegaron de la sincronización.
+    .sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.created_at || '').localeCompare(a.created_at || ''));
 
   const resetForm = () => {
     setTipoConcepto('');
