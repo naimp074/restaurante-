@@ -52,3 +52,15 @@ test('al tocar un renglón se ven sus gastos uno por uno; total trae todos', () 
   assert.deepEqual(gastosDeCategoria(movs, 'proveedores').map(m => m.monto), [80000]);
   assert.deepEqual(gastosDeCategoria(movs, 'total').map(m => m.monto), [10000, 80000, 20000]);
 });
+
+test('un gasto editado o borrado no suma en el arqueo: queda solo el monto nuevo', () => {
+  const movs = [
+    mov(20000, { id: 'm-soda', descripcion: 'soda', metodo_pago: 'efectivo', created_at: '2026-11-15T19:31:00Z' }),
+    mov(20000, { id: 'm-dev', tipo: 'entrada', origen: 'ajuste', descripcion: 'Edicion de gasto: soda', created_at: '2026-11-15T20:00:00Z' }),
+    mov(16000, { id: 'm-soda2', descripcion: 'soda', metodo_pago: 'efectivo', created_at: '2026-11-15T20:00:00Z' }),
+    mov(1000, { id: 'm-luz', descripcion: 'Luz', metodo_pago: 'efectivo', created_at: '2026-11-15T18:00:00Z' }),
+    mov(1000, { id: 'm-anula', tipo: 'entrada', origen: 'ajuste', descripcion: 'Anulacion de gasto: Luz', created_at: '2026-11-15T18:10:00Z' }),
+  ];
+  assert.equal(resumenGastosCaja(movs).efectivo, 16000);
+  assert.deepEqual(gastosDeCategoria(movs, 'efectivo').map(m => m.id), ['m-soda2']);
+});
