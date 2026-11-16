@@ -23,7 +23,6 @@ import { useStore, withStoreTransaction, writeStore } from '../lib/storeSync';
 import { calcularAjusteLista, useListasPrecios } from '../lib/listasPreciosStore';
 import { loadCajasDiarias, saveCajasDiarias, useCajas } from '../lib/cajaStore';
 import { loadPagos, savePagos, usePagos } from '../lib/pagosStore';
-import { useGastos } from '../lib/gastosStore';
 import { sincronizarEstadoMesa } from '../lib/mesasStore';
 import { tomarPedidoACobrar } from '../lib/mesaAAbrir';
 import { descuentaStock } from '../lib/costosReceta';
@@ -50,7 +49,7 @@ import {
 import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
 import { loadCategorias } from '../lib/categoriasStore';
 import { armarAvisoCierre, UMBRAL_FALTA_CAJA } from '../lib/avisoCierreCaja';
-import { recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
+import { cajaAbiertaActual, efectivoGastadoDeLaCaja, movimientosDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
 import { enviarAvisoCierreCaja } from '../lib/enviarAvisoCierre';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
@@ -151,7 +150,6 @@ const getPagoBreakdown = (pago: Pago) => {
 };
 
 export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaProps) {
-  const gastos = useGastos();
   const { user, modoDemo } = useAuth();
   /**
    * Los importes de la caja (inicial, ventas, efectivo, esperado, arqueos, saldos) los ve solo el admin.
@@ -244,6 +242,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     .map(({ pedido }) => pedido);
   const solicitudesActivas = pedidosPorCobrar.filter(cobroEnCurso).length;
   const cajaAbierta = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
+  // Una caja de una jornada anterior que quedó abierta: hay que cerrarla antes de abrir la de hoy.
+  const cajaPendiente = cajaAbierta ? null : cajaAbiertaActual(cajas);
+  const cajaACerrar = cajaAbierta || cajaPendiente;
   const cajaDelDia = cajaAbierta || cajas.find(caja => caja.fecha === todayKey()) || null;
   const historialCajas = [...cajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
   const apartadosHoy = apartadosCaja.filter(apartado => apartado.fecha === todayKey());
@@ -255,7 +256,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
    */
   const esperadoCajaAbierta = cajaAbierta ? recalcularEsperadoEfectivo(cajaAbierta, movimientosVivos) : 0;
   const efectivoEsperadoApartados = cajaAbierta ? esperadoCajaAbierta : cajaDelDia?.monto_esperado_efectivo ?? 0;
-  const pagosProveedorHoy = movimientosFinancieros.filter(mov => mov.fecha === todayKey() && mov.origen === 'pago_proveedor');
+  // Con la caja abierta, los pagos hechos desde que se abrió (no los de otro turno del mismo día).
+  const pagosProveedorHoy = (cajaAbierta ? movimientosDeLaCaja(cajaAbierta, movimientosVivos) : movimientosVivos.filter(mov => mov.fecha === todayKey()))
+    .filter(mov => mov.origen === 'pago_proveedor');
   const totalPagosProveedorHoy = pagosProveedorHoy.reduce((sum, mov) => sum + mov.monto, 0);
   const clientesFiltrados = clientes
     .filter(cliente => {
@@ -327,15 +330,13 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       .filter((producto): producto is NonNullable<typeof producto> => Boolean(producto && !descuentaStock(producto)));
   };
 
-  const gastosCajaHoy = gastos.filter(gasto =>
-    gasto.fecha === todayKey() && gasto.alcance === 'caja_dia' && (gasto.estado || 'pagado') === 'pagado'
-  );
-  const totalGastosCajaHoy = gastosCajaHoy.reduce((sum, gasto) => {
-    if (gasto.metodo_pago === 'mixto') {
-      return sum + (gasto.pagos_divididos?.find(parte => parte.metodo_pago === 'efectivo')?.monto || 0);
-    }
-    return gasto.metodo_pago === 'efectivo' ? sum + gasto.monto : sum;
-  }, 0);
+  /**
+   * Efectivo que salió del cajón en gastos desde que se abrió esta caja hasta ahora (o hasta el cierre).
+   * Antes se sumaban los gastos con fecha de hoy: en un segundo turno del mismo día aparecían los del primero,
+   * y un gasto cargado con otra fecha no aparecía aunque la plata hubiera salido del cajón.
+   */
+  const totalGastosCajaHoy = cajaACerrar ? efectivoGastadoDeLaCaja(cajaACerrar, movimientosVivos) : 0;
+  const esperadoCajaACerrar = cajaAbierta ? esperadoCajaAbierta : cajaPendiente ? recalcularEsperadoEfectivo(cajaPendiente, movimientosVivos) : 0;
 
   const calcVuelto = () => {
     const ef = parseFloat(montoEfectivo) || 0;
@@ -346,7 +347,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     const inicial = parseFloat(montoInicial) || 0;
     setAperturaError('');
     if (!Number.isFinite(inicial) || inicial < 0) { setAperturaError('El monto inicial debe ser cero o mayor.'); return; }
-    if (loadCajasDiarias().some(caja => caja.fecha === todayKey() && caja.estado === 'abierta')) { setAperturaError('Ya hay una caja abierta para hoy.'); return; }
+    const yaAbierta = cajaAbiertaActual(loadCajasDiarias());
+    if (yaAbierta) {
+      setAperturaError(yaAbierta.fecha === todayKey() ? 'Ya hay una caja abierta para hoy.' : `La caja del ${yaAbierta.fecha} sigue abierta. Cerrala antes de abrir la de hoy.`);
+      return;
+    }
     const nuevaCaja: CajaDiaria = {
       id: nuevoId('caja'),
       fecha: todayKey(),
@@ -394,7 +399,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   };
 
   const cerrarCaja = async () => {
-    if (!cajaAbierta || cerrandoCaja) return;
+    if (!cajaACerrar || cerrandoCaja) return;
 
     // Para cerrar solo se cuenta el efectivo del cajón: las transferencias ya quedan registradas en cada cobro.
     const efectivoContado = montoContado(montoCierreEfectivo);
@@ -403,16 +408,20 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
       return;
     }
 
+    if (!loadCajasDiarias().some(caja => caja.id === cajaACerrar.id && caja.estado === 'abierta')) {
+      setCierreError('Esta caja ya se cerró desde otro equipo.');
+      return;
+    }
     // Se recalcula en el momento con todo lo que hay guardado.
-    const esperadoAlCerrar = recalcularEsperadoEfectivo(cajaAbierta, loadMovimientosFinancieros());
+    const esperadoAlCerrar = recalcularEsperadoEfectivo(cajaACerrar, loadMovimientosFinancieros());
     const conteo = {
-      fecha: cajaAbierta.fecha,
-      cajero: cajaAbierta.cajero_nombre || (user ? `${user.nombre} ${user.apellido}`.trim() : 'Cajero'),
+      fecha: cajaACerrar.fecha,
+      cajero: cajaACerrar.cajero_nombre || (user ? `${user.nombre} ${user.apellido}`.trim() : 'Cajero'),
       esperadoEfectivo: esperadoAlCerrar,
       contadoEfectivo: efectivoContado,
       // No se cuenta: se toma como lo registrado, así el aviso de faltante mira solo el efectivo.
-      esperadoTransferencia: cajaAbierta.transferencia,
-      contadoTransferencia: cajaAbierta.transferencia,
+      esperadoTransferencia: cajaACerrar.transferencia,
+      contadoTransferencia: cajaACerrar.transferencia,
     };
     const aviso = armarAvisoCierre(conteo);
 
@@ -423,7 +432,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         ? `No se puede cerrar la caja: el efectivo contado no coincide, faltan más de ${formatMoney(UMBRAL_FALTA_CAJA)}. Volvé a contar el cajón.`
         : `No se puede cerrar la caja: faltan ${formatMoney(falta)} en efectivo. Volvé a contar el cajón.`;
       setCierreError(bloqueo);
-      const clave = `${cajaAbierta.id}:${efectivoContado}`;
+      const clave = `${cajaACerrar.id}:${efectivoContado}`;
       if (modoDemo || faltasAvisadas.current.has(clave)) return;
       faltasAvisadas.current.add(clave);
       setCerrandoCaja(true);
@@ -442,8 +451,9 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setCierreError('');
     setCerrandoCaja(true);
     try {
-      saveCajasDiarias(cajas.map(caja => (
-        caja.id === cajaAbierta.id
+      // Sobre lo guardado (no lo que tenía la pantalla), así no se pisa lo que llegó de otro equipo.
+      saveCajasDiarias(loadCajasDiarias().map(caja => (
+        caja.id === cajaACerrar.id
           ? {
               ...caja,
               monto_cierre_efectivo: efectivoContado,
@@ -456,7 +466,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             }
           : caja
       )));
-      cerrarCajaDia(`Cierre de caja del ${cajaAbierta.fecha}: efectivo del día a caja grande`);
+      cerrarCajaDia(`Cierre de caja del ${cajaACerrar.fecha}: efectivo del día a caja grande`);
     } catch (error) {
       setCierreError(error instanceof Error ? error.message : 'No se pudo cerrar la caja.');
       setCerrandoCaja(false);
@@ -1331,6 +1341,99 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     </>
   );
 
+  const modalCierre = showCierreCaja && cajaACerrar && (
+      <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+          <div className="flex items-center justify-between p-6 border-b border-slate-100">
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg">Arqueo de cierre</h3>
+              <p className="text-sm text-slate-500">{new Date(`${cajaACerrar.fecha}T00:00:00`).toLocaleDateString('es-AR')}</p>
+            </div>
+            <button onClick={() => { if (!cerrandoCaja) setShowCierreCaja(false); }} className="text-slate-400 hover:text-slate-600">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="p-6 space-y-4">
+            {!cierreACiegas && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+                    <p className="text-xs text-emerald-600">Efectivo ventas</p>
+                    <p className="text-lg font-bold text-emerald-700">{formatMoney(cajaACerrar.efectivo)}</p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                    <p className="text-xs text-amber-600">Esperado efectivo</p>
+                    <p className="text-lg font-bold text-amber-700">{formatMoney(esperadoCajaACerrar)}</p>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-100 rounded-xl p-3">
+                    <p className="text-xs text-purple-600">Tarjeta</p>
+                    <p className="text-lg font-bold text-purple-700">{formatMoney(cajaACerrar.tarjeta)}</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                    <p className="text-xs text-blue-600">Transferencia</p>
+                    <p className="text-lg font-bold text-blue-700">{formatMoney(cajaACerrar.transferencia)}</p>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Gastos de la caja del día</p>
+                  <p className="text-lg font-bold text-slate-800">{formatMoney(totalGastosCajaHoy)}</p>
+                  <p className="text-xs text-slate-400 mt-1">Solo el efectivo salido del cajón. Ya está descontado del esperado.</p>
+                </div>
+              </>
+            )}
+
+            {([
+              ['Efectivo en la caja', montoCierreEfectivo, setMontoCierreEfectivo, esperadoCajaACerrar, 'Contá los billetes del cajón. Las transferencias y tarjetas no hace falta contarlas.'],
+            ] as Array<[string, string, (value: string) => void, number, string]>).map(([etiqueta, valor, setValor, esperado, ayuda]) => {
+              const contado = montoContado(valor);
+              const diferencia = contado === null ? null : contado - esperado;
+              return (
+                <div key={etiqueta}>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">{etiqueta}</label>
+                  <input
+                    type="number"
+                    value={valor}
+                    onChange={e => { setValor(e.target.value); setCierreError(''); }}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+                    placeholder={cierreACiegas ? '' : String(esperado)}
+                    min="0"
+                  />
+                  {!cierreACiegas && ayuda && <p className="text-xs text-slate-400 mt-1.5">{ayuda}</p>}
+                  {!cierreACiegas && diferencia !== null && (
+                    <div className="mt-2 flex justify-between rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm">
+                      <span className="text-slate-500">Diferencia</span>
+                      <span className={`font-bold ${diferencia === 0 ? 'text-emerald-600' : diferencia < 0 ? 'text-red-600' : 'text-slate-600'}`}>
+                        {formatMoney(diferencia)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {cierreError && <p role="alert" className="text-sm font-medium text-red-700">{cierreError}</p>}
+          </div>
+
+          <div className="flex gap-3 p-6 border-t border-slate-100">
+            <button
+              onClick={() => { if (!cerrandoCaja) setShowCierreCaja(false); }}
+              className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={cerrarCaja}
+              disabled={cerrandoCaja}
+              className="flex-1 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              <Lock size={15} />
+              {cerrandoCaja ? 'Cerrando…' : 'Cerrar caja'}
+            </button>
+          </div>
+        </div>
+      </div>
+  );
+
   if (!cajaAbierta && vista === 'cobros') {
     return (
       <div className="bg-white rounded-2xl border border-slate-200 p-8 max-w-xl mx-auto text-center">
@@ -1349,6 +1452,32 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     return (
       <div className="space-y-6">
         {renderArqueos()}
+      </div>
+    );
+  }
+
+  if (!cajaAbierta && cajaPendiente) {
+    // Quedó abierta la caja de otra jornada: se cierra primero, con sus gastos y cobros hasta ahora.
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-2xl border border-amber-300 p-8 max-w-xl mx-auto">
+          <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center mb-4">
+            <Lock size={26} className="text-amber-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-800">Quedó abierta la caja del {new Date(`${cajaPendiente.fecha}T00:00:00`).toLocaleDateString('es-AR')}</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            Antes de abrir la caja de hoy hay que cerrar esa: contá el efectivo del cajón y cerrala.
+            Se cuentan los cobros y gastos desde que se abrió{cajaPendiente.opened_at ? ` (${new Date(cajaPendiente.opened_at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })})` : ''} hasta que la cierres.
+          </p>
+          <button
+            onClick={() => { setCierreError(''); setShowCierreCaja(true); }}
+            className="mt-5 w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+          >
+            <Lock size={18} />
+            Cerrar caja del {new Date(`${cajaPendiente.fecha}T00:00:00`).toLocaleDateString('es-AR')}
+          </button>
+        </div>
+        {modalCierre}
       </div>
     );
   }
@@ -1972,98 +2101,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         />
       )}
 
-      {showCierreCaja && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-800 text-lg">Arqueo de cierre</h3>
-                <p className="text-sm text-slate-500">{new Date(`${cajaAbierta.fecha}T00:00:00`).toLocaleDateString('es-AR')}</p>
-              </div>
-              <button onClick={() => { if (!cerrandoCaja) setShowCierreCaja(false); }} className="text-slate-400 hover:text-slate-600">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              {!cierreACiegas && (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
-                      <p className="text-xs text-emerald-600">Efectivo ventas</p>
-                      <p className="text-lg font-bold text-emerald-700">{formatMoney(cajaAbierta.efectivo)}</p>
-                    </div>
-                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
-                      <p className="text-xs text-amber-600">Esperado efectivo</p>
-                      <p className="text-lg font-bold text-amber-700">{formatMoney(esperadoCajaAbierta)}</p>
-                    </div>
-                    <div className="bg-purple-50 border border-purple-100 rounded-xl p-3">
-                      <p className="text-xs text-purple-600">Tarjeta</p>
-                      <p className="text-lg font-bold text-purple-700">{formatMoney(cajaAbierta.tarjeta)}</p>
-                    </div>
-                    <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
-                      <p className="text-xs text-blue-600">Transferencia</p>
-                      <p className="text-lg font-bold text-blue-700">{formatMoney(cajaAbierta.transferencia)}</p>
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs text-slate-500">Gastos de la caja del día</p>
-                    <p className="text-lg font-bold text-slate-800">{formatMoney(totalGastosCajaHoy)}</p>
-                    <p className="text-xs text-slate-400 mt-1">Solo el efectivo salido del cajón. Ya está descontado del esperado.</p>
-                  </div>
-                </>
-              )}
-
-              {([
-                ['Efectivo en la caja', montoCierreEfectivo, setMontoCierreEfectivo, esperadoCajaAbierta, 'Contá los billetes del cajón. Las transferencias y tarjetas no hace falta contarlas.'],
-              ] as Array<[string, string, (value: string) => void, number, string]>).map(([etiqueta, valor, setValor, esperado, ayuda]) => {
-                const contado = montoContado(valor);
-                const diferencia = contado === null ? null : contado - esperado;
-                return (
-                  <div key={etiqueta}>
-                    <label className="block text-sm font-semibold text-slate-700 mb-2">{etiqueta}</label>
-                    <input
-                      type="number"
-                      value={valor}
-                      onChange={e => { setValor(e.target.value); setCierreError(''); }}
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                      placeholder={cierreACiegas ? '' : String(esperado)}
-                      min="0"
-                    />
-                    {!cierreACiegas && ayuda && <p className="text-xs text-slate-400 mt-1.5">{ayuda}</p>}
-                    {!cierreACiegas && diferencia !== null && (
-                      <div className="mt-2 flex justify-between rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm">
-                        <span className="text-slate-500">Diferencia</span>
-                        <span className={`font-bold ${diferencia === 0 ? 'text-emerald-600' : diferencia < 0 ? 'text-red-600' : 'text-slate-600'}`}>
-                          {formatMoney(diferencia)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {cierreError && <p role="alert" className="text-sm font-medium text-red-700">{cierreError}</p>}
-            </div>
-
-            <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button
-                onClick={() => { if (!cerrandoCaja) setShowCierreCaja(false); }}
-                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={cerrarCaja}
-                disabled={cerrandoCaja}
-                className="flex-1 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                <Lock size={15} />
-                {cerrandoCaja ? 'Cerrando…' : 'Cerrar caja'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {modalCierre}
 
       {showClienteForm && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">

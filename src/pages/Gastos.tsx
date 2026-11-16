@@ -18,6 +18,7 @@ import { loadGastos, saveGastos, useGastos } from '../lib/gastosStore';
 import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
 import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
+import { cajaAbiertaActual, efectivoGastadoDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
 import { useUsuarios } from '../lib/usuariosStore';
 import { SueldosDelMes } from '../components/Sueldos';
 import { gastosRecuperables } from '../lib/gastosRecuperables';
@@ -177,15 +178,20 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     setNuevaCuentaError('');
   };
 
-  const cajaHoy = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
+  // La caja abierta ahora (también una de ayer que quedó sin cerrar): sus gastos son los de su horario.
+  const cajaHoy = cajaAbiertaActual(cajas);
+  const esperadoCajaHoy = cajaHoy ? recalcularEsperadoEfectivo(cajaHoy, movimientos) : 0;
   const gastosHoy = gastos.filter(gasto => gasto.fecha === todayKey());
   const totalGastosHoy = gastosHoy.reduce((sum, gasto) => sum + gasto.monto, 0);
-  const totalDescuentoCajaHoy = movimientos
-    .filter(mov => mov.fecha === todayKey() && mov.tipo === 'salida' && mov.cuenta_id === cuentaCajaDiaId)
-    .reduce((sum, mov) => sum + mov.monto, 0);
+  // Con la caja abierta: lo que salió del cajón desde que se abrió. Sin caja abierta: lo del día.
+  const totalDescuentoCajaHoy = cajaHoy
+    ? efectivoGastadoDeLaCaja(cajaHoy, movimientos)
+    : movimientos
+      .filter(mov => mov.fecha === todayKey() && mov.tipo === 'salida' && mov.cuenta_id === cuentaCajaDiaId)
+      .reduce((sum, mov) => sum + mov.monto, 0);
   const gastosPendientes = gastos.filter(gasto => (gasto.estado || 'pagado') !== 'pagado');
   const totalPendiente = gastosPendientes.reduce((sum, gasto) => sum + Math.max(0, gasto.monto - (gasto.monto_pagado || 0)), 0);
-  const disponibleCajaHoy = (cajaHoy?.monto_esperado_efectivo ?? 0) + (cajaHoy?.tarjeta ?? 0) + (cajaHoy?.transferencia ?? 0);
+  const disponibleCajaHoy = esperadoCajaHoy + (cajaHoy?.tarjeta ?? 0) + (cajaHoy?.transferencia ?? 0);
   const gastosFiltrados = gastos
     .filter(gasto => filtroEstado === 'todos' || (gasto.estado || 'pagado') === filtroEstado)
     .filter(gasto => filtroCuenta === 'todos' || gasto.cuenta_origen_id === filtroCuenta || gasto.pagos_divididos?.some(parte => parte.cuenta_id === filtroCuenta))
@@ -343,8 +349,13 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       sueldo_mes: empleado?.sueldo,
     };
 
-    const enCajon = cajaHoy?.monto_esperado_efectivo ?? 0;
+    const enCajon = cajaHoy ? recalcularEsperadoEfectivo(cajaHoy, loadMovimientosFinancieros()) : 0;
     const efectivoQueSale = (gasto.estado || 'pagado') === 'pagado' ? efectivoDelCajon(gasto) : 0;
+    // Sin caja abierta el efectivo del cajón ya pasó a la caja grande: un gasto así no caería en ningún arqueo.
+    if (!original && efectivoQueSale > 0 && !cajaHoy) {
+      setGastoError('La caja del día está cerrada. Abrí la caja para pagar en efectivo desde el cajón, o elegí que salga de la caja grande.');
+      return;
+    }
     try {
       if (original) {
         withStoreTransaction(() => {
