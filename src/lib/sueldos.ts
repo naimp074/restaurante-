@@ -1,7 +1,8 @@
 import type { Gasto, Profile } from './types';
 import { dayKey } from './fechas';
 import { loadGastos, saveGastos } from './gastosStore';
-import { aplicarGastoEnCajaDia } from './cajaStore';
+import { aplicarGastoEnCajaDia, loadCajasDiarias } from './cajaStore';
+import { cajaAbiertaActual } from './esperadoCaja';
 import { cuentaCajaDiaId, registrarSalidaCuenta } from './finance';
 import { withStoreTransaction } from './storeSync';
 import { nuevoId } from './ids';
@@ -140,6 +141,8 @@ export const pagarSueldo = (datos: DatosPagoSueldo): Gasto => {
   if (monto <= 0) throw new Error('Ingresá un monto mayor que cero.');
   if (!/^\d{4}-\d{2}$/.test(datos.periodo)) throw new Error('Elegí el mes que se paga.');
   const enCaja = datos.desde_caja_dia && datos.metodo_pago === 'efectivo';
+  // Sin caja abierta el efectivo del cajón ya pasó a la caja grande: el pago no caería en ningún arqueo.
+  if (enCaja && !cajaAbiertaActual(loadCajasDiarias())) throw new Error('La caja del día está cerrada. Abrí la caja o pagá desde la caja grande.');
   const cuenta = enCaja ? datos.cuenta_caja_dia_id : datos.cuenta_id;
   if (!cuenta) throw new Error('Elegí de qué cuenta sale la plata.');
   return registrarGasto({

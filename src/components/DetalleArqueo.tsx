@@ -3,7 +3,7 @@ import { X, Lock, Unlock, Wallet, ArrowLeftRight, Receipt, PiggyBank, HandCoins,
 import type { CajaDiaria, CuentaDinero, MetodoPago, MovimientoFinanciero, Pago } from '../lib/types';
 import { etiquetaPedido } from '../lib/pedidosCanal';
 import { gastosDeCategoria, resumenGastosCaja, type CategoriaGastoCaja } from '../lib/resumenGastosCaja';
-import { movimientosDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
+import { movimientosDeLaCaja, pagosDeLaCaja, recalcularEsperadoEfectivo, sinGastosRevertidos } from '../lib/esperadoCaja';
 import { productosVendidos, ventasDeMedio, type MedioVenta } from '../lib/ventasCaja';
 
 export interface ApartadoArqueo {
@@ -58,15 +58,6 @@ const nombresOrigen: Record<MovimientoFinanciero['origen'], string> = {
   ajuste: 'Ajuste',
 };
 
-/** Los cobros que entraron mientras esta caja estuvo abierta. */
-const pagosDeLaCaja =(caja: CajaDiaria, pagos: Pago[]) => {
-  const desde = caja.opened_at;
-  const hasta = caja.closed_at;
-  return pagos
-    .filter(pago => pago.created_at >= desde && (!hasta || pago.created_at <= hasta))
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
-};
-
 function Diferencia({ valor, esperado }: { valor?: number; esperado?: number }) {
   if (valor === undefined) return <span className="text-slate-400">—</span>;
   // Esperado negativo: se anotaron más salidas de efectivo que lo que había. No puede "sobrar".
@@ -119,7 +110,9 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
   const movimientosDelDia = movimientosDeLaCaja(caja, movimientos)
     .filter(mov => mov.origen !== 'venta')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const gastosDelDia = resumenGastosCaja(movimientosDelDia);
+  // Para los gastos no cuentan los que se borraron o editaron después (si no, un gasto editado aparecía dos veces).
+  const gastosVigentes = sinGastosRevertidos(movimientosDelDia);
+  const gastosDelDia = resumenGastosCaja(gastosVigentes);
   const esperadoRehecho = recalcularEsperadoEfectivo(caja, movimientos);
   const esperadoMal = Math.abs(esperadoRehecho - caja.monto_esperado_efectivo) > 0.009;
   // Renglón de "Gastos del día" desplegado para ver los gastos uno por uno.
@@ -299,7 +292,7 @@ export default function DetalleArqueo({ caja, pagos, movimientos, apartados, cue
                   .filter(renglon => renglon.id !== 'otros' || gastosDelDia.otros > 0)
                   .map(renglon => {
                     const abierto = gastoAbierto === renglon.id;
-                    const lista = abierto ? gastosDeCategoria(movimientosDelDia, renglon.id) : [];
+                    const lista = abierto ? gastosDeCategoria(gastosVigentes, renglon.id) : [];
                     const total = renglon.id === 'total';
                     return (
                       <div key={renglon.id}>
