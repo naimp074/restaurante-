@@ -156,6 +156,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
    * Los demás cierran a ciegas: cuentan el efectivo sin ver cuánto debería haber.
    */
   const cierreACiegas = user?.rol !== 'admin';
+  // Admin y encargado pueden cerrar con el monto que contaron aunque falte plata (confirmándolo); el cajero no.
+  const puedeCerrarConFalta = user?.rol === 'admin' || user?.rol === 'encargado';
   const verTotalesCaja = !cierreACiegas;
   const [pedidos, setPedidos] = useState<Pedido[]>(
     () => loadDemoPedidos().filter(p => p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado')
@@ -203,6 +205,8 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
   const [cerrandoCaja, setCerrandoCaja] = useState(false);
   // Conteos con falta que ya se avisaron por Gmail: volver a tocar "Cerrar" con el mismo monto no manda otro mail.
   const faltasAvisadas = useRef(new Set<string>());
+  // Conteo con falta que un admin o encargado ya vio: el segundo toque cierra igual. Si cambia el monto, se vuelve a preguntar.
+  const [faltaConfirmada, setFaltaConfirmada] = useState('');
   const [mensajeCierre, setMensajeCierre] = useState('');
   const [mensajeCierreError, setMensajeCierreError] = useState(false);
   const [showCierreCaja, setShowCierreCaja] = useState(false);
@@ -425,8 +429,19 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     };
     const aviso = armarAvisoCierre(conteo);
 
-    // Si faltan más de $5.000 la caja no se cierra: se vuelve a contar, y los administradores se enteran por Gmail.
-    if (aviso?.tipo === 'falta') {
+    // Si faltan más de $5.000 el cajero no puede cerrar: se vuelve a contar, y los administradores se enteran por Gmail.
+    // Admin y encargado pueden cerrar igual con lo contado: se les pide confirmarlo y el aviso sale al cerrar.
+    if (aviso?.tipo === 'falta' && puedeCerrarConFalta) {
+      const clave = `${cajaACerrar.id}:${efectivoContado}`;
+      if (faltaConfirmada !== clave) {
+        const falta = esperadoAlCerrar - efectivoContado;
+        setFaltaConfirmada(clave);
+        setCierreError(cierreACiegas
+          ? `El efectivo contado no coincide: faltan más de ${formatMoney(UMBRAL_FALTA_CAJA)}. Volvé a contar, o tocá "Cerrar igual" para cerrar con ${formatMoney(efectivoContado)}.`
+          : `Faltan ${formatMoney(falta)} en efectivo. Volvé a contar, o tocá "Cerrar igual" para cerrar con ${formatMoney(efectivoContado)}.`);
+        return;
+      }
+    } else if (aviso?.tipo === 'falta') {
       const falta = esperadoAlCerrar - efectivoContado;
       const bloqueo = cierreACiegas
         ? `No se puede cerrar la caja: el efectivo contado no coincide, faltan más de ${formatMoney(UMBRAL_FALTA_CAJA)}. Volvé a contar el cajón.`
@@ -449,6 +464,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     }
 
     setCierreError('');
+    setFaltaConfirmada('');
     setCerrandoCaja(true);
     try {
       // Sobre lo guardado (no lo que tenía la pantalla), así no se pisa lo que llegó de otro equipo.
@@ -1427,7 +1443,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               className="flex-1 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-semibold hover:bg-slate-700 flex items-center justify-center gap-2 disabled:opacity-60"
             >
               <Lock size={15} />
-              {cerrandoCaja ? 'Cerrando…' : 'Cerrar caja'}
+              {cerrandoCaja ? 'Cerrando…' : faltaConfirmada === `${cajaACerrar.id}:${montoContado(montoCierreEfectivo)}` ? 'Cerrar igual' : 'Cerrar caja'}
             </button>
           </div>
         </div>
