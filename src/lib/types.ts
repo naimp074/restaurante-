@@ -129,6 +129,9 @@ export interface Ingrediente {
   proveedor?: Proveedor;
 }
 
+/** En qué parte del ticket sale: las entradas separadas de los platos principales. */
+export type SeccionTicket = 'entrada' | 'principal' | 'otro';
+
 export interface Producto {
   id: string;
   codigo?: string;
@@ -151,6 +154,8 @@ export interface Producto {
   receta?: RecetaItem[];
   /** Lo que el cliente elige al pedirlo: "Bebida: café o té", "Aderezo: solo mayonesa"... */
   grupos_opciones?: GrupoOpciones[];
+  /** Sección del ticket. Sin cargar, la carta del restaurante usa la de su grupo. */
+  seccion_ticket?: SeccionTicket;
 }
 
 export interface OpcionProducto {

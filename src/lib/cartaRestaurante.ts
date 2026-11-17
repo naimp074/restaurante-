@@ -1,4 +1,4 @@
-import type { Producto } from './types';
+import type { Producto, SeccionTicket } from './types';
 import { categoriasIniciales } from './mockData';
 
 type ItemCarta = [nombre: string, precio: number, descripcion?: string];
@@ -221,6 +221,21 @@ const carta: ItemCarta[] = [
 
 const categoria = categoriasIniciales.find(item => item.id === 's-restaurante');
 
+const primerPrincipal = carta.findIndex(([nombre]) => nombre === 'Matambre de cerdo');
+const primerPostre = carta.findIndex(([nombre]) => nombre === 'Tiramisú');
+
+/** Entradas hasta el cerdo; de ahí a los postres, platos principales; postres y bebidas, otros. */
+const seccionDelIndice = (indice: number): SeccionTicket =>
+  indice < primerPrincipal ? 'entrada' : indice < primerPostre ? 'principal' : 'otro';
+
+/** La sección que le toca a un producto de la carta por su id (rest-001...). Null si no es de la carta. */
+export const seccionCartaRestaurante = (productoId: string): SeccionTicket | null => {
+  const coincide = /^rest-(\d{3})$/.exec(productoId);
+  if (!coincide) return null;
+  const indice = Number(coincide[1]) - 1;
+  return indice >= 0 && indice < carta.length ? seccionDelIndice(indice) : null;
+};
+
 /** Los ids son fijos: cargarla desde dos dispositivos no duplica nada. */
 export const armarCartaRestaurante = (ahora = new Date().toISOString()): Producto[] =>
   carta.map(([nombre, precio, descripcion], indice) => {
@@ -242,6 +257,7 @@ export const armarCartaRestaurante = (ahora = new Date().toISOString()): Product
       created_at: ahora,
       updated_at: ahora,
       receta: [],
+      seccion_ticket: seccionDelIndice(indice),
     };
   });
 
