@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2, ArrowLeftRight, DoorOpen } from 'lucide-react';
+import { Plus, Minus, Trash2, Send, X, Search, Clock, UtensilsCrossed, MessageSquarePlus, Banknote, Pencil, Ban, History, Hourglass, Undo2, ArrowLeftRight, DoorOpen, Printer } from 'lucide-react';
 import type { MetodoPago, Mesa, OpcionElegida, Pedido, PedidoItem, Producto, RepartoMixto, TipoEventoComanda } from '../lib/types';
 import { DetalleItem, ElegirOpciones } from '../components/OpcionesProducto';
 import { precioConOpciones, salenIgual, tieneOpciones } from '../lib/opcionesProducto';
@@ -11,6 +11,7 @@ import { useMozas } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
+import { nombreDelLocal } from '../lib/nombreLocal';
 import { esDeSalon } from '../lib/pedidosCanal';
 import RelojItem from '../components/RelojItem';
 import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
@@ -19,6 +20,7 @@ import {
   estadoCobroConfig, itemSinEnviar, itemsSinEnviar, liberarComandaVacia, nombreMedio, seReabrioSinAnular, unirComandas, nuevaSolicitud, puedeAnularItems, type Actor,
 } from '../lib/cobroComanda';
 import SolicitarCobro from '../components/SolicitarCobro';
+import { imprimirCuentaMesa } from '../lib/cuentaMesa';
 import PedirMotivo from '../components/PedirMotivo';
 
 const estadoItemColors: Record<string, string> = {
@@ -90,6 +92,7 @@ export default function Pedidos() {
   const [eligiendo, setEligiendo] = useState<{ producto: Producto; item?: PedidoItem } | null>(null);
   const [verCobro, setVerCobro] = useState(false);
   const [cobroError, setCobroError] = useState('');
+  const [cuentaError, setCuentaError] = useState('');
   const [enviandoCobro, setEnviandoCobro] = useState(false);
   const cobroEnProceso = useRef(false);
   const [anulando, setAnulando] = useState<PedidoItem | null>(null);
@@ -775,6 +778,19 @@ export default function Pedidos() {
                     <span>${selectedPedido.total.toLocaleString()}</span>
                   </div>
                 </div>
+                {tieneItems && !esBorrador && (
+                  // La cuenta de lo consumido hasta ahora: no cobra ni cierra la mesa.
+                  <div className="mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setCuentaError(imprimirCuentaMesa(selectedPedido, nombreDelLocal(), catalogoProductos) ? '' : 'No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.')}
+                      className="w-full bg-white border border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 font-semibold text-sm py-2.5 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Printer size={16} />Imprimir cuenta (la mesa sigue abierta)
+                    </button>
+                    {cuentaError && <p className="mt-1 text-xs text-red-600">{cuentaError}</p>}
+                  </div>
+                )}
                 {pendingItemsToKitchen.length > 0 || esBorrador || !tieneItems ? (
                   // Hay algo nuevo para mandar (o todavía no hay nada que cobrar): el botón de siempre.
                   <button

@@ -1,7 +1,7 @@
 import type { Pago } from './types';
 import { nombreMedio } from './cobroComanda';
 import { etiquetaPedido } from './pedidosCanal';
-import { readStore } from './storeSync';
+import { nombreDelLocal } from './nombreLocal';
 import { abrirVentanaTicket } from './ticketFiscal';
 import { estiloSeccionTicket, htmlItemsPorSeccion } from './seccionesTicket';
 import { loadProductos } from './productosStore';
@@ -18,11 +18,10 @@ export const imprimirTicketCobro = (pago: Pago): boolean => {
   if (!ventana) return false;
 
   const fecha = new Date(pago.created_at);
-  const local = readStore<{ nombre?: string }>('restaurant-config-local', {});
   const items = (pago.pedido.items || []).filter(item => item.estado !== 'cancelado');
   const cuerpo = `
     <div class="center">
-      <p class="title">${escapar(local.nombre || 'Restaurante')}</p>
+      <p class="title">${escapar(nombreDelLocal())}</p>
       <p class="aviso">NO VÁLIDO COMO FACTURA</p>
     </div>
     <div class="line"></div>
