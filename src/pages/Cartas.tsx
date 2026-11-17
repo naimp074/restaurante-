@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, CreditCard as Edit2, Plus, Search, Tags, Trash2, X } from 'lucide-react';
-import type { CategoriaProducto, GrupoOpciones, Producto } from '../lib/types';
+import type { CategoriaProducto, GrupoOpciones, Producto, SeccionTicket } from '../lib/types';
+import { seccionDelProducto } from '../lib/seccionesTicket';
 import { EditorOpciones } from '../components/OpcionesProducto';
 import { limpiarGrupos } from '../lib/opcionesProducto';
 import { agregarCartaRestaurante, cartaRestauranteCargada } from '../lib/cartaRestaurante';
@@ -25,6 +26,7 @@ type FormularioProducto = {
   disponible: boolean;
   agotado: boolean;
   grupos_opciones: GrupoOpciones[];
+  seccion_ticket: SeccionTicket;
 };
 
 const campo = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400 bg-white';
@@ -44,6 +46,7 @@ const formularioDe = (producto: Producto | null, categoriaId: string): Formulari
   disponible: producto?.disponible ?? true,
   agotado: producto?.agotado ?? false,
   grupos_opciones: producto?.grupos_opciones ?? [],
+  seccion_ticket: producto ? seccionDelProducto(producto.id, producto) : 'otro',
 });
 
 /** Lo que se vende: categorías y productos. Las recetas se siguen editando en Combos. */
@@ -167,6 +170,7 @@ export default function Cartas() {
       disponible: formulario.disponible,
       agotado: formulario.agotado,
       grupos_opciones: limpiarGrupos(formulario.grupos_opciones),
+      seccion_ticket: formulario.seccion_ticket,
       updated_at: ahora,
     };
     saveProductos(previo
@@ -370,6 +374,14 @@ export default function Cartas() {
                   <select id="producto-categoria" value={formulario.categoria_id} onChange={e => setFormulario({ ...formulario, categoria_id: e.target.value })} className={campo}>
                     <option value="">Sin categoría</option>
                     {ordenadas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="producto-seccion" className={etiqueta}>Sección en el ticket</label>
+                  <select id="producto-seccion" value={formulario.seccion_ticket} onChange={e => setFormulario({ ...formulario, seccion_ticket: e.target.value as SeccionTicket })} className={campo}>
+                    <option value="entrada">Entrada</option>
+                    <option value="principal">Plato principal</option>
+                    <option value="otro">Otro (postres, bebidas…)</option>
                   </select>
                 </div>
                 <div>

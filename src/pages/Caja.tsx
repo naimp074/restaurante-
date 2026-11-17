@@ -55,6 +55,7 @@ import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
 import RelojItem from '../components/RelojItem';
 import { detalleTicket } from '../lib/opcionesProducto';
+import { estiloSeccionTicket, htmlItemsPorSeccion } from '../lib/seccionesTicket';
 import {
   anularTicket, cobroEnCurso, conEvento, describirReparto, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
   nombreMedio, pagoIdDeSolicitud, rechazarSolicitud, solicitudDesactualizada, type Actor,
@@ -732,6 +733,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             .person { margin-top: 10px; font-size: 13px; font-weight: 800; text-transform: uppercase; }
             .total { font-size: 14px; font-weight: 800; }
             .grand-total { font-size: 18px; font-weight: 900; margin-top: 8px; }
+            ${estiloSeccionTicket}
             @media print {
               body { padding: 0; }
               .ticket { width: 72mm; }
@@ -751,13 +753,13 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
             <div class="row"><span>Moza: ${pago.pedido.empleado?.nombre || '-'}</span><span>${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span></div>
             <div class="row"><span>Personas</span><span>${pago.pedido.cantidad_personas}</span></div>
             <div class="line"></div>
-            ${items.map(item => `
+            ${htmlItemsPorSeccion(items, item => `
               <div class="row">
                 <span class="item-name">${item.cantidad}x ${item.producto?.nombre || 'Producto'}</span>
                 <span>${formatMoney(item.subtotal)}</span>
               </div>
               ${detalleTicket(item.opciones, item.observaciones) ? `<div class="muted" style="font-size:11px;margin:-2px 0 4px 12px">${detalleTicket(item.opciones, item.observaciones)}</div>` : ''}
-            `).join('')}
+            `, loadProductos())}
             <div class="line"></div>
             ${pago.descuento_aplicado > 0 ? `<div class="row"><span>Descuento${pago.lista_precio_nombre ? ` (${pago.lista_precio_nombre})` : ''}</span><span>-${formatMoney(pago.descuento_aplicado)}</span></div>` : ''}
             ${pago.recargo_aplicado > 0 ? `<div class="row"><span>Recargo</span><span>${formatMoney(pago.recargo_aplicado)}</span></div>` : ''}
