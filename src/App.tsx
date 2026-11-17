@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/layout/Layout';
+import ImpresoraComandas from './components/ImpresoraComandas';
 import Login from './pages/Login';
 import type { PageId } from './lib/types';
 import { dayKey } from './lib/fechas';
@@ -127,6 +128,7 @@ function AppContent() {
   return (
     <Layout currentPage={effectivePage} onNavigate={setCurrentPage}>
       <Suspense fallback={<CargandoPagina />}>{renderPage()}</Suspense>
+      <ImpresoraComandas />
     </Layout>
   );
 }
