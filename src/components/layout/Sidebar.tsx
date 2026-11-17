@@ -3,7 +3,7 @@ import {
   LayoutDashboard, UtensilsCrossed, ClipboardList, ChefHat,
   CreditCard, Package, Boxes, Calculator, BarChart3, Users,
   Settings, LogOut, Truck, PanelLeftClose, PanelLeftOpen, ReceiptText,
-  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet, ShoppingBag, FileCheck2
+  ChevronDown, Grid3X3, Tags, BadgePercent, BookOpen, X, ArrowLeftRight, Wallet, ShoppingBag, FileCheck2, Clock
 } from 'lucide-react';
 import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -50,7 +50,7 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
   const [showProductosMenu, setShowProductosMenu] = useState(false);
   const [showStockMenu, setShowStockMenu] = useState(false);
   const [showGastosMenu, setShowGastosMenu] = useState(
-    currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos'
+    currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos' || currentPage === 'gastos_reloj'
   );
 
   const menuOculto = useMenuOculto();
@@ -59,13 +59,13 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
   const subpaginas: Partial<Record<PageId, PageId[]>> = {
     ventas: paginasVentas,
     stock: ['stock', 'stock_insumos', 'stock_consumos', 'stock_produccion'],
-    gastos: ['gastos', 'gastos_pagos', 'gastos_traspasos'],
+    gastos: ['gastos', 'gastos_pagos', 'gastos_traspasos', 'gastos_reloj'],
   };
   const visibleItems = navItems.filter(item => (subpaginas[item.id] || [item.id]).some(ve));
   const ventasActive = currentPage === 'pedidos_delivery' || currentPage === 'ventas' || currentPage === 'caja' || currentPage === 'caja_dia' || currentPage === 'caja_arqueos' || currentPage === 'cobros' || currentPage === 'cuenta_corriente' || currentPage === 'facturas' || currentPage === 'cocina' || currentPage === 'pedidos';
   const productosActive = currentPage === 'productos' || currentPage === 'cartas' || currentPage === 'combos' || currentPage === 'lista_precios' || currentPage === 'diferentes_listas';
   const stockActive = currentPage === 'stock' || currentPage === 'stock_insumos' || currentPage === 'stock_consumos' || currentPage === 'stock_produccion';
-  const gastosActive = currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos';
+  const gastosActive = currentPage === 'gastos' || currentPage === 'gastos_pagos' || currentPage === 'gastos_traspasos' || currentPage === 'gastos_reloj';
 
   return (
     <aside
@@ -469,6 +469,19 @@ export default function Sidebar({ currentPage, onNavigate, collapsed, onToggle, 
                     >
                       <ArrowLeftRight size={13} />
                       Traspasos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onNavigate('gastos_reloj');
+                      }}
+                      className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors ${
+                        currentPage === 'gastos_reloj' ? 'bg-amber-500 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                      }`}
+                    >
+                      <Clock size={13} />
+                      Reloj del personal
                     </button>
                   </div>
                 )}

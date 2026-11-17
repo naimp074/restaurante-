@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, Pencil, History, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote } from 'lucide-react';
+import { Plus, ReceiptText, Wallet, CalendarDays, Trash2, Pencil, History, X, Check, ArrowLeft, ArrowLeftRight, Landmark, Smartphone, CreditCard, Banknote, Clock } from 'lucide-react';
 import type { AlcanceGasto, CategoriaGasto, CuentaDinero, Gasto, MetodoPago, PageId, Proveedor, TipoCuentaDinero } from '../lib/types';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -23,6 +23,7 @@ import { useUsuarios } from '../lib/usuariosStore';
 import { SueldosDelMes } from '../components/Sueldos';
 import { gastosRecuperables } from '../lib/gastosRecuperables';
 import { efectivoDelCajon, nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
+import { useFichadas } from '../lib/fichadas';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -108,6 +109,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
   const gastos = useGastos();
   const cajas = useCajas();
   const apartado = apartadoInicial || null;
+  const trabajandoAhora = useFichadas().filter(f => !f.salida).length;
   const [cuentas, setCuentas] = useState<CuentaDinero[]>(loadCuentasDinero);
   const [movimientos, setMovimientos] = useState(loadMovimientosFinancieros);
   const [proveedores] = useState<Proveedor[]>(loadProveedores);
@@ -527,11 +529,11 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
         <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-sm">
           <div className="bg-gradient-to-r from-slate-900 to-amber-950 px-6 py-5">
             <h2 className="text-white font-bold text-xl">Gastos</h2>
-            <p className="text-slate-300 text-sm mt-1">Elegí si vas a pagar algo o a mover plata entre cuentas.</p>
+            <p className="text-slate-300 text-sm mt-1">Elegí si vas a pagar algo, mover plata entre cuentas o marcar los horarios del personal.</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
           <button
             type="button"
             onClick={() => onNavigate?.('gastos_pagos')}
@@ -560,6 +562,21 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
               Pasá plata de efectivo a banco, transferencia o al revés. No es un gasto: la plata sigue siendo tuya.
             </p>
             <p className="text-xs font-semibold text-emerald-600 mt-4">{cuentasActivas.length} cuentas disponibles</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate?.('gastos_reloj')}
+            className="bg-white border border-slate-200 rounded-2xl p-6 text-left hover:border-sky-300 hover:shadow-lg transition-all"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4">
+              <Clock size={22} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Reloj del personal</h3>
+            <p className="text-sm text-slate-500 mt-1">
+              Entrada y salida de cada empleado. Se le paga por las horas trabajadas, desde la caja del día, la caja grande o por transferencia.
+            </p>
+            <p className="text-xs font-semibold text-sky-600 mt-4">{trabajandoAhora} trabajando ahora</p>
           </button>
         </div>
       </div>
