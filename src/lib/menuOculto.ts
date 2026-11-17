@@ -12,7 +12,7 @@ export const pantallasOcultables: { label: string; paginas: PageId[] }[] = [
   { label: 'Facturas', paginas: ['facturas'] },
   { label: 'Stock', paginas: ['stock', 'stock_insumos', 'stock_consumos', 'stock_produccion'] },
   { label: 'Proveedores', paginas: ['proveedores'] },
-  { label: 'Gastos', paginas: ['gastos', 'gastos_pagos', 'gastos_traspasos'] },
+  { label: 'Gastos', paginas: ['gastos', 'gastos_pagos', 'gastos_traspasos', 'gastos_reloj'] },
   { label: 'Costos y recetas', paginas: ['costos'] },
   { label: 'Reportes', paginas: ['reportes'] },
 ];

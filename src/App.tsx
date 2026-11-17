@@ -20,6 +20,7 @@ const CuentaCorriente = lazy(() => import('./pages/CuentaCorriente'));
 const Facturas = lazy(() => import('./pages/Facturas'));
 const Cartas = lazy(() => import('./pages/Cartas'));
 const Productos = lazy(() => import('./pages/Productos'));
+const RelojPersonal = lazy(() => import('./pages/RelojPersonal'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Proveedores = lazy(() => import('./pages/Proveedores'));
 const Gastos = lazy(() => import('./pages/Gastos'));
@@ -117,6 +118,7 @@ function AppContent() {
       case 'gastos': return <Gastos key="gastos" onNavigate={setCurrentPage} />;
       case 'gastos_pagos': return <Gastos key="gastos-pagos" apartadoInicial="pagos" onNavigate={setCurrentPage} />;
       case 'gastos_traspasos': return <Gastos key="gastos-traspasos" apartadoInicial="traspasos" onNavigate={setCurrentPage} />;
+      case 'gastos_reloj': return <RelojPersonal />;
       case 'costos': return <Costos />;
       case 'reportes': return <Reportes />;
       case 'usuarios': return <Usuarios />;

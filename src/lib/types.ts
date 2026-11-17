@@ -44,6 +44,30 @@ export interface Profile {
   paginas?: PageId[] | null;
   /** Sueldo mensual acordado. Con él se arma su estado de cuenta en Gastos → Pagos. */
   sueldo?: number;
+  /** Cuánto gana por hora. Con él se calcula lo que se le paga por las horas del reloj. */
+  valor_hora?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Un turno del reloj del personal: cuándo entró, cuándo salió y si ya se le pagó. */
+export interface Fichada {
+  id: string;
+  empleado_id: string;
+  /** Fecha y hora completas (ISO): un turno puede pasar la medianoche. */
+  entrada: string;
+  /** Sin salida: todavía está trabajando. */
+  salida?: string;
+  /** Lo que ganaba por hora al entrar: si después le suben, los turnos viejos no cambian. */
+  valor_hora?: number;
+  /** Gasto con el que se le pagó. Pagado, el turno ya no se puede corregir. */
+  gasto_id?: string;
+  pagado_at?: string;
+  entrada_por?: string;
+  salida_por?: string;
+  /** Si alguien corrigió los horarios a mano: quién y cuándo. */
+  corregido_por?: string;
+  corregido_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -618,6 +642,7 @@ export type PageId =
   | 'gastos'
   | 'gastos_pagos'
   | 'gastos_traspasos'
+  | 'gastos_reloj'
   | 'costos'
   | 'reportes'
   | 'usuarios'

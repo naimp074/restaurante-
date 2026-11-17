@@ -34,6 +34,7 @@ const pageTitles: Record<PageId, string> = {
   gastos: 'Gastos',
   gastos_pagos: 'Pagos',
   gastos_traspasos: 'Traspasos',
+  gastos_reloj: 'Reloj del personal',
   costos: 'Costos y Recetas',
   reportes: 'Reportes y Estadísticas',
   usuarios: 'Gestión de Usuarios',

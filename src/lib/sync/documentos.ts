@@ -26,6 +26,7 @@ export const documentosSync: DocumentoSync[] = [
   { clave: 'restaurant-facturas-proveedor', evento: 'restaurant-facturas-proveedor-updated' },
   { clave: 'restaurant-pagos-proveedor', evento: 'restaurant-pagos-proveedor-updated' },
   { clave: 'restaurant-usuarios', evento: 'restaurant-usuarios-updated' },
+  { clave: 'restaurant-fichadas', evento: 'restaurant-fichadas-updated' },
   { clave: 'restaurant-config-local', evento: 'restaurant-config-local-updated' },
 ];
 

@@ -52,7 +52,7 @@ test('todas las pantallas abren sin errores para el administrador', async () => 
   await entrar(page, 'Admin');
   const paginas = ['dashboard', 'ventas', 'mesas', 'cocina', 'caja', 'caja_arqueos', 'cobros', 'cuenta_corriente', 'productos',
     'combos', 'lista_precios', 'diferentes_listas', 'stock_insumos', 'stock_consumos', 'stock_produccion', 'proveedores',
-    'gastos', 'gastos_pagos', 'gastos_traspasos', 'costos', 'reportes', 'usuarios', 'configuracion', 'pedidos_delivery'];
+    'gastos', 'gastos_pagos', 'gastos_traspasos', 'gastos_reloj', 'costos', 'reportes', 'usuarios', 'configuracion', 'pedidos_delivery'];
   for (const pagina of paginas) {
     await page.goto(`${BASE}/#/${pagina}`);
     await page.waitForSelector('header h1');

@@ -18,6 +18,8 @@ const clavesCajero = new Set([
   'restaurant-cuentas-dinero',
   'restaurant-movimientos-financieros',
   'restaurant-cuenta-corriente',
+  // El reloj del personal: marcar entradas y salidas y pagar las horas desde la caja.
+  'restaurant-fichadas',
 ]);
 
 const clavesSalon = new Set(['restaurant-mesas', 'restaurant-demo-pedidos']);
