@@ -66,7 +66,7 @@ export const salenIgual = (
   observaciones = '',
 ) => item.producto_id === productoId && clave(item.opciones) === clave(opciones) && (item.observaciones || '').trim() === observaciones.trim();
 
-const escaparHtml = (texto: string) =>
+export const escaparHtml = (texto: string) =>
   texto.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
 /** Para el ticket impreso, que se arma como HTML: ya viene escapado. */

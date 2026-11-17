@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Clock, Check, ChefHat, Bell, AlertCircle, Maximize2, X } from 'lucide-react';
+import { Clock, Check, ChefHat, Bell, AlertCircle, Maximize2, Printer, X } from 'lucide-react';
 import type { Pedido, EstadoItem } from '../lib/types';
 import { loadDemoPedidos, saveDemoPedidos, usePedidos } from '../lib/demoStore';
 import { canalDe, etiquetaPedido } from '../lib/pedidosCanal';
@@ -7,6 +7,8 @@ import { DetalleItem } from '../components/OpcionesProducto';
 import RelojItem from '../components/RelojItem';
 import { conEstado } from '../lib/tiempoItem';
 import { itemsParaCocina } from '../lib/cobroComanda';
+import { activarImpresionAuto, htmlComanda, imprimirHtml, useImpresionAuto } from '../lib/comandaCocina';
+import { loadProductos } from '../lib/productosStore';
 
 const colorCanal: Record<string, string> = {
   mostrador: 'bg-violet-100 text-violet-700',
@@ -27,6 +29,13 @@ export default function Cocina() {
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
   // Comanda abierta en grande (para leerla bien en la tablet).
   const [abiertaId, setAbiertaId] = useState<string | null>(null);
+  const impresionAuto = useImpresionAuto();
+
+  /** Vuelve a sacar en papel lo que está en cocina de esa comanda. */
+  const reimprimir = (pedido: Pedido) => {
+    const items = itemsParaCocina(pedido).filter(i => i.estado !== 'entregado');
+    if (items.length) void imprimirHtml(htmlComanda({ pedido, items, tipo: 'reimpresion' }, loadProductos()));
+  };
 
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -132,6 +141,19 @@ export default function Cocina() {
 
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-semibold text-slate-800">Comandas Activas</h2>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+        <label
+          className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer ${impresionAuto ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'}`}
+          title="Solo en esta compu: cada comanda que llega sale sola por la impresora. Las que ya están en pantalla no se imprimen."
+        >
+          <input
+            type="checkbox"
+            className="accent-emerald-600"
+            checked={impresionAuto}
+            onChange={e => activarImpresionAuto(e.target.checked, loadDemoPedidos())}
+          />
+          <Printer size={14} />Imprimir comandas automáticamente
+        </label>
         <div className="flex gap-1 bg-white border border-slate-200 rounded-lg p-1">
           <button
             onClick={() => setViewMode('cards')}
@@ -141,6 +163,7 @@ export default function Cocina() {
             onClick={() => setViewMode('list')}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-700'}`}
           >Lista</button>
+        </div>
         </div>
       </div>
 
@@ -191,6 +214,17 @@ export default function Cocina() {
                     </div>
                     <span className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-slate-600 border border-slate-200">
                       <Maximize2 size={13} />Ver
+                    </span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={e => { e.stopPropagation(); reimprimir(pedido); }}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); reimprimir(pedido); } }}
+                      aria-label={`Imprimir la comanda de ${etiquetaPedido(pedido)}`}
+                      title="Imprimir comanda"
+                      className="flex items-center rounded-lg bg-white px-2 py-1 text-slate-600 border border-slate-200 hover:bg-slate-100"
+                    >
+                      <Printer size={13} />
                     </span>
                   </div>
                 </button>
