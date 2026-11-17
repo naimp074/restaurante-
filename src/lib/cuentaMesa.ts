@@ -36,7 +36,7 @@ export const htmlCuentaMesa = (pedido: Pedido, nombreLocal: string, catalogo: Pr
       @media print { body { padding: 0; } .ticket { width: 72mm; } }
     </style></head><body><div class="ticket">
       <div class="center">
-        <p class="title">${escapar(nombreLocal || 'Restaurante')}</p>
+        <p class="title">${escapar(nombreLocal || 'Aroma')}</p>
         <p class="aviso">CUENTA · NO VÁLIDO COMO FACTURA</p>
       </div>
       <div class="line"></div>

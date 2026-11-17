@@ -10,7 +10,8 @@ import { estadoOperativoMesa, loadMesas, mesaTienePedidoAbierto, ocuparMesa, sin
 import { useMozas } from '../lib/usuariosStore';
 import { useAuth } from '../contexts/AuthContext';
 import { nuevoId } from '../lib/ids';
-import { readStore, withStoreTransaction } from '../lib/storeSync';
+import { withStoreTransaction } from '../lib/storeSync';
+import { nombreDelLocal } from '../lib/nombreLocal';
 import { esDeSalon } from '../lib/pedidosCanal';
 import RelojItem from '../components/RelojItem';
 import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
@@ -782,7 +783,7 @@ export default function Pedidos() {
                   <div className="mb-3">
                     <button
                       type="button"
-                      onClick={() => setCuentaError(imprimirCuentaMesa(selectedPedido, readStore<{ nombre?: string }>('restaurant-config-local', {}).nombre || '', catalogoProductos) ? '' : 'No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.')}
+                      onClick={() => setCuentaError(imprimirCuentaMesa(selectedPedido, nombreDelLocal(), catalogoProductos) ? '' : 'No pude abrir la ventana de impresión. Habilitá las ventanas emergentes y volvé a intentar.')}
                       className="w-full bg-white border border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 font-semibold text-sm py-2.5 rounded-xl flex items-center justify-center gap-2 transition-colors"
                     >
                       <Printer size={16} />Imprimir cuenta (la mesa sigue abierta)

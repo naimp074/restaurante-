@@ -29,7 +29,6 @@ import { descuentaStock } from '../lib/costosReceta';
 import { canalDe, cobraEnCaja, etiquetaPedido, nombresCanal } from '../lib/pedidosCanal';
 import { loadProductos } from '../lib/productosStore';
 import { nuevoId } from '../lib/ids';
-import { readStore } from '../lib/storeSync';
 import {
   armarReceptor,
   cargarConfigFacturacion,
@@ -56,6 +55,7 @@ import { DetalleItem } from '../components/OpcionesProducto';
 import RelojItem from '../components/RelojItem';
 import { detalleTicket } from '../lib/opcionesProducto';
 import { estiloSeccionTicket, htmlItemsPorSeccion } from '../lib/seccionesTicket';
+import { nombreDelLocal } from '../lib/nombreLocal';
 import {
   anularTicket, cobroEnCurso, conEvento, describirReparto, estadoCobro, estadoCobroConfig, importeFijado, marcarPagada, marcarTicketEmitido,
   nombreMedio, pagoIdDeSolicitud, rechazarSolicitud, solicitudDesactualizada, type Actor,
@@ -743,7 +743,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <body>
           <div class="ticket">
             <div class="center">
-              <p class="title">${readStore<{ nombre?: string }>('restaurant-config-local', {}).nombre || 'Restaurante'}</p>
+              <p class="title">${nombreDelLocal()}</p>
               <div class="muted">NO VÁLIDO COMO FACTURA</div>
             </div>
             <div class="line"></div>
