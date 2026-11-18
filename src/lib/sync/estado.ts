@@ -9,6 +9,8 @@ export type EstadoSync = {
   error: string;
   /** El canal en vivo con Supabase está conectado: lo que hacen los otros equipos llega al instante. */
   enVivo: boolean;
+  /** Cuándo se trajeron por última vez los cambios del servidor (ISO). */
+  ultimaRevision: string;
 };
 
 const estadoMemoria: EstadoSync = {
@@ -17,6 +19,7 @@ const estadoMemoria: EstadoSync = {
   hidratando: false,
   error: '',
   enVivo: false,
+  ultimaRevision: '',
 };
 
 export const loadEstadoSync = (): EstadoSync => ({ ...estadoMemoria });

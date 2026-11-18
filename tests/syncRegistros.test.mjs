@@ -345,3 +345,25 @@ test('el margen para releer cambios', () => {
   assert.equal(api.desdeConMargen('cualquier cosa'), '', 'si no se entiende la fecha, relee todo');
   assert.equal(api.desdeConMargen('2026-11-18T22:00:30.000Z'), '2026-11-18T22:00:00.000Z');
 });
+
+test('"volver a bajar todo" deja igual al servidor un equipo que quedó distinto, sin perder lo suyo', async () => {
+  await en('tablet', () => {
+    api.writeStore(pedidos, [{ id: 'p1', n: 1 }], 'restaurant-pedidos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  // La caja se perdió un cambio: en el servidor p1 ya está en 2 y existe p2, pero la caja cree estar al día.
+  servidor.filas.get(`${pedidos}|#p1`).payload = { id: 'p1', n: 2 };
+  servidor.filas.set(`${pedidos}|#p2`, { local_id: 'local-1', clave: pedidos, registro_id: '#p2', payload: { id: 'p2', n: 1 }, eliminado: false, updated_at: '2020-01-01T00:00:00.000Z' });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  assert.equal(leer('caja', pedidos).length, 1, 'sin el arreglo se quedaba así');
+  await en('caja', () => api.resincronizarTodo());
+  assert.deepEqual(leer('caja', pedidos).map(p => [p.id, p.n]).sort(), [['p1', 2], ['p2', 1]]);
+});
+
+test('"volver a bajar todo" primero sube lo pendiente de este equipo', async () => {
+  await en('caja', () => api.writeStore(pedidos, [{ id: 'p9', n: 1 }], 'restaurant-pedidos-updated'));
+  await en('caja', () => api.resincronizarTodo());
+  assert.equal(servidor.filas.get(`${pedidos}|#p9`).payload.n, 1);
+  assert.deepEqual(leer('caja', pedidos).map(p => p.id), ['p9']);
+});
