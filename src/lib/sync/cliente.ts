@@ -408,12 +408,38 @@ export const hidratarDesdeRemoto = () => enSerie(async () => {
       }
     });
     registrarUltima(filas);
+    setEstadoSync({ ultimaRevision: new Date().toISOString() });
   } catch (error) {
     setEstadoSync({ error: error instanceof Error ? error.message : 'No se pudieron leer los datos del local.' });
   } finally {
     setEstadoSync({ hidratando: false });
   }
 }).then(() => vaciarColaSync());
+
+/**
+ * "Volver a bajar todo": para un equipo que quedó distinto. Primero sube lo que tenga pendiente
+ * (no se pierde nada hecho acá) y después toma del servidor todo lo que no esté esperando subir.
+ */
+export const resincronizarTodo = async () => {
+  await vaciarColaSync();
+  const pendientes = loadColaSync();
+  if (pendientes.length && navigator.onLine) {
+    throw new Error('Hay cambios de este equipo que todavía no se pudieron subir. Probá de nuevo en un momento.');
+  }
+  await enSerie(async () => {
+    const bases = loadBases();
+    const datos = loadBaseDatos();
+    documentosSync.forEach(({ clave }) => {
+      if (pendientes.includes(clave)) return;
+      delete bases[clave];
+      delete datos[clave];
+    });
+    window.localStorage.setItem(baseStorageKey, JSON.stringify(bases));
+    window.localStorage.setItem(baseDatosStorageKey, JSON.stringify(datos));
+    window.localStorage.removeItem(ultimaStorageKey);
+  });
+  await hidratarDesdeRemoto();
+};
 
 export const resetLocalIdSync = () => {
   localIdActual = '';

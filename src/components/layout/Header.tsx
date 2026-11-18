@@ -2,7 +2,7 @@ import { Bell, Search, Clock, Menu } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { PageId } from '../../lib/types';
 import { useAuth } from '../../contexts/AuthContext';
-import { useEstadoSync } from '../../lib/sync/useEstadoSync';
+import EstadoConexion from './EstadoConexion';
 import { useUsoAlmacenamientoLocal } from '../../lib/espacioLocal';
 import { usePedidosYaPendientes } from '../../lib/avisoPedidos';
 import { useAvisosMoza, useSolicitudesCobro } from '../../lib/avisoCobros';
@@ -48,7 +48,6 @@ interface HeaderProps {
 
 export default function Header({ currentPage, onMenuClick }: HeaderProps) {
   const { user, modoDemo } = useAuth();
-  const sync = useEstadoSync();
   const usoLocal = useUsoAlmacenamientoLocal();
   const pendientesPedidosYa = usePedidosYaPendientes(user?.rol === 'admin' || user?.rol === 'encargado' || user?.rol === 'cajero');
   const solicitudesCobro = useSolicitudesCobro(Boolean(user && perfilVePagina(user, 'cobros')));
@@ -85,37 +84,7 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
         </div>
       </div>
 
-      {!modoDemo && !sync.online && (
-        <p className="hidden sm:block text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 max-w-[220px]">
-          Sin conexión, se guarda acá hasta sincronizar
-        </p>
-      )}
-      {!modoDemo && sync.online && sync.pendiente > 0 && !sync.error && (
-        <p className="hidden sm:block text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-          Sincronizando cambios…
-        </p>
-      )}
-      {!modoDemo && sync.online && !sync.enVivo && !sync.error && (
-        <p
-          className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5"
-          title="Se perdió la conexión en vivo con los otros equipos. Se reconecta solo; mientras tanto se revisa cada pocos segundos."
-        >
-          <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />Reconectando…
-        </p>
-      )}
-      {!modoDemo && sync.online && sync.enVivo && sync.pendiente === 0 && !sync.error && (
-        <span
-          className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-emerald-700"
-          title="Conectado en vivo: lo que hacen los otros equipos aparece al instante."
-        >
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />En vivo
-        </span>
-      )}
-      {!modoDemo && sync.online && sync.error && (
-        <p className="text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 max-w-[260px] truncate" title={sync.error}>
-          {sync.error}
-        </p>
-      )}
+      {!modoDemo && <EstadoConexion />}
       {pendientesPedidosYa > 0 && currentPage !== 'pedidos_delivery' && (
         <a
           href="#/pedidos_delivery"
