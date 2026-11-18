@@ -1,5 +1,5 @@
 import { supabase } from '../supabase';
-import { applyStoreLocally, emitStoreEvent } from '../storeSync';
+import { applyStoreLocally, emitStoreEvent, guardarTexto, leerTexto } from '../storeSync';
 import type { Rol } from '../types';
 import { clavesSync, documentoPorClave, documentosSync } from './documentos';
 import { loadColaSync, saveColaSync, setEstadoSync } from './estado';
@@ -56,7 +56,7 @@ export const configurarSesionSync = (datos: { rol?: Rol; userId?: string }) => {
 
 const leerJson = <T,>(clave: string, fallback: T): T => {
   try {
-    const raw = window.localStorage.getItem(clave);
+    const raw = leerTexto(clave);
     return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
     return fallback;
@@ -81,7 +81,7 @@ const parseLocal = (clave: string): unknown => leerJson<unknown>(clave, null);
 const saveBase = (clave: string, base: Record<string, string>, extras?: Map<string, unknown>) => {
   const bases = loadBases();
   bases[clave] = base;
-  window.localStorage.setItem(baseStorageKey, JSON.stringify(bases));
+  guardarTexto(baseStorageKey, JSON.stringify(bases));
   if (!clavesConBaseCompleta.has(clave)) return;
 
   const todos = loadBaseDatos();
@@ -96,7 +96,7 @@ const saveBase = (clave: string, base: Record<string, string>, extras?: Map<stri
   });
   todos[clave] = siguiente;
   try {
-    window.localStorage.setItem(baseDatosStorageKey, JSON.stringify(todos));
+    guardarTexto(baseDatosStorageKey, JSON.stringify(todos));
   } catch {
     // Sin lugar: se resuelve igual, solo que sin saber qué cambió cada lado.
   }
@@ -211,7 +211,7 @@ const registrarVistos = (clave: string, filas: (RegistroRemoto & { updated_at?: 
   });
   vistos[clave] = deLaClave;
   try {
-    window.localStorage.setItem(vistosStorageKey, JSON.stringify(vistos));
+    guardarTexto(vistosStorageKey, JSON.stringify(vistos));
   } catch {
     // Sin lugar: la verificación va a volver a pedir esos registros, nada más.
   }
@@ -401,7 +401,7 @@ const tieneDatos = (valor: unknown) => {
 
 export const hidratarDesdeRemoto = () => enSerie(async () => {
   if (!supabase) return;
-  setEstadoSync({ hidratando: true, error: '' });
+  setEstadoSync({ hidratando: true });
   try {
     const localId = await resolverLocalId();
     const ultima = window.localStorage.getItem(ultimaStorageKey) || '';
@@ -443,9 +443,9 @@ export const hidratarDesdeRemoto = () => enSerie(async () => {
       }
     });
     registrarUltima(filas);
-    setEstadoSync({ ultimaRevision: new Date().toISOString() });
+    setEstadoSync({ ultimaRevision: new Date().toISOString(), errorBajar: '' });
   } catch (error) {
-    setEstadoSync({ error: error instanceof Error ? error.message : 'No se pudieron leer los datos del local.' });
+    setEstadoSync({ errorBajar: error instanceof Error ? error.message : 'No se pudieron leer los datos del local.' });
   } finally {
     setEstadoSync({ hidratando: false });
   }
@@ -518,10 +518,10 @@ export const verificarConServidor = () => enSerie(async () => {
       }
       if (JSON.stringify(parseLocal(clave)) !== antes) arreglados += 1;
     }
-    setEstadoSync({ ultimaRevision: new Date().toISOString() });
+    setEstadoSync({ ultimaRevision: new Date().toISOString(), errorBajar: '' });
     return arreglados;
   } catch (error) {
-    setEstadoSync({ error: error instanceof Error ? error.message : 'No se pudo verificar con el servidor.' });
+    setEstadoSync({ errorBajar: error instanceof Error ? error.message : 'No se pudo verificar con el servidor.' });
     return 0;
   }
 }).then(async arreglados => {
@@ -547,8 +547,8 @@ export const resincronizarTodo = async () => {
       delete bases[clave];
       delete datos[clave];
     });
-    window.localStorage.setItem(baseStorageKey, JSON.stringify(bases));
-    window.localStorage.setItem(baseDatosStorageKey, JSON.stringify(datos));
+    guardarTexto(baseStorageKey, JSON.stringify(bases));
+    guardarTexto(baseDatosStorageKey, JSON.stringify(datos));
     window.localStorage.removeItem(ultimaStorageKey);
     window.localStorage.removeItem(vistosStorageKey);
   });

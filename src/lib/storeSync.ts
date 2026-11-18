@@ -1,4 +1,74 @@
 import { useCallback, useEffect, useState, type SetStateAction } from 'react';
+import { comprimir, descomprimir, marcaComprimido } from './compresion';
+
+/**
+ * Lo más pesado se guarda comprimido. Solo estas claves: todas se leen con leerTexto/readStore
+ * (otra parte del sistema que leyera el texto crudo no lo entendería).
+ */
+const clavesComprimibles = new Set([
+  'restaurant-demo-pedidos',
+  'restaurant-pagos',
+  'restaurant-productos',
+  'restaurant-gastos',
+  'restaurant-movimientos-financieros',
+  'restaurant-sync-vistos',
+  'restaurant-sync-base',
+  'restaurant-sync-base-datos',
+]);
+/** Lo chico queda como texto común: no vale la pena (y se lee igual a mano). */
+const umbralCompresion = 50_000;
+
+/** Lo último leído o escrito de cada clave: así no se descomprime en cada lectura. */
+const cacheTexto = new Map<string, { crudo: string; texto: string }>();
+
+const sinEspacio = (error: unknown) =>
+  error instanceof Error && (error.name === 'QuotaExceededError' || /quota|exceeded/i.test(error.message));
+
+export const mensajeSinEspacio = 'Este equipo se quedó sin espacio para guardar los datos del sistema.';
+
+/** El texto (JSON) guardado en una clave, ya descomprimido si hacía falta. */
+export const leerTexto = (key: string): string | null => {
+  const crudo = window.localStorage.getItem(key);
+  if (crudo === null || !crudo.startsWith(marcaComprimido)) return crudo;
+  const enCache = cacheTexto.get(key);
+  if (enCache && enCache.crudo === crudo) return enCache.texto;
+  const texto = descomprimir(crudo);
+  cacheTexto.set(key, { crudo, texto });
+  return texto;
+};
+
+/** Guarda el texto (JSON), comprimido si es una clave pesada. Avisa claro si no hay lugar. */
+export const guardarTexto = (key: string, texto: string) => {
+  const enCache = cacheTexto.get(key);
+  if (enCache && enCache.texto === texto && window.localStorage.getItem(key) === enCache.crudo) return;
+  const crudo = clavesComprimibles.has(key) && texto.length > umbralCompresion ? comprimir(texto) : texto;
+  try {
+    window.localStorage.setItem(key, crudo);
+  } catch (error) {
+    if (sinEspacio(error)) throw new Error(mensajeSinEspacio);
+    throw error;
+  }
+  if (crudo !== texto) cacheTexto.set(key, { crudo, texto });
+  else cacheTexto.delete(key);
+};
+
+/**
+ * Al abrir: comprime lo que haya quedado guardado sin comprimir. Un celular que se había llenado
+ * libera lugar enseguida y vuelve a poder guardar lo que baja del servidor.
+ */
+export const compactarAlmacenamiento = () => {
+  if (typeof window === 'undefined') return;
+  clavesComprimibles.forEach(key => {
+    try {
+      const crudo = window.localStorage.getItem(key);
+      if (crudo && !crudo.startsWith(marcaComprimido) && crudo.length > umbralCompresion) {
+        window.localStorage.setItem(key, comprimir(crudo));
+      }
+    } catch {
+      // Si no se pudo, queda como estaba: se sigue leyendo igual.
+    }
+  });
+};
 
 type AfterWrite = (key: string) => void;
 let afterWrite: AfterWrite | undefined;
@@ -58,7 +128,7 @@ export const emitStoreEvent = (eventName: string) => {
 export const applyStoreLocally = <T,>(key: string, value: T, eventName: string) => {
   if (typeof window === 'undefined') return;
   if (transaction && !transaction.previous.has(key)) transaction.previous.set(key, window.localStorage.getItem(key));
-  window.localStorage.setItem(key, JSON.stringify(value));
+  guardarTexto(key, JSON.stringify(value));
   emitStoreEvent(eventName);
 };
 
@@ -72,7 +142,7 @@ export const writeStore = <T,>(key: string, value: T, eventName: string) => {
 export const readStore = <T,>(key: string, fallback: T): T => {
   if (typeof window === 'undefined') return fallback;
   try {
-    const saved = window.localStorage.getItem(key);
+    const saved = leerTexto(key);
     if (!saved) return fallback;
     return JSON.parse(saved) as T;
   } catch {

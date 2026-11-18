@@ -3,8 +3,11 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { migrarDatosLocales } from './lib/resetDatos';
+import { compactarAlmacenamiento } from './lib/storeSync';
 
 migrarDatosLocales();
+// Un celular que se había llenado libera lugar antes de arrancar.
+compactarAlmacenamiento();
 
 // Solo en producción: en desarrollo la caché del service worker escondería los cambios.
 // Requiere https (o localhost); por http en la red del local el navegador no lo permite.
