@@ -406,3 +406,75 @@ test('la verificación no pisa lo que el equipo todavía no subió', async () =>
   assert.equal(leer('caja', pedidos)[0].n, 5);
   assert.equal(servidor.filas.get(`${pedidos}|#p1`).payload.n, 5, 'y lo sube');
 });
+
+// ---------- Lo que pasó el 18/11: un equipo con una copia vieja pisó el servidor ----------
+test('un equipo con copia vieja no revive en el servidor un cobro que se borró', async () => {
+  await en('tablet', () => {
+    api.writeStore('restaurant-pagos', [{ id: 'viejo', total: 103100 }, { id: 'bueno', total: 1 }], 'restaurant-pagos-updated');
+    return api.vaciarColaSync();
+  });
+  // Empezaron de cero: el cobro de prueba se borró en el servidor.
+  await en('tablet', () => {
+    api.writeStore('restaurant-pagos', [{ id: 'bueno', total: 1 }], 'restaurant-pagos-updated');
+    return api.vaciarColaSync();
+  });
+  assert.equal(servidor.filas.get('restaurant-pagos|#viejo').eliminado, true);
+  // El equipo de ori todavía tiene el cobro viejo y perdió su base (se quedó sin lugar).
+  await en('caja', () => {
+    dispositivos.caja.storage.set('restaurant-pagos', JSON.stringify([{ id: 'viejo', total: 103100 }, { id: 'bueno', total: 1 }]));
+    api.encolarClave('restaurant-pagos');
+    return api.vaciarColaSync();
+  });
+  assert.equal(servidor.filas.get('restaurant-pagos|#viejo').eliminado, true, 'sigue borrado en el servidor');
+  assert.deepEqual(leer('caja', 'restaurant-pagos').map(p => p.id), ['bueno'], 'y el equipo viejo queda igual al servidor');
+});
+
+test('un equipo con copia incompleta no borra de golpe lo del servidor (freno)', async () => {
+  const productos = Array.from({ length: 50 }, (_, i) => ({ id: `carta-${i}`, nombre: `Plato ${i}` }));
+  await en('tablet', () => {
+    api.writeStore('restaurant-productos', productos, 'restaurant-productos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  // A la caja se le "perdieron" los productos (copia rota), pero su base sigue diciendo que los tenía.
+  await en('caja', () => {
+    api.writeStore('restaurant-productos', productos.slice(0, 3), 'restaurant-productos-updated');
+    return api.vaciarColaSync();
+  });
+  const vivos = [...servidor.filas.values()].filter(f => f.clave === 'restaurant-productos' && !f.eliminado);
+  assert.equal(vivos.length, 50, 'el servidor no perdió nada');
+  assert.equal(leer('caja', 'restaurant-productos').length, 50, 'la caja volvió a tomar lo del servidor');
+});
+
+test('empezar de cero sí puede borrar todo (se pidió a propósito)', async () => {
+  const pagos = Array.from({ length: 20 }, (_, i) => ({ id: `pago-${i}` }));
+  await en('tablet', () => {
+    api.writeStore('restaurant-pagos', pagos, 'restaurant-pagos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('tablet', () => {
+    api.autorizarBorradoMasivo(['restaurant-pagos']);
+    api.writeStore('restaurant-pagos', [], 'restaurant-pagos-updated');
+    return api.vaciarColaSync();
+  });
+  const vivos = [...servidor.filas.values()].filter(f => f.clave === 'restaurant-pagos' && !f.eliminado);
+  assert.equal(vivos.length, 0);
+});
+
+test('"volver a bajar todo" en un equipo con copia vieja no sube nada viejo', async () => {
+  await en('tablet', () => {
+    api.writeStore(pedidos, [{ id: 'actual', estado: 'abierto' }], 'restaurant-pedidos-updated');
+    api.writeStore('restaurant-productos', [{ id: 'carta-1', nombre: 'Nuevo' }], 'restaurant-productos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => {
+    dispositivos.caja.storage.set(pedidos, JSON.stringify([{ id: 'prueba-2-nov', estado: 'abierto' }]));
+    dispositivos.caja.storage.set('restaurant-productos', JSON.stringify([{ id: 'rest-x1', nombre: 'Viejo' }]));
+    return api.resincronizarTodo();
+  });
+  assert.equal(servidor.filas.has(`${pedidos}|#prueba-2-nov`), false, 'no subió la comanda vieja');
+  assert.equal(servidor.filas.has('restaurant-productos|#rest-x1'), false, 'no subió el producto viejo');
+  assert.equal(servidor.filas.get('restaurant-productos|#carta-1').eliminado, false, 'no borró el actual');
+  assert.deepEqual(leer('caja', pedidos).map(p => p.id), ['actual']);
+  assert.deepEqual(leer('caja', 'restaurant-productos').map(p => p.id), ['carta-1']);
+});
