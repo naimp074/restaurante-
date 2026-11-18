@@ -66,7 +66,8 @@ globalThis.__supabaseFalso = {
       }
       filas.forEach(f => {
         servidor.reloj += 1;
-        const updated_at = `2026-10-13T00:00:${String(servidor.reloj).padStart(6, '0')}Z`;
+        // Una hora real (ISO): el cliente vuelve un rato para atrás al pedir los cambios.
+        const updated_at = new Date(Date.UTC(2026, 9, 13) + servidor.reloj * 1000).toISOString();
         servidor.filas.set(`${f.clave}|${f.registro_id}`, { ...structuredClone(f), updated_at });
       });
       return { error: null };
@@ -306,4 +307,41 @@ test('sin choque se sube igual que siempre (no se pierde nada)', async () => {
   await en('tablet', () => api.vaciarColaSync());
   assert.equal(servidor.filas.get(`${cajas}|#c1`).payload.monto_esperado_efectivo, 900);
   assert.equal(api.loadEstadoSync().error, '');
+});
+
+test('un cambio que el servidor selló con una hora anterior a lo último bajado igual llega', async () => {
+  await en('tablet', () => {
+    api.writeStore(pedidos, [{ id: 'p1', estado: 'abierto' }], 'restaurant-pedidos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  // Otro equipo subió p2 en una transacción que empezó antes pero se confirmó después:
+  // su hora es anterior a la de p1, que la caja ya bajó.
+  const anterior = new Date(Date.parse(servidor.filas.get(`${pedidos}|#p1`).updated_at) - 5000).toISOString();
+  servidor.filas.set(`${pedidos}|#p2`, {
+    local_id: 'local-1', clave: pedidos, registro_id: '#p2', payload: { id: 'p2', estado: 'en_preparacion' }, eliminado: false, updated_at: anterior,
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  assert.deepEqual(leer('caja', pedidos).map(p => p.id).sort(), ['p1', 'p2']);
+});
+
+test('volver a bajar lo que ya se tenía no pisa un cambio local que todavía no se subió', async () => {
+  await en('tablet', () => {
+    api.writeStore(pedidos, [{ id: 'p1', estado: 'abierto', n: 1 }], 'restaurant-pedidos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  globalThis.navigator.onLine = false;
+  await en('caja', () => api.writeStore(pedidos, [{ id: 'p1', estado: 'abierto', n: 2 }], 'restaurant-pedidos-updated'));
+  globalThis.navigator.onLine = true;
+  // Relee el margen (incluye p1 como estaba en el servidor) antes de poder subir.
+  await en('caja', () => api.hidratarDesdeRemoto());
+  assert.equal(leer('caja', pedidos)[0].n, 2);
+  assert.equal(servidor.filas.get(`${pedidos}|#p1`).payload.n, 2, 'después de releer, sube lo suyo');
+});
+
+test('el margen para releer cambios', () => {
+  assert.equal(api.desdeConMargen(''), '');
+  assert.equal(api.desdeConMargen('cualquier cosa'), '', 'si no se entiende la fecha, relee todo');
+  assert.equal(api.desdeConMargen('2026-11-18T22:00:30.000Z'), '2026-11-18T22:00:00.000Z');
 });
