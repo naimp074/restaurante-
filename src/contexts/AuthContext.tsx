@@ -29,7 +29,7 @@ const demoAccounts: Record<string, { profile: Profile; pass: string }> = {
 
 const mensajeError = (mensaje: string) => {
   const texto = mensaje.toLowerCase();
-  if (texto.includes('invalid login credentials')) return 'Usuario o contraseña incorrectos';
+  if (texto.includes('invalid login credentials')) return 'Usuario o contraseña incorrectos. Si no te acordás la contraseña, el administrador te puede poner una nueva desde Usuarios.';
   if (texto.includes('email not confirmed')) return 'Falta confirmar el email de esta cuenta';
   if (texto.includes('too many requests')) return 'Demasiados intentos, esperá un momento';
   if (texto.includes('failed to fetch')) return 'No hay conexión con el servidor';
@@ -53,9 +53,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Sin perfil activo y asignado a un local no se puede operar: las políticas lo rechazan todo.
     const motivo = error || !perfil
       ? 'Tu usuario no tiene un perfil en el sistema. Pedile al administrador que lo revise.'
-      : !perfil.activo || !perfil.local_id
+      : !perfil.local_id
         ? 'Tu cuenta todavía no fue aprobada. Pedile al administrador que la active desde Usuarios.'
-        : undefined;
+        : !perfil.activo
+          ? 'Tu cuenta está bloqueada. Pedile al administrador que la active desde Usuarios.'
+          : undefined;
 
     if (motivo || !perfil) {
       await supabase.auth.signOut();
