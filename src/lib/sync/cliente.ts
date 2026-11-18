@@ -185,11 +185,44 @@ const leerRemotos = async (localId: string, clave?: string, desde?: string): Pro
 };
 
 /** Deja la clave igual al servidor. Se usa cuando el servidor rechazó un cambio local. */
+/**
+ * Qué versión de cada registro del servidor tiene ya este equipo (su hora de cambio, en ms).
+ * Con esto la verificación periódica encuentra cualquier registro que no haya llegado, sin
+ * volver a bajar todo: compara solo ids y horas.
+ */
+const vistosStorageKey = 'restaurant-sync-vistos';
+type Vistos = Record<string, Record<string, number>>;
+const loadVistos = () => leerJson<Vistos>(vistosStorageKey, {});
+const horaMs = (iso?: string) => {
+  const ms = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+};
+
+/** Anota los registros remotos que quedaron aplicados (los que chocan con algo local sin subir, no). */
+const registrarVistos = (clave: string, filas: (RegistroRemoto & { updated_at?: string })[], base: Record<string, string>) => {
+  if (!filas.some(f => f.updated_at)) return;
+  const vistos = loadVistos();
+  const deLaClave = { ...(vistos[clave] || {}) };
+  filas.forEach(fila => {
+    const ms = horaMs(fila.updated_at);
+    if (!ms) return;
+    const aplicado = fila.eliminado ? !(fila.registro_id in base) : base[fila.registro_id] === huella(fila.payload);
+    if (aplicado) deLaClave[fila.registro_id] = ms;
+  });
+  vistos[clave] = deLaClave;
+  try {
+    window.localStorage.setItem(vistosStorageKey, JSON.stringify(vistos));
+  } catch {
+    // Sin lugar: la verificación va a volver a pedir esos registros, nada más.
+  }
+};
+
 const refrescarClave = async (localId: string, clave: string) => {
   const filas = await leerRemotos(localId, clave);
   const { valor, base } = reemplazarConRemotos(parseLocal(clave), filas);
   guardarLocal(clave, valor);
   saveBase(clave, base);
+  registrarVistos(clave, filas, base);
 };
 
 export const aplicarRegistrosRemotos = (clave: string, filas: (RegistroRemoto & { updated_at?: string })[]) => {
@@ -200,6 +233,7 @@ export const aplicarRegistrosRemotos = (clave: string, filas: (RegistroRemoto & 
     if (resultado.valor !== local) guardarLocal(clave, resultado.valor);
     saveBase(clave, resultado.base);
   }
+  registrarVistos(clave, filas, resultado ? resultado.base : loadBases()[clave] || {});
   registrarUltima(filas);
 };
 
@@ -398,6 +432,7 @@ export const hidratarDesdeRemoto = () => enSerie(async () => {
         const { valor, base } = reemplazarConRemotos(parseLocal(clave), remotos);
         guardarLocal(clave, valor);
         saveBase(clave, base);
+        registrarVistos(clave, remotos, base);
       } else if (remotos.length) {
         aplicarRegistrosRemotos(clave, remotos);
       }
@@ -415,6 +450,84 @@ export const hidratarDesdeRemoto = () => enSerie(async () => {
     setEstadoSync({ hidratando: false });
   }
 }).then(() => vaciarColaSync());
+
+/** Ids y horas de cambio de todo lo del local en el servidor, sin el contenido (es liviano). */
+const leerIndice = async (localId: string) => {
+  const filas: { clave: string; registro_id: string; updated_at: string }[] = [];
+  if (!supabase) return filas;
+  for (let desdeFila = 0; ; desdeFila += 1000) {
+    const { data, error } = await supabase
+      .from('sync_registros')
+      .select('clave, registro_id, updated_at')
+      .eq('local_id', localId)
+      .order('updated_at', { ascending: true })
+      .range(desdeFila, desdeFila + 999);
+    if (error) throw new Error(error.message);
+    filas.push(...((data || []) as typeof filas));
+    if (!data || data.length < 1000) return filas;
+  }
+};
+
+const leerPorIds = async (localId: string, clave: string, ids: string[]) => {
+  const filas: FilaRegistro[] = [];
+  if (!supabase) return filas;
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase
+      .from('sync_registros')
+      .select('clave, registro_id, payload, eliminado, updated_at')
+      .eq('local_id', localId)
+      .eq('clave', clave)
+      .in('registro_id', ids.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+    filas.push(...((data || []) as FilaRegistro[]));
+  }
+  return filas;
+};
+
+/**
+ * Verificación completa: compara este equipo con el servidor registro por registro (solo ids y
+ * horas) y baja lo que falte o esté viejo. Arregla sola a un equipo que se perdió un cambio por
+ * cualquier motivo (pantalla apagada, conexión cortada, una versión vieja), aunque ya se le haya
+ * pasado la hora. Lo que este equipo tiene sin subir no se pisa: se sube y se combina como siempre.
+ */
+export const verificarConServidor = () => enSerie(async () => {
+  if (!supabase || !navigator.onLine) return 0;
+  try {
+    const localId = await resolverLocalId();
+    const indice = await leerIndice(localId);
+    const vistos = loadVistos();
+    const cola = loadColaSync();
+    const faltan = new Map<string, string[]>();
+    indice.forEach(fila => {
+      if (!documentoPorClave(fila.clave)) return;
+      if (vistos[fila.clave]?.[fila.registro_id] === horaMs(fila.updated_at)) return;
+      if (!faltan.has(fila.clave)) faltan.set(fila.clave, []);
+      faltan.get(fila.clave)!.push(fila.registro_id);
+    });
+
+    let arreglados = 0;
+    for (const [clave, ids] of faltan) {
+      const filas = await leerPorIds(localId, clave, ids);
+      const antes = JSON.stringify(parseLocal(clave));
+      if (!puedeEscribirClave(sesion.rol, clave) && cambiosDesde(parseLocal(clave), loadBases()[clave] || {}).length) {
+        // Datos que este rol solo puede leer y que quedaron distintos: manda el servidor.
+        await refrescarClave(localId, clave);
+      } else {
+        aplicarRegistrosRemotos(clave, filas);
+        if (!cola.includes(clave) && cambiosDesde(parseLocal(clave), loadBases()[clave] || {}).length) encolarClave(clave);
+      }
+      if (JSON.stringify(parseLocal(clave)) !== antes) arreglados += 1;
+    }
+    setEstadoSync({ ultimaRevision: new Date().toISOString() });
+    return arreglados;
+  } catch (error) {
+    setEstadoSync({ error: error instanceof Error ? error.message : 'No se pudo verificar con el servidor.' });
+    return 0;
+  }
+}).then(async arreglados => {
+  await vaciarColaSync();
+  return arreglados;
+});
 
 /**
  * "Volver a bajar todo": para un equipo que quedó distinto. Primero sube lo que tenga pendiente
@@ -437,6 +550,7 @@ export const resincronizarTodo = async () => {
     window.localStorage.setItem(baseStorageKey, JSON.stringify(bases));
     window.localStorage.setItem(baseDatosStorageKey, JSON.stringify(datos));
     window.localStorage.removeItem(ultimaStorageKey);
+    window.localStorage.removeItem(vistosStorageKey);
   });
   await hidratarDesdeRemoto();
 };

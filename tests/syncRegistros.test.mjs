@@ -367,3 +367,42 @@ test('"volver a bajar todo" primero sube lo pendiente de este equipo', async () 
   assert.equal(servidor.filas.get(`${pedidos}|#p9`).payload.n, 1);
   assert.deepEqual(leer('caja', pedidos).map(p => p.id), ['p9']);
 });
+
+test('la verificación arregla sola a un equipo que se perdió cambios, aunque ya se le haya pasado la hora', async () => {
+  await en('tablet', () => {
+    api.writeStore(pedidos, [{ id: 'p78', mesa: 78, estado: 'abierto' }, { id: 'p79', mesa: 79, estado: 'abierto' }], 'restaurant-pedidos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  // Ayer la PC cobró las dos mesas y abrió una nueva, pero el celular (la caja acá) no se enteró:
+  // esos cambios quedaron con horas viejas que la revisión normal ya no mira.
+  const viejo = '2020-01-01T00:00:00.000Z';
+  servidor.filas.get(`${pedidos}|#p78`).payload = { id: 'p78', mesa: 78, estado: 'cobrado' };
+  servidor.filas.get(`${pedidos}|#p78`).updated_at = viejo;
+  servidor.filas.get(`${pedidos}|#p79`).payload = { id: 'p79', mesa: 79, estado: 'cobrado' };
+  servidor.filas.get(`${pedidos}|#p79`).updated_at = viejo;
+  servidor.filas.set(`${pedidos}|#nueva`, { local_id: 'local-1', clave: pedidos, registro_id: '#nueva', payload: { id: 'nueva', mesa: 79, estado: 'abierto' }, eliminado: false, updated_at: viejo });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  assert.equal(leer('caja', pedidos).find(p => p.id === 'p78').estado, 'abierto', 'así quedaba el celular');
+
+  const arreglados = await en('caja', () => api.verificarConServidor());
+  assert.equal(arreglados, 1);
+  const caja = Object.fromEntries(leer('caja', pedidos).map(p => [p.id, p.estado]));
+  assert.deepEqual(caja, { p78: 'cobrado', p79: 'cobrado', nueva: 'abierto' });
+  // Ya está igual: la próxima verificación no tiene nada que bajar.
+  assert.equal(await en('caja', () => api.verificarConServidor()), 0);
+});
+
+test('la verificación no pisa lo que el equipo todavía no subió', async () => {
+  await en('tablet', () => {
+    api.writeStore(pedidos, [{ id: 'p1', n: 1 }], 'restaurant-pedidos-updated');
+    return api.vaciarColaSync();
+  });
+  await en('caja', () => api.hidratarDesdeRemoto());
+  globalThis.navigator.onLine = false;
+  await en('caja', () => api.writeStore(pedidos, [{ id: 'p1', n: 5 }], 'restaurant-pedidos-updated'));
+  globalThis.navigator.onLine = true;
+  await en('caja', () => api.verificarConServidor());
+  assert.equal(leer('caja', pedidos)[0].n, 5);
+  assert.equal(servidor.filas.get(`${pedidos}|#p1`).payload.n, 5, 'y lo sube');
+});
