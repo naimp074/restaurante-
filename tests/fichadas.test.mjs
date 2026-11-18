@@ -125,3 +125,28 @@ test('corregir: la salida va después de la entrada, sin pisar otro turno, y lo 
   api.borrarFichada(t1.id);
   assert.equal(api.loadFichadas().length, 1);
 });
+
+test('se le pasó marcar: pone a mano la hora en que llegó y en que se fue', () => {
+  const ahora = a('2026-11-18T14:00:00Z');
+  const turno = api.marcarEntrada(juan, 'Caja', ahora, a('2026-11-18T12:10:00Z'));
+  assert.equal(turno.entrada, '2026-11-18T12:10:00.000Z');
+  assert.equal(turno.entrada_manual, true);
+  const cerrado = api.marcarSalida(juan, 'Caja', a('2026-11-18T22:30:00Z'), a('2026-11-18T21:40:00Z'));
+  assert.equal(cerrado.salida, '2026-11-18T21:40:00.000Z');
+  assert.equal(cerrado.salida_manual, true);
+  assert.equal(api.minutosDe(cerrado), 570);
+  // Sin hora a mano no queda marcado como manual.
+  const otro = api.marcarEntrada(juan, 'Caja', a('2026-11-18T23:00:00Z'));
+  assert.equal(otro.entrada_manual, undefined);
+});
+
+test('la hora a mano no puede ser futura, ni pisar el turno anterior, ni la salida antes de la entrada', () => {
+  const ahora = a('2026-11-18T14:00:00Z');
+  assert.throws(() => api.marcarEntrada(juan, '', ahora, a('2026-11-18T15:00:00Z')), /más adelante que ahora/);
+  assert.throws(() => api.marcarEntrada(juan, '', ahora, a('2026-11-16T12:00:00Z')), /más de un día/);
+  api.marcarEntrada(juan, '', a('2026-11-18T08:00:00Z'));
+  api.marcarSalida(juan, '', a('2026-11-18T12:00:00Z'));
+  assert.throws(() => api.marcarEntrada(juan, '', ahora, a('2026-11-18T11:30:00Z')), /pisa su turno anterior/);
+  api.marcarEntrada(juan, '', ahora, a('2026-11-18T13:00:00Z'));
+  assert.throws(() => api.marcarSalida(juan, '', a('2026-11-18T15:00:00Z'), a('2026-11-18T12:59:00Z')), /después de la entrada/);
+});

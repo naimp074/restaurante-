@@ -57,17 +57,35 @@ export const turnosSinPagar = (fichadas: Fichada[], empleadoId: string, gastos: 
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 
-export const marcarEntrada = (usuario: Profile, actor?: string, ahora = new Date()): Fichada => {
+/** Hasta cuánto para atrás se puede poner la hora a mano al marcar. Más viejo, se corrige el turno. */
+const atrasMaximo = 24 * 60 * minuto;
+
+const validarHoraManual = (marcada: Date, ahora: Date) => {
+  if (Number.isNaN(marcada.getTime())) throw new Error('Revisá la hora.');
+  if (marcada.getTime() > ahora.getTime() + minuto) throw new Error('La hora no puede ser más adelante que ahora.');
+  if (ahora.getTime() - marcada.getTime() > atrasMaximo) throw new Error('Esa hora es de hace más de un día: corregí el turno desde la lista.');
+};
+
+/**
+ * Marca la entrada. Con `marcada` se pone la hora a mano (llegó antes y se le pasó marcar);
+ * sin ella, es ahora.
+ */
+export const marcarEntrada = (usuario: Profile, actor?: string, ahora = new Date(), marcada?: Date): Fichada => {
   const fichadas = loadFichadas();
   const abierto = turnoAbierto(fichadas, usuario.id);
   if (abierto) throw new Error(`${usuario.nombre} ya está trabajando desde las ${hora(abierto.entrada)}.`);
+  if (marcada) validarHoraManual(marcada, ahora);
+  const entrada = marcada || ahora;
+  const pisa = fichadas.find(f => f.empleado_id === usuario.id && f.salida && new Date(f.salida).getTime() > entrada.getTime());
+  if (pisa) throw new Error(`Esa hora pisa su turno anterior, que terminó a las ${hora(pisa.salida as string)}.`);
   const iso = ahora.toISOString();
   const nueva: Fichada = {
     id: nuevoId('fichada'),
     empleado_id: usuario.id,
-    entrada: iso,
+    entrada: entrada.toISOString(),
     valor_hora: usuario.valor_hora && usuario.valor_hora > 0 ? usuario.valor_hora : undefined,
     entrada_por: actor,
+    ...(marcada ? { entrada_manual: true } : {}),
     created_at: iso,
     updated_at: iso,
   };
@@ -75,13 +93,24 @@ export const marcarEntrada = (usuario: Profile, actor?: string, ahora = new Date
   return nueva;
 };
 
-export const marcarSalida = (usuario: Profile, actor?: string, ahora = new Date()): Fichada => {
+/** Marca la salida. Con `marcada` se pone la hora a mano (se fue antes y se le pasó marcar). */
+export const marcarSalida = (usuario: Profile, actor?: string, ahora = new Date(), marcada?: Date): Fichada => {
   const fichadas = loadFichadas();
   const abierto = turnoAbierto(fichadas, usuario.id);
   if (!abierto) throw new Error(`${usuario.nombre} no tiene marcada la entrada.`);
-  if (ahora.getTime() <= new Date(abierto.entrada).getTime()) throw new Error('La salida tiene que ser después de la entrada.');
+  if (marcada) validarHoraManual(marcada, ahora);
+  const salida = marcada || ahora;
+  if (salida.getTime() <= new Date(abierto.entrada).getTime()) {
+    throw new Error(`La salida tiene que ser después de la entrada (${hora(abierto.entrada)}).`);
+  }
   const iso = ahora.toISOString();
-  const cerrado: Fichada = { ...abierto, salida: iso, salida_por: actor, updated_at: iso };
+  const cerrado: Fichada = {
+    ...abierto,
+    salida: salida.toISOString(),
+    salida_por: actor,
+    ...(marcada ? { salida_manual: true } : {}),
+    updated_at: iso,
+  };
   saveFichadas(fichadas.map(f => (f.id === abierto.id ? cerrado : f)));
   return cerrado;
 };

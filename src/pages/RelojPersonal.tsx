@@ -44,6 +44,68 @@ const useAhora = () => {
   return ahora;
 };
 
+/**
+ * "08:50" → la fecha y hora más cercana para atrás: si esa hora todavía no llegó hoy,
+ * es de ayer (pasada la medianoche, poner 23:50 es anoche).
+ */
+const horaHaciaAtras = (valor: string, ahora: Date) => {
+  const [h, m] = valor.split(':').map(Number);
+  const fecha = new Date(ahora);
+  fecha.setHours(h, m, 0, 0);
+  if (fecha.getTime() > ahora.getTime() + 60 * 1000) fecha.setDate(fecha.getDate() - 1);
+  return fecha;
+};
+
+const horaInput = (fecha: Date) => `${String(fecha.getHours()).padStart(2, '0')}:${String(fecha.getMinutes()).padStart(2, '0')}`;
+
+/** Para cuando se le pasó marcar: pone la hora en que llegó o se fue de verdad. */
+function OtraHora({ saliendo, onMarcar }: { saliendo: boolean; onMarcar: (marcada: Date) => boolean }) {
+  const [abierto, setAbierto] = useState(false);
+  const [valor, setValor] = useState('');
+  if (!abierto) {
+    return (
+      <button
+        type="button"
+        onClick={() => { setValor(horaInput(new Date())); setAbierto(true); }}
+        className="-mt-1 self-center text-xs font-medium text-slate-500 hover:text-amber-700 underline-offset-2 hover:underline"
+      >
+        ¿Se pasó la hora? Marcar {saliendo ? 'la salida' : 'la entrada'} a otra hora
+      </button>
+    );
+  }
+  const marcada = valor ? horaHaciaAtras(valor, new Date()) : null;
+  const esAyer = marcada && marcada.toDateString() !== new Date().toDateString();
+  return (
+    <form
+      className="-mt-1 rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-2"
+      onSubmit={e => {
+        e.preventDefault();
+        if (marcada && onMarcar(marcada)) setAbierto(false);
+      }}
+    >
+      <label className="block text-xs font-medium text-amber-900">
+        {saliendo ? '¿A qué hora se fue?' : '¿A qué hora llegó?'}
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          autoFocus
+          type="time"
+          required
+          value={valor}
+          onChange={e => setValor(e.target.value)}
+          aria-label={saliendo ? 'Hora de salida' : 'Hora de entrada'}
+          className="flex-1 border border-amber-300 rounded-lg px-3 py-2 text-base font-semibold outline-none bg-white"
+        />
+        <button type="submit" disabled={!valor} className={`px-3 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ${saliendo ? 'bg-red-500 hover:bg-red-400' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
+          Marcar
+        </button>
+        <button type="button" onClick={() => setAbierto(false)} className="p-2 text-slate-400 hover:bg-white rounded-lg" aria-label="Cancelar"><X size={15} /></button>
+      </div>
+      {esAyer && <p className="text-[11px] text-amber-800">Queda como de ayer ({marcada?.toLocaleDateString('es-AR')}).</p>}
+    </form>
+  );
+}
+
 /** Cuánto gana por hora: se edita acá mismo. */
 function ValorHora({ usuario, editable }: { usuario: Profile; editable: boolean }) {
   const [editando, setEditando] = useState(false);
@@ -297,20 +359,23 @@ export default function RelojPersonal() {
     [fichadas, dia],
   );
 
-  const entrar = (u: Profile) => {
+  /** Devuelve si se pudo, para que el formulario de otra hora se cierre solo cuando quedó marcado. */
+  const entrar = (u: Profile, marcada?: Date) => {
     setError('');
     try {
-      marcarEntrada(u, actor);
-      setAviso({ usuario: u, texto: `Entrada de ${u.nombre} marcada a las ${hora(new Date().toISOString())}.` });
-    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo marcar la entrada.'); }
+      const turno = marcarEntrada(u, actor, new Date(), marcada);
+      setAviso({ usuario: u, texto: `Entrada de ${u.nombre} marcada a las ${hora(turno.entrada)}${marcada ? ' (puesta a mano)' : ''}.` });
+      return true;
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo marcar la entrada.'); return false; }
   };
 
-  const salir = (u: Profile) => {
+  const salir = (u: Profile, marcada?: Date) => {
     setError('');
     try {
-      const turno = marcarSalida(u, actor);
-      setAviso({ usuario: u, texto: `Salida de ${u.nombre}: ${textoHoras(minutosDe(turno))} · ${dinero(montoDe([turno], u))}.` });
-    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo marcar la salida.'); }
+      const turno = marcarSalida(u, actor, new Date(), marcada);
+      setAviso({ usuario: u, texto: `Salida de ${u.nombre}${marcada ? ` a las ${hora(turno.salida as string)} (puesta a mano)` : ''}: ${textoHoras(minutosDe(turno))} · ${dinero(montoDe([turno], u))}.` });
+      return true;
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo marcar la salida.'); return false; }
   };
 
   const borrar = (f: Fichada) => {
@@ -384,6 +449,7 @@ export default function RelojPersonal() {
                 >
                   {abierto ? <><LogOut size={18} />Marcar salida</> : <><LogIn size={18} />Marcar entrada</>}
                 </button>
+                <OtraHora key={abierto ? `salida-${abierto.id}` : 'entrada'} saliendo={Boolean(abierto)} onMarcar={marcada => (abierto ? salir(u, marcada) : entrar(u, marcada))} />
 
                 <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
                   <p className="text-xs text-slate-500">
@@ -436,8 +502,14 @@ export default function RelojPersonal() {
                   return (
                     <tr key={f.id}>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{u ? nombreUsuario(u) : 'Empleado borrado'}</td>
-                      <td className="px-4 py-2.5 text-slate-600">{hora(f.entrada)}</td>
-                      <td className="px-4 py-2.5 text-slate-600">{f.salida ? (dayKey(f.salida) === dayKey(f.entrada) ? hora(f.salida) : fechaHora(f.salida)) : '—'}</td>
+                      <td className="px-4 py-2.5 text-slate-600">
+                        {hora(f.entrada)}
+                        {f.entrada_manual && <span className="ml-1 text-[11px] text-amber-700" title={`Puesta a mano${f.entrada_por ? ` por ${f.entrada_por}` : ''}`}>a mano</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600">
+                        {f.salida ? (dayKey(f.salida) === dayKey(f.entrada) ? hora(f.salida) : fechaHora(f.salida)) : '—'}
+                        {f.salida_manual && <span className="ml-1 text-[11px] text-amber-700" title={`Puesta a mano${f.salida_por ? ` por ${f.salida_por}` : ''}`}>a mano</span>}
+                      </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-slate-700">{textoHoras(minutosDe(f, ahora))}</td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-slate-800">{dinero(montoDe([f], u, ahora))}</td>
                       <td className="px-4 py-2.5">
