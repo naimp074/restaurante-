@@ -6,6 +6,9 @@ import { loadColaSync, saveColaSync, setEstadoSync } from './estado';
 import { puedeEscribirClave, puedeEscribirRegistro } from './permisos';
 import { aplanar, baseDe, cambiosDesde, fusionarRemotos, huella, rearmar, reemplazarConRemotos, type CambioLocal, type RegistroRemoto } from './registros';
 import { clavesConBaseCompleta, resolverConflicto } from './conflictos';
+import { consumirAutorizacion, esBorradoMasivo } from './borradoMasivo';
+
+export { autorizarBorradoMasivo, esBorradoMasivo } from './borradoMasivo';
 
 type FilaRegistro = RegistroRemoto & {
   clave: string;
@@ -270,6 +273,14 @@ const resolverChoques = async (localId: string, clave: string, base: Record<stri
     const remoto = fila && !fila.eliminado ? fila.payload : undefined;
     const huellaRemota = remoto === undefined ? undefined : huella(remoto);
     const huellaLocal = cambio.eliminado ? undefined : cambio.huella;
+    if (fila && !(cambio.registroId in base) && huellaRemota !== huellaLocal) {
+      // El servidor ya tiene (o borró) este registro y este equipo nunca bajó esa versión: su copia es
+      // vieja. Manda el servidor. Antes, un equipo con datos viejos revivía cobros y comandas borrados.
+      resueltos.set(cambio.registroId, remoto);
+      if (remoto === undefined) delete base[cambio.registroId];
+      else { base[cambio.registroId] = huellaRemota as string; delServidor.set(cambio.registroId, remoto); }
+      return;
+    }
     if (huellaRemota === base[cambio.registroId] || huellaRemota === huellaLocal) {
       aSubir.push(cambio);
       return;
@@ -304,6 +315,13 @@ const subirClave = async (localId: string, clave: string): Promise<{ resultado: 
   if (!supabase) return { resultado: 'ok', avisos: [] };
   const base = { ...(loadBases()[clave] || {}) };
   const cambios = cambiosDesde(parseLocal(clave), base);
+  const borrados = cambios.filter(c => c.eliminado).length;
+  const autorizado = consumirAutorizacion(clave);
+  if (esBorradoMasivo(borrados, Object.keys(base).length) && !autorizado) {
+    // No se sube nada de esta clave: este equipo vuelve a tomar lo del servidor.
+    await refrescarClave(localId, clave);
+    return { resultado: 'ok', avisos: ['este equipo tenía una copia incompleta de los datos y se reemplazó por la del servidor'] };
+  }
   const autorizados = cambios.filter(c => puedeEscribirRegistro(sesion.rol, sesion.userId, clave, c.registroId));
   // Lo que este rol no puede tocar se descarta en silencio: la pantalla ni siquiera es suya.
   let rechazado = autorizados.length < cambios.length;
@@ -540,19 +558,18 @@ export const resincronizarTodo = async () => {
     throw new Error('Hay cambios de este equipo que todavía no se pudieron subir. Probá de nuevo en un momento.');
   }
   await enSerie(async () => {
-    const bases = loadBases();
-    const datos = loadBaseDatos();
-    documentosSync.forEach(({ clave }) => {
-      if (pendientes.includes(clave)) return;
+    const localId = await resolverLocalId();
+    for (const { clave } of documentosSync) {
+      if (pendientes.includes(clave)) continue;
+      // Primero se vacía la copia y su base juntas (libera lugar sin que parezca que se borró algo),
+      // después se guarda lo del servidor. Si algo falla en el medio, no queda nada para "subir".
+      window.localStorage.removeItem(clave);
+      const bases = loadBases();
       delete bases[clave];
-      delete datos[clave];
-    });
-    guardarTexto(baseStorageKey, JSON.stringify(bases));
-    guardarTexto(baseDatosStorageKey, JSON.stringify(datos));
-    window.localStorage.removeItem(ultimaStorageKey);
-    window.localStorage.removeItem(vistosStorageKey);
+      guardarTexto(baseStorageKey, JSON.stringify(bases));
+      await refrescarClave(localId, clave);
+    }
   });
-  await hidratarDesdeRemoto();
 };
 
 export const resetLocalIdSync = () => {

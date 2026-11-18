@@ -1,5 +1,6 @@
 import { documentoPorClave } from './sync/documentos';
 import { readStore, withStoreTransaction, writeStore } from './storeSync';
+import { autorizarBorradoMasivo } from './sync/borradoMasivo';
 
 /** El historial que se borra. Carta, categorías, usuarios, listas de precios y configuración quedan. */
 const clavesAVaciar = [
@@ -39,6 +40,8 @@ export const copiaAntesDeEmpezar = () =>
   Object.fromEntries([...clavesAVaciar, ...clavesAReiniciar].map(clave => [clave, readStore<unknown>(clave, null)]));
 
 export const empezarDeCero = () => {
+  // Es el único borrado masivo a propósito: el freno de la sincronización lo deja pasar.
+  autorizarBorradoMasivo([...clavesAVaciar, ...clavesAReiniciar]);
   withStoreTransaction(() => {
     const guardar = (clave: string, valor: unknown) => writeStore(clave, valor, documentoPorClave(clave)?.evento || `${clave}-updated`);
     clavesAVaciar.forEach(clave => guardar(clave, vaciar(readStore<unknown>(clave, []))));
