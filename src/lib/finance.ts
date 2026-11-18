@@ -8,7 +8,7 @@ import type {
   PagoProveedor,
 } from './types';
 import { dayKey } from './fechas';
-import { withStoreTransaction, writeStore } from './storeSync';
+import { leerTexto, withStoreTransaction, writeStore } from './storeSync';
 import { loadGastos, saveGastos } from './gastosStore';
 import { aplicarGastoEnCajaDia } from './cajaStore';
 import { nuevoId } from './ids';
@@ -49,7 +49,7 @@ const defaultCuentas: CuentaDinero[] = [
 
 const readStorage = <T>(key: string, fallback: T): T => {
   try {
-    const saved = window.localStorage.getItem(key);
+    const saved = leerTexto(key);
     if (!saved) return fallback;
     return JSON.parse(saved) as T;
   } catch {

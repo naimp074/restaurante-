@@ -45,8 +45,8 @@ export default function EstadoConexion() {
 
   const [tono, texto, detalle]: [Tono, string, string] = !sync.online
     ? ['amarillo', 'Sin conexión', 'No hay internet. Lo que hagas se guarda acá y se sube solo cuando vuelva.']
-    : sync.error
-      ? ['rojo', 'Error al sincronizar', sync.error]
+    : sync.error || sync.errorBajar
+      ? ['rojo', 'Error al sincronizar', sync.errorBajar || sync.error]
       : sync.pendiente > 0
         ? ['gris', 'Sincronizando…', 'Subiendo lo que se hizo en este equipo.']
         : !sync.enVivo
