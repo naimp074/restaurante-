@@ -65,6 +65,9 @@ export interface Fichada {
   pagado_at?: string;
   entrada_por?: string;
   salida_por?: string;
+  /** La hora se puso a mano al marcar (se le pasó marcar en el momento). */
+  entrada_manual?: boolean;
+  salida_manual?: boolean;
   /** Si alguien corrigió los horarios a mano: quién y cuándo. */
   corregido_por?: string;
   corregido_at?: string;
