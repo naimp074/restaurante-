@@ -9,7 +9,7 @@ const compiled = await build({
   stdin: {
     contents: `
       export { crearManejador, dominioCuentas as dominioFuncion } from './supabase/functions/usuarios/manejador.ts';
-      export { dominioCuentas, emailParaEntrar, accesoDeCuenta, normalizarUsuario } from './src/lib/cuentaUsuario.ts';
+      export { dominioCuentas, emailParaEntrar, accesoDeCuenta, normalizarUsuario, problemasDeCuenta, textoUltimoIngreso, generarClave } from './src/lib/cuentaUsuario.ts';
       export { perfilVePagina, paginaInicialDe, paginasPorDefecto } from './src/lib/paginas.ts';
     `,
     resolveDir: process.cwd(),
@@ -21,10 +21,10 @@ const archivo = path.resolve('tests/usuarios.compiled.cjs');
 const mod = new Module(archivo);
 mod.filename = archivo;
 mod._compile(compiled.outputFiles[0].text, archivo);
-const { crearManejador, perfilVePagina, paginaInicialDe, paginasPorDefecto, dominioFuncion, dominioCuentas, emailParaEntrar, accesoDeCuenta, normalizarUsuario } = mod.exports;
+const { crearManejador, perfilVePagina, paginaInicialDe, paginasPorDefecto, dominioFuncion, dominioCuentas, emailParaEntrar, accesoDeCuenta, normalizarUsuario, problemasDeCuenta, textoUltimoIngreso, generarClave } = mod.exports;
 
 const admin = { rol: 'admin', activo: true, local_id: 'local-1' };
-let perfil, activados, borrados, resultadoCrear, falloActivar;
+let perfil, activados, borrados, resultadoCrear, falloActivar, cuentasLocal, clavesCambiadas, falloClave;
 
 const handler = () => crearManejador({
   perfilDesdeSesion: async () => perfil,
@@ -34,6 +34,12 @@ const handler = () => crearManejador({
     activados.push({ id, localId, cuenta });
   },
   borrarUsuario: async id => { borrados.push(id); },
+  localDeCuenta: async id => (id in cuentasLocal ? { local_id: cuentasLocal[id] } : null),
+  cambiarClave: async (id, password) => {
+    if (falloClave) return { error: falloClave };
+    clavesCambiadas.push({ id, password });
+    return {};
+  },
 });
 
 const pedir = (cuerpo, { ruta = 'crear', jwt = 'token' } = {}) => handler()(new Request(`http://x/functions/v1/usuarios/${ruta}`, {
@@ -50,6 +56,55 @@ beforeEach(() => {
   borrados = [];
   resultadoCrear = { id: 'nuevo-1' };
   falloActivar = false;
+  cuentasLocal = { 'moza-1': 'local-1', 'otro-local': 'local-2', 'pendiente': null };
+  clavesCambiadas = [];
+  falloClave = '';
+});
+
+test('el admin le pone una contraseña nueva a una cuenta de su local', async () => {
+  const respuesta = await pedir({ id: 'moza-1', password: 'nueva-clave' }, { ruta: 'clave' });
+  assert.equal(respuesta.status, 200);
+  assert.deepEqual(clavesCambiadas, [{ id: 'moza-1', password: 'nueva-clave' }]);
+  assert.equal((await pedir({ id: 'pendiente', password: 'nueva-clave' }, { ruta: 'clave' })).status, 200, 'una pendiente también');
+});
+
+test('cambiar contraseña: solo admin, solo de su local, y de al menos 8 caracteres', async () => {
+  assert.equal((await pedir({ id: 'otro-local', password: 'nueva-clave' }, { ruta: 'clave' })).status, 404);
+  assert.equal((await pedir({ id: 'no-existe', password: 'nueva-clave' }, { ruta: 'clave' })).status, 404);
+  assert.equal((await pedir({ id: 'moza-1', password: 'corta' }, { ruta: 'clave' })).status, 400);
+  assert.equal((await pedir({ password: 'nueva-clave' }, { ruta: 'clave' })).status, 400);
+  perfil = { ...admin, rol: 'encargado' };
+  const negado = await pedir({ id: 'moza-1', password: 'nueva-clave' }, { ruta: 'clave' });
+  assert.equal(negado.status, 403);
+  assert.match((await negado.json()).error, /cambiar contraseñas/);
+  assert.equal((await pedir({ id: 'moza-1', password: 'nueva-clave' }, { ruta: 'clave', jwt: '' })).status, 401);
+  assert.deepEqual(clavesCambiadas, []);
+  perfil = admin;
+  falloClave = 'Esa contraseña es muy fácil';
+  assert.equal((await pedir({ id: 'moza-1', password: 'nueva-clave' }, { ruta: 'clave' })).status, 400);
+});
+
+test('el admin ve por qué una cuenta no puede entrar', () => {
+  const ok = { activo: true, local_id: 'l', rol: 'moza', paginas: ['mesas'], email_confirmado: true, ultimo_ingreso: null };
+  assert.deepEqual(problemasDeCuenta(ok), []);
+  assert.match(problemasDeCuenta({ ...ok, activo: false })[0], /bloqueada/);
+  assert.match(problemasDeCuenta({ ...ok, local_id: null })[0], /apruebes/);
+  assert.match(problemasDeCuenta({ ...ok, email_confirmado: false })[0], /confirmar el email/);
+  assert.match(problemasDeCuenta({ ...ok, paginas: [] })[0], /ninguna pantalla/);
+  const ahora = new Date('2026-11-18T12:00:00Z');
+  assert.match(problemasDeCuenta({ ...ok, bloqueada_hasta: '2026-11-19T00:00:00Z' }, ahora)[0], /Supabase la bloqueó/);
+  assert.deepEqual(problemasDeCuenta({ ...ok, bloqueada_hasta: '2026-11-01T00:00:00Z' }, ahora), []);
+  assert.equal(textoUltimoIngreso(null), 'Nunca entró');
+  assert.equal(textoUltimoIngreso('2026-11-15T12:00:00Z', ahora), 'Entró hace 3 días');
+  assert.equal(textoUltimoIngreso('2026-11-18T09:00:00Z', ahora), 'Entró hace 3 h');
+});
+
+test('la contraseña inventada es fácil de dictar y válida', () => {
+  for (let i = 0; i < 50; i += 1) {
+    const clave = generarClave();
+    assert.match(clave, /^[a-z]+-[2-9]{4}-[a-z]+$/);
+    assert.ok(clave.length >= 8);
+  }
 });
 
 test('un admin crea una cuenta activa en su local', async () => {

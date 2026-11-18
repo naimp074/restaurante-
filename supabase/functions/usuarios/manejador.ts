@@ -1,4 +1,8 @@
 /**
+ * POST /clave { id, password }
+ * El admin le pone una contraseña nueva a una cuenta de su local (se la olvidó o no puede entrar).
+ * La contraseña anterior no se puede ver: Supabase guarda solo un resumen cifrado.
+ *
  * POST /crear { usuario | email, password, nombre, apellido, rol, paginas }
  * Crea la cuenta ya activa en el local del admin que la pide. Va en el servidor porque
  * crear usuarios sin cerrar la sesión del admin requiere la service role.
@@ -21,6 +25,9 @@ export interface Datos {
   crearUsuario(cuenta: DatosCuenta): Promise<{ id: string } | { error: string }>;
   activarPerfil(id: string, localId: string, cuenta: DatosCuenta): Promise<void>;
   borrarUsuario(id: string): Promise<void>;
+  /** El local de la cuenta, para no tocar cuentas de otro local. Null si no existe. */
+  localDeCuenta(id: string): Promise<{ local_id: string | null } | null>;
+  cambiarClave(id: string, password: string): Promise<{ error?: string }>;
 }
 
 const cors = {
@@ -62,7 +69,7 @@ const leerCuenta = (cuerpo: Record<string, unknown>): DatosCuenta | { error: str
 export const crearManejador = (datos: Datos) => async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const accion = new URL(req.url).pathname.replace(/^.*?\/usuarios(?=\/|$)/, '').replace(/^\//, '');
-  if (req.method !== 'POST' || accion !== 'crear') return json({ error: 'Ruta desconocida.' }, 404);
+  if (req.method !== 'POST' || (accion !== 'crear' && accion !== 'clave')) return json({ error: 'Ruta desconocida.' }, 404);
 
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
   if (!jwt) return json({ error: 'Falta la sesión.' }, 401);
@@ -70,7 +77,23 @@ export const crearManejador = (datos: Datos) => async (req: Request): Promise<Re
   try {
     const perfil = await datos.perfilDesdeSesion(jwt);
     if (!perfil?.activo || perfil.rol !== 'admin' || !perfil.local_id) {
-      return json({ error: 'Solo un administrador puede crear usuarios.' }, 403);
+      return json({ error: accion === 'clave' ? 'Solo un administrador puede cambiar contraseñas.' : 'Solo un administrador puede crear usuarios.' }, 403);
+    }
+
+    if (accion === 'clave') {
+      const cuerpo = await req.json() as Record<string, unknown>;
+      const id = typeof cuerpo.id === 'string' ? cuerpo.id : '';
+      const password = typeof cuerpo.password === 'string' ? cuerpo.password : '';
+      if (!id) return json({ error: 'Falta la cuenta.' }, 400);
+      if (password.length < 8) return json({ error: 'La contraseña tiene que tener al menos 8 caracteres.' }, 400);
+      const destino = await datos.localDeCuenta(id);
+      // Una cuenta pendiente (sin local) también: el admin la está por aprobar.
+      if (!destino || (destino.local_id && destino.local_id !== perfil.local_id)) {
+        return json({ error: 'Esa cuenta no es de tu local.' }, 404);
+      }
+      const resultado = await datos.cambiarClave(id, password);
+      if (resultado.error) return json({ error: resultado.error }, 400);
+      return json({ ok: true });
     }
 
     const cuenta = leerCuenta(await req.json());

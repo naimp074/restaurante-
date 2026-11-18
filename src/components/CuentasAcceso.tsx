@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Eye, KeyRound, Plus, RefreshCw, UserCheck, UserX, X } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Eye, KeyRound, Plus, RefreshCw, UserCheck, UserX, X } from 'lucide-react';
 import type { PageId, Profile, Rol } from '../lib/types';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { paginasPorDefecto, pantallasDelRol } from '../lib/paginas';
 import { loadUsuarios, saveUsuarios } from '../lib/usuariosStore';
-import { accesoDeCuenta, normalizarUsuario, usuarioValido } from '../lib/cuentaUsuario';
+import { accesoDeCuenta, generarClave, normalizarUsuario, problemasDeCuenta, textoUltimoIngreso, usuarioValido } from '../lib/cuentaUsuario';
 
 type Cuenta = {
   id: string;
@@ -17,7 +17,111 @@ type Cuenta = {
   local_id: string | null;
   paginas?: PageId[] | null;
   created_at: string;
+  /** Vienen de Supabase desde la migración 20261118: con la función vieja quedan sin dato. */
+  ultimo_ingreso?: string | null;
+  email_confirmado?: boolean | null;
+  bloqueada_hasta?: string | null;
 };
+
+/** El error que explica la función de usuarios viene en el cuerpo de la respuesta. */
+const detalleDeFallo = async (fallo: unknown, porDefecto: string) => {
+  const respuesta = (fallo as { context?: Response }).context;
+  const detalle = await respuesta?.json?.().catch(() => null) as { error?: string } | null;
+  return detalle?.error || porDefecto;
+};
+
+/**
+ * Le pone una contraseña nueva. La anterior no se puede ver (Supabase guarda solo un resumen
+ * cifrado): la nueva se muestra una vez, para pasársela a la persona.
+ */
+function CambiarClave({ cuenta, onCerrar }: { cuenta: Cuenta; onCerrar: () => void }) {
+  const [clave, setClave] = useState(() => generarClave());
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+  const [lista, setLista] = useState(false);
+  const [copiada, setCopiada] = useState(false);
+  const acceso = accesoDeCuenta(cuenta.email);
+
+  const guardar = async () => {
+    if (!supabase) return;
+    setGuardando(true);
+    setError('');
+    const { error: fallo } = await supabase.functions.invoke('usuarios/clave', { body: { id: cuenta.id, password: clave } });
+    setGuardando(false);
+    if (fallo) return setError(await detalleDeFallo(fallo, 'No pude comunicarme con la función de usuarios. ¿Está desplegada la última versión?'));
+    setLista(true);
+  };
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(`Usuario: ${acceso}\nContraseña: ${clave}`);
+      setCopiada(true);
+    } catch { /* sin permiso para copiar: igual se ve en pantalla */ }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onCerrar}>
+      <div role="dialog" aria-modal="true" aria-label={`Contraseña de ${cuenta.nombre}`} className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <div>
+            <h3 className="font-bold text-slate-800">Contraseña de {cuenta.nombre} {cuenta.apellido}</h3>
+            <p className="text-sm text-slate-500">Entra con: <strong className="text-slate-700">{acceso}</strong></p>
+          </div>
+          <button onClick={onCerrar} aria-label="Cerrar"><X size={18} className="text-slate-400" /></button>
+        </div>
+        {lista ? (
+          <div className="p-5 space-y-4">
+            <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-center">
+              <p className="text-sm text-emerald-800 flex items-center justify-center gap-1.5"><Check size={15} />Listo. Ya puede entrar con:</p>
+              <p className="mt-2 text-sm text-slate-600">Usuario: <strong className="text-slate-900">{acceso}</strong></p>
+              <p className="text-sm text-slate-600">Contraseña: <strong className="font-mono text-lg text-slate-900">{clave}</strong></p>
+            </div>
+            <p className="text-xs text-slate-500">Pasásela ahora: después no se puede volver a ver. Si se la olvida, le ponés otra.</p>
+            <div className="flex gap-2">
+              <button onClick={() => void copiar()} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-700 flex items-center justify-center gap-2 hover:bg-slate-50">
+                {copiada ? <><Check size={15} />Copiada</> : <><Copy size={15} />Copiar usuario y contraseña</>}
+              </button>
+              <button onClick={onCerrar} className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-semibold">Cerrar</button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-5 space-y-4">
+            <p className="text-sm text-slate-600 bg-slate-50 rounded-xl px-3 py-2.5">
+              La contraseña que tiene ahora no se puede ver: nadie la puede leer, ni el sistema. Lo que sí podés es ponerle una nueva y pasársela.
+            </p>
+            <div>
+              <label htmlFor="clave-nueva" className="block text-sm font-medium text-slate-700 mb-1.5">Contraseña nueva</label>
+              <div className="flex gap-2">
+                <input
+                  id="clave-nueva"
+                  type="text"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={clave}
+                  onChange={e => { setClave(e.target.value); setError(''); }}
+                  className={`${campo} font-mono`}
+                />
+                <button type="button" onClick={() => { setClave(generarClave()); setError(''); }} className="shrink-0 px-3 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50" title="Inventar otra">
+                  <RefreshCw size={15} />
+                </button>
+              </div>
+              <p className={`text-xs mt-1 ${clave.length < 8 ? 'text-red-600' : 'text-slate-500'}`}>Al menos 8 caracteres. Podés escribir una o usar la que se inventa sola.</p>
+            </div>
+            {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+            <button
+              onClick={() => void guardar()}
+              disabled={guardando || clave.length < 8}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+            >
+              <KeyRound size={16} />{guardando ? 'Guardando…' : 'Poner esta contraseña'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const roles: { id: Rol; label: string }[] = [
   { id: 'admin', label: 'Administrador' },
@@ -75,6 +179,7 @@ export default function CuentasAcceso() {
   const [errorFormulario, setErrorFormulario] = useState('');
   const [creando, setCreando] = useState(false);
   const [editandoPantallas, setEditandoPantallas] = useState<{ id: string; paginas: PageId[] } | null>(null);
+  const [cambiandoClave, setCambiandoClave] = useState<Cuenta | null>(null);
 
   const cargar = useCallback(async () => {
     if (!supabase) return;
@@ -118,10 +223,7 @@ export default function CuentasAcceso() {
     const acceso = usuario.includes('@') ? { email: usuario.trim() } : { usuario: normalizarUsuario(usuario) };
     const { data, error: fallo } = await supabase.functions.invoke('usuarios/crear', { body: { ...acceso, nombre, apellido, password, rol, paginas } });
     if (fallo) {
-      // La función explica el problema en el cuerpo de la respuesta.
-      const respuesta = (fallo as { context?: Response }).context;
-      const detalle = await respuesta?.json?.().catch(() => null) as { error?: string } | null;
-      setErrorFormulario(detalle?.error || 'No pude comunicarme con la función de usuarios.');
+      setErrorFormulario(await detalleDeFallo(fallo, 'No pude comunicarme con la función de usuarios.'));
       setCreando(false);
       return;
     }
@@ -223,8 +325,18 @@ export default function CuentasAcceso() {
                   <p className="text-sm font-medium text-slate-800">
                     {cuenta.nombre} {cuenta.apellido} {esYo && <span className="text-xs text-slate-400">(vos)</span>}
                   </p>
-                  <p className="text-xs text-slate-500">Entra con: <span className="font-medium text-slate-600">{accesoDeCuenta(cuenta.email)}</span></p>
+                  <p className="text-xs text-slate-500">
+                    Entra con: <span className="font-medium text-slate-600">{accesoDeCuenta(cuenta.email)}</span>
+                    {cuenta.ultimo_ingreso !== undefined && <span className={cuenta.ultimo_ingreso ? '' : ' text-amber-700'}> · {textoUltimoIngreso(cuenta.ultimo_ingreso)}</span>}
+                  </p>
                 </div>
+                <button
+                  onClick={() => setCambiandoClave(cuenta)}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                >
+                  <KeyRound size={13} />
+                  Contraseña
+                </button>
                 {cuenta.rol !== 'admin' && (
                   <button
                     onClick={() => setEditandoPantallas(editando ? null : { id: cuenta.id, paginas: cuenta.paginas || paginasPorDefecto(cuenta.rol) })}
@@ -253,6 +365,15 @@ export default function CuentasAcceso() {
                   {cuenta.activo ? 'Activa' : 'Bloqueada'}
                 </button>
               </div>
+              {problemasDeCuenta(cuenta).length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {problemasDeCuenta(cuenta).map(problema => (
+                    <li key={problema} className="flex items-start gap-1.5 text-xs text-amber-800">
+                      <AlertTriangle size={13} className="shrink-0 mt-px" />{problema}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {editando && editandoPantallas && (
                 <div className="mt-3 rounded-xl bg-slate-50 p-4 space-y-3">
                   <SelectorPantallas
@@ -276,6 +397,8 @@ export default function CuentasAcceso() {
           );
         })}
       </div>
+
+      {cambiandoClave && <CambiarClave cuenta={cambiandoClave} onCerrar={() => { setCambiandoClave(null); void cargar(); }} />}
 
       {formulario && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 overflow-y-auto">
