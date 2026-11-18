@@ -95,6 +95,22 @@ export default function Header({ currentPage, onMenuClick }: HeaderProps) {
           Sincronizando cambios…
         </p>
       )}
+      {!modoDemo && sync.online && !sync.enVivo && !sync.error && (
+        <p
+          className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5"
+          title="Se perdió la conexión en vivo con los otros equipos. Se reconecta solo; mientras tanto se revisa cada pocos segundos."
+        >
+          <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />Reconectando…
+        </p>
+      )}
+      {!modoDemo && sync.online && sync.enVivo && sync.pendiente === 0 && !sync.error && (
+        <span
+          className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-emerald-700"
+          title="Conectado en vivo: lo que hacen los otros equipos aparece al instante."
+        >
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />En vivo
+        </span>
+      )}
       {!modoDemo && sync.online && sync.error && (
         <p className="text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 max-w-[260px] truncate" title={sync.error}>
           {sync.error}

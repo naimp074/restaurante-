@@ -7,6 +7,8 @@ export type EstadoSync = {
   pendiente: number;
   hidratando: boolean;
   error: string;
+  /** El canal en vivo con Supabase está conectado: lo que hacen los otros equipos llega al instante. */
+  enVivo: boolean;
 };
 
 const estadoMemoria: EstadoSync = {
@@ -14,6 +16,7 @@ const estadoMemoria: EstadoSync = {
   pendiente: 0,
   hidratando: false,
   error: '',
+  enVivo: false,
 };
 
 export const loadEstadoSync = (): EstadoSync => ({ ...estadoMemoria });

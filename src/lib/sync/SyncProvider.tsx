@@ -11,9 +11,14 @@ import {
   resetLocalIdSync,
   resolverLocalId,
 } from './cliente';
-import { loadColaSync, setEstadoSync } from './estado';
+import { loadColaSync, loadEstadoSync, setEstadoSync } from './estado';
 
-const intervaloRespaldoMs = 20_000;
+/**
+ * Revisión de respaldo: aunque el canal en vivo falle en silencio, cada equipo se pone al día solo.
+ * Con el canal caído se revisa más seguido, para que nadie trabaje con datos viejos.
+ */
+const respaldoEnVivoMs = 10_000;
+const respaldoSinVivoMs = 3_000;
 
 export default function SyncProvider({ children }: { children: ReactNode }) {
   const { user, loading, modoDemo } = useAuth();
@@ -84,18 +89,26 @@ export default function SyncProvider({ children }: { children: ReactNode }) {
         )
         // Al suscribirse o reconectarse: lo que pasó mientras el canal estaba caído no llega solo.
         .subscribe(estado => {
-          if (estado === 'SUBSCRIBED' && !cancelado) void hidratarDesdeRemoto();
+          if (cancelado) return;
+          setEstadoSync({ enVivo: estado === 'SUBSCRIBED' });
+          if (estado === 'SUBSCRIBED') void hidratarDesdeRemoto();
         });
     };
 
     void iniciar();
     // Una pantalla fija, como la de cocina, nunca cambia de pestaña: si el canal falla en silencio, esto la pone al día.
+    let ultimaRevision = Date.now();
     const respaldo = window.setInterval(() => {
-      if (navigator.onLine && document.visibilityState === 'visible') void hidratarDesdeRemoto();
-    }, intervaloRespaldoMs);
+      if (!navigator.onLine || document.visibilityState !== 'visible') return;
+      const cada = loadEstadoSync().enVivo ? respaldoEnVivoMs : respaldoSinVivoMs;
+      if (Date.now() - ultimaRevision < cada) return;
+      ultimaRevision = Date.now();
+      void hidratarDesdeRemoto();
+    }, 1_000);
     return () => {
       cancelado = true;
       window.clearInterval(respaldo);
+      setEstadoSync({ enVivo: false });
       resetLocalIdSync();
       if (channel) void client.removeChannel(channel);
     };

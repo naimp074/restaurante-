@@ -17,6 +17,24 @@ const baseStorageKey = 'restaurant-sync-base';
 /** Última fecha de cambio remoto vista: al reconectar solo se piden los posteriores. */
 const ultimaStorageKey = 'restaurant-sync-ultima';
 const tamanioLote = 200;
+/**
+ * Al pedir "lo que cambió desde la última vez" se vuelve un rato para atrás. El servidor sella cada
+ * registro con la hora en que EMPEZÓ su transacción: uno que se confirmó tarde puede tener una hora
+ * anterior a otro que ya se bajó, y sin este margen ese cambio no llegaba nunca a este equipo.
+ * Volver a aplicar lo que ya se tenía no cambia nada.
+ */
+export const margenRelecturaMs = 30 * 1000;
+/** Si subir falla (se cortó la conexión un momento), se reintenta solo. */
+const reintentoMs = [1000, 2000, 5000, 10000, 20000];
+let intentosFallidos = 0;
+let reintentoTimer: number | undefined;
+
+export const desdeConMargen = (ultima: string) => {
+  if (!ultima) return '';
+  const fecha = Date.parse(ultima);
+  // Una fecha que no se entiende: mejor releer todo que perder cambios.
+  return Number.isFinite(fecha) ? new Date(fecha - margenRelecturaMs).toISOString() : '';
+};
 
 let localIdActual = '';
 let sesion: { rol?: Rol; userId?: string } = {};
@@ -101,13 +119,26 @@ const registrarUltima = (filas: { updated_at?: string }[]) => {
   if (maxima !== actual) window.localStorage.setItem(ultimaStorageKey, maxima);
 };
 
+/** Espera apenas para juntar los cambios de un mismo clic (comanda + mesa + stock) en una sola subida. */
+export const esperaSubidaMs = 120;
+
 export const programarVaciarCola = () => {
   if (typeof window === 'undefined') return;
   if (flushTimer) window.clearTimeout(flushTimer);
   flushTimer = window.setTimeout(() => {
     flushTimer = undefined;
     void vaciarColaSync();
-  }, 400);
+  }, esperaSubidaMs);
+};
+
+const programarReintento = () => {
+  if (typeof window === 'undefined' || reintentoTimer) return;
+  const espera = reintentoMs[Math.min(intentosFallidos, reintentoMs.length - 1)];
+  intentosFallidos += 1;
+  reintentoTimer = window.setTimeout(() => {
+    reintentoTimer = undefined;
+    if (navigator.onLine) void vaciarColaSync();
+  }, espera);
 };
 
 export const encolarClave = (clave: string) => {
@@ -304,9 +335,12 @@ export const vaciarColaSync = () => enSerie(async () => {
       aviso = aviso ? `${aviso} ${choque}` : choque;
     }
     setEstadoSync({ error: aviso });
+    intentosFallidos = 0;
     if (loadColaSync().length) programarVaciarCola();
   } catch (error) {
     setEstadoSync({ error: error instanceof Error ? error.message : 'No se pudo sincronizar.' });
+    // Sin esto, lo que no se pudo subir esperaba al próximo cambio o a la próxima revisión.
+    programarReintento();
   }
 });
 
@@ -338,7 +372,7 @@ export const hidratarDesdeRemoto = () => enSerie(async () => {
     const localId = await resolverLocalId();
     const ultima = window.localStorage.getItem(ultimaStorageKey) || '';
     const completa = !ultima;
-    const filas = await leerRemotos(localId, undefined, ultima || undefined);
+    const filas = await leerRemotos(localId, undefined, desdeConMargen(ultima) || undefined);
 
     const migrado = completa && !filas.length;
     if (migrado) await migrarDocumentosViejos(localId);
