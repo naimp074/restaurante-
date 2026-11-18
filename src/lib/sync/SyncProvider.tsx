@@ -8,6 +8,7 @@ import {
   encolarClave,
   hidratarDesdeRemoto,
   programarVaciarCola,
+  verificarConServidor,
   resetLocalIdSync,
   resolverLocalId,
 } from './cliente';
@@ -19,6 +20,8 @@ import { loadColaSync, loadEstadoSync, setEstadoSync } from './estado';
  */
 const respaldoEnVivoMs = 10_000;
 const respaldoSinVivoMs = 3_000;
+/** Cada tanto se compara todo con el servidor (solo ids y horas): nada puede quedar distinto para siempre. */
+const verificacionMs = 3 * 60_000;
 
 export default function SyncProvider({ children }: { children: ReactNode }) {
   const { user, loading, modoDemo } = useAuth();
@@ -95,11 +98,18 @@ export default function SyncProvider({ children }: { children: ReactNode }) {
         });
     };
 
-    void iniciar();
+    let ultimaVerificacion = 0;
+    const verificar = () => {
+      ultimaVerificacion = Date.now();
+      void verificarConServidor();
+    };
+    // Al abrir el sistema se verifica todo: así un equipo que quedó distinto se arregla solo.
+    void iniciar().then(() => { if (!cancelado) verificar(); });
     // Una pantalla fija, como la de cocina, nunca cambia de pestaña: si el canal falla en silencio, esto la pone al día.
     let ultimaRevision = Date.now();
     const respaldo = window.setInterval(() => {
       if (!navigator.onLine || document.visibilityState !== 'visible') return;
+      if (Date.now() - ultimaVerificacion >= verificacionMs) { verificar(); return; }
       const cada = loadEstadoSync().enVivo ? respaldoEnVivoMs : respaldoSinVivoMs;
       if (Date.now() - ultimaRevision < cada) return;
       ultimaRevision = Date.now();
