@@ -33,3 +33,9 @@ test('describe lo borrado con lo que tenga', () => {
   assert.match(api.describirBorrado(fila({ payload: null })), /prod-1 \(borrado antes de que se guardara el contenido\)/);
   assert.equal(api.nombreClave('restaurant-pagos'), 'Cobros');
 });
+
+test('solo la cuenta de naimpaz274 ve el historial', () => {
+  assert.equal(api.puedeVerHistorialDeBorrados('115ce296-d4d3-4686-a007-dc86cae74e98'), true);
+  assert.equal(api.puedeVerHistorialDeBorrados('4e829ee2-125b-4624-939f-cf3ab77935a0'), false);
+  assert.equal(api.puedeVerHistorialDeBorrados(undefined), false);
+});

@@ -4,7 +4,8 @@ import { supabase } from '../lib/supabase';
 import { useUsuarios } from '../lib/usuariosStore';
 import { resolverLocalId, verificarConServidor } from '../lib/sync/cliente';
 import { documentoPorClave } from '../lib/sync/documentos';
-import { agruparBorrados, describirBorrado, hora, nombreClave, type FilaBorrada, type Grupo } from '../lib/historialBorrados';
+import { agruparBorrados, describirBorrado, hora, nombreClave, puedeVerHistorialDeBorrados, type FilaBorrada, type Grupo } from '../lib/historialBorrados';
+import { useAuth } from '../contexts/AuthContext';
 
 const maximoFilas = 2000;
 
@@ -14,6 +15,8 @@ const maximoFilas = 2000;
  * con eso se puede volver a poner.
  */
 export default function HistorialBorrados() {
+  const { user } = useAuth();
+  const esNaim = puedeVerHistorialDeBorrados(user?.id);
   const usuarios = useUsuarios();
   const [filas, setFilas] = useState<FilaBorrada[]>([]);
   const [cargando, setCargando] = useState(false);
@@ -25,7 +28,7 @@ export default function HistorialBorrados() {
   const [restaurando, setRestaurando] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
-    if (!supabase) return;
+    if (!supabase || !esNaim) return;
     setCargando(true);
     setError('');
     try {
@@ -44,7 +47,7 @@ export default function HistorialBorrados() {
     } finally {
       setCargando(false);
     }
-  }, []);
+  }, [esNaim]);
 
   useEffect(() => { void cargar(); }, [cargar]);
 
@@ -61,7 +64,7 @@ export default function HistorialBorrados() {
   const claves = useMemo(() => [...new Set(filas.map(f => f.clave))], [filas]);
 
   const restaurar = async (grupo: Grupo) => {
-    if (!supabase) return;
+    if (!supabase || !esNaim) return;
     const conDatos = grupo.filas.filter(f => f.payload && documentoPorClave(f.clave));
     if (!conDatos.length) return;
     const sinDatos = grupo.filas.length - conDatos.length;
@@ -89,6 +92,8 @@ export default function HistorialBorrados() {
       setRestaurando(null);
     }
   };
+
+  if (!esNaim) return null;
 
   const campo = 'rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-400';
 

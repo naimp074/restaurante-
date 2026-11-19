@@ -1,5 +1,10 @@
 /** Cómo se muestra el historial de borrados (ver components/HistorialBorrados.tsx). */
 
+/** La única cuenta que ve el historial de borrados: naimpaz274, el dueño del sistema. */
+export const cuentaDelHistorialDeBorrados = '115ce296-d4d3-4686-a007-dc86cae74e98';
+
+export const puedeVerHistorialDeBorrados = (usuarioId?: string | null) => usuarioId === cuentaDelHistorialDeBorrados;
+
 /** Una fila borrada tal como la guarda el servidor: quién la borró y cuándo lo sella el servidor. */
 export type FilaBorrada = {
   clave: string;
