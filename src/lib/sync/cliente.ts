@@ -20,6 +20,8 @@ const baseStorageKey = 'restaurant-sync-base';
 /** Última fecha de cambio remoto vista: al reconectar solo se piden los posteriores. */
 const ultimaStorageKey = 'restaurant-sync-ultima';
 const tamanioLote = 200;
+/** Lo más que el servidor deja borrar en un mismo envío. */
+export const tamanioLoteBorradoAutorizado = 5;
 /**
  * Al pedir "lo que cambió desde la última vez" se vuelve un rato para atrás. El servidor sella cada
  * registro con la hora en que EMPEZÓ su transacción: uno que se confirmó tarde puede tener una hora
@@ -330,8 +332,11 @@ const subirClave = async (localId: string, clave: string): Promise<{ resultado: 
     ? await resolverChoques(localId, clave, base, autorizados)
     : { aSubir: [], avisos: [] };
 
-  for (let i = 0; i < permitidos.length; i += tamanioLote) {
-    const lote = permitidos.slice(i, i + tamanioLote);
+  // El servidor rechaza más de 5 borrados en un mismo envío (migración frenar_borrado_masivo_ventas):
+  // lo que se borra a propósito (Empezar de cero) va de a 5.
+  const lotes = autorizado && borrados > 0 ? tamanioLoteBorradoAutorizado : tamanioLote;
+  for (let i = 0; i < permitidos.length; i += lotes) {
+    const lote = permitidos.slice(i, i + lotes);
     const { error } = await supabase.from('sync_registros').upsert(
       lote.map(c => ({
         local_id: localId,
