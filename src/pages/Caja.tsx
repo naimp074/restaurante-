@@ -247,6 +247,15 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     .map(({ pedido }) => pedido);
   const solicitudesActivas = pedidosPorCobrar.filter(cobroEnCurso).length;
   const cajaAbierta = cajas.find(caja => caja.fecha === todayKey() && caja.estado === 'abierta') || null;
+  // Los cobros de la caja que está abierta, desde que se abrió; el más nuevo arriba (la lista guardada no viene ordenada).
+  const cajaDeLosCobros = cajaAbierta
+    || [...cajas].filter(caja => caja.estado === 'abierta').sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || ''))[0]
+    || null;
+  const pagosDeLaCaja = cajaDeLosCobros
+    ? pagosRegistrados
+      .filter(pago => (pago.created_at || '') >= (cajaDeLosCobros.opened_at || ''))
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    : [];
   // Una caja de una jornada anterior que quedó abierta: hay que cerrarla antes de abrir la de hoy.
   const cajaPendiente = cajaAbierta ? null : cajaAbiertaActual(cajas);
   const cajaACerrar = cajaAbierta || cajaPendiente;
@@ -1647,13 +1656,16 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
           </div>
         </div>
 
-        {pagosRegistrados.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="p-3 border-b border-slate-100">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Último pagos</p>
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Cobros de esta caja</p>
+              {pagosDeLaCaja.length > 0 && <span className="text-xs text-slate-400">{pagosDeLaCaja.length}</span>}
             </div>
+            {pagosDeLaCaja.length === 0 && (
+              <div className="p-3 text-sm text-slate-400">{cajaDeLosCobros ? 'Todavía no hay cobros en esta caja' : 'No hay una caja abierta'}</div>
+            )}
             <div className="divide-y divide-slate-50 max-h-48 overflow-y-auto">
-              {pagosRegistrados.slice(0, 5).map(pago => (
+              {pagosDeLaCaja.map(pago => (
                 <div key={pago.id} className="p-3">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium text-slate-700">{getMesaLabel(pago.pedido)}</span>
@@ -1667,7 +1679,6 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
               ))}
             </div>
           </div>
-        )}
         </>
         )}
       </div>
