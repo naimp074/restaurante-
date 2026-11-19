@@ -79,20 +79,6 @@ export default function Cartas() {
     setFiltro('todas');
   };
 
-  const categoriaFiltrada = categorias.find(c => c.id === filtro);
-  const cafeteria = categorias.find(c => c.id === 's-cafeteria');
-  const enLaCategoria = productos.filter(p => p.categoria_id === filtro).length;
-
-  const pasarACafeteria = () => {
-    if (!categoriaFiltrada || !cafeteria) return;
-    if (!window.confirm(`¿Pasar los ${enLaCategoria} productos de ${categoriaFiltrada.nombre} a ${cafeteria.nombre} en todos los dispositivos? No cambian precios ni ventas.`)) return;
-    const ahora = new Date().toISOString();
-    saveProductos(loadProductos().map(p => (p.categoria_id === categoriaFiltrada.id
-      ? { ...p, categoria_id: cafeteria.id, categoria: cafeteria, updated_at: ahora }
-      : p)));
-    setFiltro(cafeteria.id);
-  };
-
   const cargarCartaRestaurante = () => {
     if (!window.confirm('Esto agrega los 192 productos de la carta del restaurante a S-RESTAURANTE en todos los dispositivos. No cambia lo que ya está cargado. ¿Confirmar?')) return;
     saveProductos(agregarCartaRestaurante(loadProductos()));
@@ -285,14 +271,6 @@ export default function Cartas() {
               {ordenadas.map(c => <button key={c.id} onClick={() => setFiltro(c.id)} className={botonFiltro(filtro === c.id)}>{c.nombre}</button>)}
               {sinCategoria > 0 && <button onClick={() => setFiltro('sin')} className={botonFiltro(filtro === 'sin')}>Sin categoría ({sinCategoria})</button>}
             </div>
-            {categoriaFiltrada && cafeteria && categoriaFiltrada.id !== cafeteria.id && enLaCategoria > 0 && (
-              <button
-                onClick={pasarACafeteria}
-                className="bg-amber-500 hover:bg-amber-400 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
-              >
-                Pasar estos {enLaCategoria} productos a {cafeteria.nombre}
-              </button>
-            )}
           </div>
           <div className="divide-y divide-slate-50">
             {visibles.map(producto => (

@@ -97,11 +97,13 @@ test('no deja pagar cero', () => {
   assert.throws(() => pagar({ monto: 0 }), /mayor que cero/);
 });
 
-test('caja del día: deja pagar aunque en el cajón figure menos (lo esperado queda en negativo)', () => {
+test('caja del día: no deja pagar en efectivo más de lo que hay en el cajón', () => {
   storage.set('restaurant-cajas-diarias', JSON.stringify([{ id: 'c1', fecha: '2026-11-04', estado: 'abierta', monto_esperado_efectivo: 100000 }]));
-  pagar({ metodo_pago: 'efectivo', desde_caja_dia: true, monto: 150000 });
-  assert.equal(api.loadGastos().length, 1);
-  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, -50000);
+  assert.throws(() => pagar({ metodo_pago: 'efectivo', desde_caja_dia: true, monto: 150000 }), /Caja grande/);
+  assert.equal(api.loadGastos().length, 0, 'no queda nada a medias');
+  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 100000);
+  pagar({ metodo_pago: 'efectivo', desde_caja_dia: false, cuenta_id: api.cuentaCajaGrandeId, monto: 150000 });
+  assert.equal(api.loadGastos().length, 1, 'desde la Caja grande sí');
 });
 
 test('pago a proveedor desde la caja del día por transferencia no resta efectivo del cajón', () => {
@@ -111,8 +113,8 @@ test('pago a proveedor desde la caja del día por transferencia no resta efectiv
   assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 50000);
   api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 20000 });
   assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 30000);
-  api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 40000 });
-  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, -10000, 'se paga igual');
+  assert.throws(() => api.registrarPagoProveedor({ ...base, metodo_pago: 'efectivo', monto: 40000 }), /Caja grande/, 'el cajón ya no tiene 40.000');
+  assert.equal(leer('cajas-diarias')[0].monto_esperado_efectivo, 30000);
 });
 
 test('un gasto en efectivo con la cuenta Caja del día elegida a mano también baja el cajón', () => {
