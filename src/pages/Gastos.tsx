@@ -7,6 +7,7 @@ import {
   cuentaCajaDiaId,
   cuentaCajaGrandeId,
   loadCuentasDinero,
+  mensajeGastoSinEfectivo,
   loadMovimientosFinancieros,
   registrarEntradaCuenta,
   saveCuentasDinero,
@@ -15,7 +16,7 @@ import {
 import { loadProveedores } from '../lib/proveedoresStore';
 import { dayKey } from '../lib/fechas';
 import { loadGastos, saveGastos, useGastos } from '../lib/gastosStore';
-import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
+import { aplicarGastoEnCajaDia, efectivoEnCajaAbierta, useCajas } from '../lib/cajaStore';
 import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
 import { cajaAbiertaActual, efectivoGastadoDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
@@ -358,6 +359,12 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       setGastoError('La caja del día está cerrada. Abrí la caja para pagar en efectivo desde el cajón, o elegí que salga de la caja grande.');
       return;
     }
+    // El cajón no puede pagar más de lo que tiene: lo que falta sale de la caja fuerte y se carga desde la Caja grande.
+    const disponibleEnCajon = Math.max(enCajon, efectivoEnCajaAbierta(gasto.fecha)) + (original ? efectivoDelCajon(original) : 0);
+    if (efectivoQueSale - disponibleEnCajon > 0.009) {
+      setGastoError(mensajeGastoSinEfectivo(disponibleEnCajon, efectivoQueSale));
+      return;
+    }
     try {
       if (original) {
         withStoreTransaction(() => {
@@ -379,9 +386,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       setGastoError(error instanceof Error ? error.message : 'No se pudo guardar el gasto.');
       return;
     }
-    setAvisoGasto(cajaHoy && efectivoQueSale - enCajon > 0.009
-      ? `Se guardó. En la caja del día figuraban ${formatMoney(Math.max(0, enCajon))} en efectivo y se pagaron ${formatMoney(efectivoQueSale)}. Si la plata que faltaba salió de otro lado, cargá un traspaso a la Caja del día así el cierre cuadra.`
-      : '');
+    setAvisoGasto('');
     setCuentas(loadCuentasDinero());
     resetForm();
     setShowForm(false);

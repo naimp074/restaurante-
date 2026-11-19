@@ -430,6 +430,17 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     };
     const aviso = armarAvisoCierre(conteo);
 
+    // Cerrar en $0 una caja que vendió en efectivo deja esa plata afuera de la Caja grande.
+    const vendidoEnEfectivo = cajaACerrar.efectivo || 0;
+    if (efectivoContado < 0.01 && vendidoEnEfectivo > 0) {
+      const clave = `${cajaACerrar.id}:${efectivoContado}`;
+      if (faltaConfirmada !== clave) {
+        setFaltaConfirmada(clave);
+        setCierreError(`Esta caja vendió ${formatMoney(vendidoEnEfectivo)} en efectivo y anotaste $0. Contá el efectivo del cajón: eso es lo que pasa a la Caja grande. Si de verdad no queda nada, tocá "Cerrar igual".`);
+        return;
+      }
+    }
+
     // Si faltan más de $5.000 el cajero no puede cerrar: se vuelve a contar, y los administradores se enteran por Gmail.
     // Admin y encargado pueden cerrar igual con lo contado: se les pide confirmarlo y el aviso sale al cerrar.
     if (aviso?.tipo === 'falta' && puedeCerrarConFalta) {

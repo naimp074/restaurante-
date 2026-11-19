@@ -10,7 +10,7 @@ import type {
 import { dayKey } from './fechas';
 import { leerTexto, withStoreTransaction, writeStore } from './storeSync';
 import { loadGastos, saveGastos } from './gastosStore';
-import { aplicarGastoEnCajaDia } from './cajaStore';
+import { aplicarGastoEnCajaDia, efectivoEnCajaAbierta } from './cajaStore';
 import { nuevoId } from './ids';
 
 export const cuentasDineroStorageKey = 'restaurant-cuentas-dinero';
@@ -271,6 +271,7 @@ export const registrarPagoProveedor = (data: {
 }) => withStoreTransaction(() => {
   if (!Number.isFinite(data.monto) || data.monto <= 0) throw new Error('Ingresá un pago mayor que cero.');
   if (!loadCuentasDinero().some(cuenta => cuenta.id === data.cuenta_origen_id && cuenta.activa)) throw new Error('Elegí una cuenta de origen válida.');
+  frenarGastoSinEfectivoEnCajaDia({ cuenta_id: data.cuenta_origen_id, monto: data.monto, origen: 'gasto', metodo_pago: data.metodo_pago, fecha: data.fecha });
   if (data.factura_id) {
     const factura = loadFacturasProveedor().find(item => item.id === data.factura_id && item.proveedor_id === data.proveedor_id);
     if (!factura) throw new Error('La factura no corresponde a este proveedor.');
@@ -412,6 +413,24 @@ export const registrarEntradaCuenta = (data: {
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
 });
 
+export const mensajeGastoSinEfectivo = (disponible: number, monto: number) =>
+  `En la Caja del día hay ${formatoPesos(Math.max(0, disponible))} en efectivo y este gasto es de ${formatoPesos(monto)}. `
+  + 'Si la plata sale de la caja fuerte, elegí que salga de la Caja grande.';
+
+const formatoPesos = (n: number) => `$${Math.round(n).toLocaleString('es-AR')}`;
+
+/**
+ * Un gasto en efectivo no puede sacar del cajón más de lo que tiene. Antes se guardaba igual y la plata
+ * que faltaba salía en realidad de la caja fuerte: la Caja del día quedaba en negativo, el cierre no cuadraba
+ * y la Caja grande seguía mostrando una plata que ya no estaba.
+ */
+const frenarGastoSinEfectivoEnCajaDia = (data: { cuenta_id: string; monto: number; origen: MovimientoFinanciero['origen']; metodo_pago?: MetodoPago; fecha?: string }) => {
+  if (data.origen !== 'gasto' || data.cuenta_id !== cuentaCajaDiaId) return;
+  if (data.metodo_pago && data.metodo_pago !== 'efectivo') return;
+  const disponible = efectivoEnCajaAbierta(data.fecha);
+  if (data.monto - disponible > 0.009) throw new Error(mensajeGastoSinEfectivo(disponible, data.monto));
+};
+
 export const registrarSalidaCuenta = (data: {
   cuenta_id: string;
   monto: number;
@@ -422,6 +441,7 @@ export const registrarSalidaCuenta = (data: {
   proveedor_id?: string;
   creado_por?: string;
 }) => withStoreTransaction(() => {
+  frenarGastoSinEfectivoEnCajaDia(data);
   saveCuentasDinero(loadCuentasDinero().map(cuenta => (
     cuenta.id === data.cuenta_id ? { ...cuenta, saldo: cuenta.saldo - data.monto } : cuenta
   )));

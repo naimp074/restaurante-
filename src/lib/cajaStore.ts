@@ -12,8 +12,19 @@ export const saveCajasDiarias = (cajas: CajaDiaria[]) =>
 export const useCajas = () => useStore(cajasUpdatedEvent, loadCajasDiarias);
 
 /**
+ * El efectivo que tiene el cajón de la caja abierta (la de esa jornada, o la que quedó abierta).
+ * Sin caja abierta es cero: al cerrar, el efectivo pasó a la Caja grande.
+ */
+export const efectivoEnCajaAbierta = (fecha?: string) => {
+  const abiertas = loadCajasDiarias().filter(item => item.estado === 'abierta');
+  const caja = (fecha && abiertas.find(item => item.fecha === fecha))
+    || [...abiertas].sort((a, b) => (b.opened_at || b.fecha).localeCompare(a.opened_at || a.fecha))[0];
+  return caja ? caja.monto_esperado_efectivo : 0;
+};
+
+/**
  * Resta o devuelve un gasto de efectivo de la caja del día.
- * Deja pagar aunque en el cajón figure menos (a veces hay plata de más): lo esperado puede quedar en negativo.
+ * Quien paga ya chequeó que el cajón tenga la plata (ver frenarGastoSinEfectivoEnCajaDia en finance.ts).
  */
 export const aplicarGastoEnCajaDia = (fecha: string, monto: number, signo: 1 | -1) => {
   const cajas = loadCajasDiarias();
