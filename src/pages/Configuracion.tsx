@@ -8,6 +8,7 @@ import { readStore, writeStore } from '../lib/storeSync';
 import { dayKey, horaCortePorDefecto } from '../lib/fechas';
 import ConfigPedidosYa from '../components/ConfigPedidosYa';
 import ConfigFacturacion from '../components/ConfigFacturacion';
+import HistorialBorrados from '../components/HistorialBorrados';
 
 export const configStorageKey = 'restaurant-config-local';
 export const configUpdatedEvent = 'restaurant-config-local-updated';
@@ -225,6 +226,8 @@ export default function Configuracion() {
       {hasRole('admin') && !modoDemo && <ConfigFacturacion />}
 
       {hasRole('admin') && !modoDemo && <ConfigPedidosYa />}
+
+      {hasRole('admin') && !modoDemo && <HistorialBorrados />}
 
       {hasRole('admin') && <div className="bg-white rounded-2xl border border-red-100 p-6">
         <div className="flex items-center gap-3 mb-3">
