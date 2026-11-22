@@ -48,7 +48,7 @@ import {
 import { abrirVentanaTicket, imprimirComprobanteFiscal } from '../lib/ticketFiscal';
 import { loadCategorias } from '../lib/categoriasStore';
 import { armarAvisoCierre, UMBRAL_FALTA_CAJA } from '../lib/avisoCierreCaja';
-import { cajaAbiertaActual, efectivoGastadoDeLaCaja, movimientosDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
+import { cajaAbiertaActual, efectivoGastadoDeLaCaja, movimientosDeLaCaja, recalcularEsperadoEfectivo, yaPasadoACajaGrande } from '../lib/esperadoCaja';
 import { enviarAvisoCierreCaja } from '../lib/enviarAvisoCierre';
 import { lineasPorCategoria } from '../lib/lineasFiscales';
 import { DetalleItem } from '../components/OpcionesProducto';
@@ -479,22 +479,30 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     setFaltaConfirmada('');
     setCerrandoCaja(true);
     try {
-      // Sobre lo guardado (no lo que tenía la pantalla), así no se pisa lo que llegó de otro equipo.
-      saveCajasDiarias(loadCajasDiarias().map(caja => (
-        caja.id === cajaACerrar.id
-          ? {
-              ...caja,
-              monto_cierre_efectivo: efectivoContado,
-              monto_esperado_efectivo: esperadoAlCerrar,
-              diferencia_efectivo: efectivoContado - esperadoAlCerrar,
-              estado: 'cerrada',
-              closed_at: new Date().toISOString(),
-              cerrado_por_id: user?.id,
-              cerrado_por_nombre: user ? `${user.nombre} ${user.apellido || ''}`.trim() : 'Cajero',
-            }
-          : caja
-      )));
-      cerrarCajaDia(`Cierre de caja del ${cajaACerrar.fecha}: efectivo del día a caja grande`);
+      withStoreTransaction(() => {
+        // A la Caja grande va lo contado en el cajón. Se pasa antes de marcar la caja cerrada:
+        // con la caja todavía abierta no corre el cierre automático de medianoche, que mandaba el saldo de la cuenta.
+        cerrarCajaDia(
+          `Cierre de caja del ${cajaACerrar.fecha}: efectivo del día a caja grande`,
+          efectivoContado,
+          yaPasadoACajaGrande(cajaACerrar, loadMovimientosFinancieros()),
+        );
+        // Sobre lo guardado (no lo que tenía la pantalla), así no se pisa lo que llegó de otro equipo.
+        saveCajasDiarias(loadCajasDiarias().map(caja => (
+          caja.id === cajaACerrar.id
+            ? {
+                ...caja,
+                monto_cierre_efectivo: efectivoContado,
+                monto_esperado_efectivo: esperadoAlCerrar,
+                diferencia_efectivo: efectivoContado - esperadoAlCerrar,
+                estado: 'cerrada',
+                closed_at: new Date().toISOString(),
+                cerrado_por_id: user?.id,
+                cerrado_por_nombre: user ? `${user.nombre} ${user.apellido || ''}`.trim() : 'Cajero',
+              }
+            : caja
+        )));
+      });
     } catch (error) {
       setCierreError(error instanceof Error ? error.message : 'No se pudo cerrar la caja.');
       setCerrandoCaja(false);
