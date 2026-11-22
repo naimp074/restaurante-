@@ -97,6 +97,23 @@ export const itemsSinEnviar = (pedido: Pedido) => vivos(pedido).filter(item => i
 /** Lo que cocina tiene que ver de la comanda. */
 export const itemsParaCocina = (pedido: Pedido) => (pedido.items || []).filter(item => item.estado !== 'cancelado' && !item.sin_enviar);
 
+const estadosEnCurso: Pedido['estado'][] = ['en_preparacion', 'listo', 'entregado'];
+
+/**
+ * El estado de una comanda enviada según lo que tiene cocina: si queda algo por hacer, está en preparación.
+ * Sirve para arreglar una comanda que quedó "entregada" con productos nuevos adentro (por ejemplo, cocina marcó
+ * entregado lo último justo cuando la moza mandaba un agregado desde otro equipo, y al juntar las dos versiones
+ * ganó el "entregado"): así la comanda desaparecía de la pantalla de cocina.
+ */
+export const estadoSegunCocina = (pedido: Pedido): Pedido['estado'] => {
+  if (!estadosEnCurso.includes(pedido.estado)) return pedido.estado;
+  const enviados = itemsParaCocina(pedido);
+  if (!enviados.length) return pedido.estado;
+  if (enviados.some(item => item.estado === 'pendiente' || item.estado === 'en_preparacion')) return 'en_preparacion';
+  if (enviados.some(item => item.estado === 'listo')) return 'listo';
+  return 'entregado';
+};
+
 /** Cocina todavía no lo empezó: se puede corregir o sacar sin anular. */
 export const itemEditable = (item: PedidoItem) => item.estado === 'pendiente';
 
