@@ -26,6 +26,7 @@ import { gastosRecuperables } from '../lib/gastosRecuperables';
 import { efectivoDelCajon, nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
 import { useFichadas } from '../lib/fichadas';
 import { RevisionArqueosCajaGrande } from '../components/RevisionArqueosCajaGrande';
+import { esAjustePorConteo, esCorreccionArqueo } from '../lib/correccionCajaGrande';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -56,9 +57,9 @@ const todayKey = () => dayKey();
 const formatMoney = (value: number) =>
   `$${value.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-/** Las correcciones de la Caja grande hechas con los arqueos (ver correccionCajaGrande.ts). */
-const esCorreccionArqueo = (movimiento: { origen: string; descripcion?: string }) =>
-  movimiento.origen === 'ajuste' && (movimiento.descripcion || '').startsWith('Corrección con el arqueo');
+/** Ajustes de la Caja grande que se ven en sus movimientos (ver correccionCajaGrande.ts). */
+const esAjusteCajaGrande = (movimiento: Parameters<typeof esAjustePorConteo>[0]) =>
+  esCorreccionArqueo(movimiento) || esAjustePorConteo(movimiento);
 
 const ordenCuentas = (cuentas: CuentaDinero[]) => {
   const prioridad = [cuentaCajaDiaId, cuentaCajaGrandeId, cuentaBancoId, 'cuenta-mercado-pago'];
@@ -600,7 +601,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
       ? movimientos.filter(movimiento =>
           (movimiento.origen === 'transferencia_interna'
             && (movimiento.cuenta_id === cuentaAbierta.id || movimiento.cuenta_destino_id === cuentaAbierta.id))
-          || (esCorreccionArqueo(movimiento) && movimiento.cuenta_id === cuentaAbierta.id)
+          || (esAjusteCajaGrande(movimiento) && movimiento.cuenta_id === cuentaAbierta.id)
         )
       : [];
 
@@ -709,10 +710,10 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
 
           {cuentaAbierta.id === cuentaCajaGrandeId && (user?.rol === 'admin' || user?.rol === 'encargado') && (
             <RevisionArqueosCajaGrande
-              cajas={cajas}
+              saldo={cuentaAbierta.saldo}
               movimientos={movimientos}
               creadoPor={user?.id}
-              onCorregido={() => {
+              onCambio={() => {
                 setCuentas(loadCuentasDinero());
                 setMovimientos(loadMovimientosFinancieros());
               }}
@@ -818,7 +819,7 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
             ) : (
               <div className="divide-y divide-slate-100">
                 {movimientosCuenta.map(movimiento => {
-                  const correccion = esCorreccionArqueo(movimiento);
+                  const correccion = esAjusteCajaGrande(movimiento);
                   const sale = correccion ? movimiento.tipo === 'salida' : movimiento.cuenta_id === cuentaAbierta.id;
                   const destino = nombreCuenta(sale ? movimiento.cuenta_destino_id : movimiento.cuenta_id);
                   return (
