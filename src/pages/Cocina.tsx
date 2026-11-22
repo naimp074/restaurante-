@@ -96,8 +96,10 @@ export default function Cocina() {
       ? 'bg-blue-500 hover:bg-blue-400 text-white'
       : 'bg-slate-200 text-slate-500';
 
+  // Se mira lo que tiene cada producto, no el estado de la comanda: una comanda marcada "entregada"
+  // que recibió un agregado tiene que aparecer igual (antes quedaba oculta para cocina).
   const enCocina = pedidos.filter(p =>
-    p.estado !== 'abierto' && p.estado !== 'entregado' && p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'
+    p.estado !== 'abierto' && p.estado !== 'cobrado' && p.estado !== 'cuenta_corriente' && p.estado !== 'cancelado'
   );
   // Lo que la moza cargó y todavía no envió no aparece hasta que lo mande.
   const activeOrders = enCocina.filter(p => itemsParaCocina(p).some(i => i.estado !== 'entregado'));

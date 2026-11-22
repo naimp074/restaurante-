@@ -1,4 +1,6 @@
 import { huella } from './registros';
+import type { Pedido } from '../types';
+import { estadoSegunCocina } from '../cobroComanda';
 
 /**
  * Qué hacer cuando otro equipo cambió el mismo registro que se cambió acá, antes de que esto se subiera.
@@ -137,6 +139,8 @@ const resolverPedido = (local: unknown, remoto: unknown, base: unknown): Resoluc
   const fusion = fusionarCampos(local, remoto, b, []);
   fusion.items = fusionarItems(local.items, remoto.items, b ? b.items : undefined);
   fusion.historial = fusionarHistorial(local.historial, remoto.historial);
+  // Si un equipo marcó "entregado" y el otro mandó un agregado, cocina tiene que seguir viéndola.
+  fusion.estado = estadoSegunCocina(fusion as unknown as Pedido);
   return { valor: conTotales(fusion), aviso: `${nombre} se cambió en dos equipos a la vez; se juntaron los productos de los dos` };
 };
 
