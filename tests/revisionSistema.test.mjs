@@ -114,6 +114,8 @@ test('rechaza sobrepagos, factura ajena, cuenta inexistente y montos inválidos 
 
 test('cierre automático de ayer: refrescar cuentas desde los avisos no duplica el arrastre', () => {
   const cuentas = get('cuentas-dinero'); cuentas[0].saldo_fecha = '2020-01-01'; put('cuentas-dinero', cuentas);
+  // Con una caja abierta no se arrastra (lo pasa el cierre con lo contado): acá la caja quedó cerrada.
+  put('cajas-diarias', get('cajas-diarias').map(caja => ({ ...caja, estado: 'cerrada' })));
   let refreshes = 0;
   window.addEventListener('restaurant-movimientos-financieros-updated', () => {
     refreshes += 1;

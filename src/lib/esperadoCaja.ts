@@ -1,5 +1,5 @@
 import type { CajaDiaria, MovimientoFinanciero, Pago } from './types';
-import { cuentaCajaDiaId } from './finance';
+import { cuentaCajaDiaId, cuentaCajaGrandeId } from './finance';
 import { dayKey } from './fechas';
 
 const momento = (fecha?: string) => {
@@ -92,6 +92,8 @@ export const efectivoGastadoDeLaCaja = (caja: CajaDiaria, movimientos: Movimient
 export const recalcularEsperadoEfectivo = (caja: CajaDiaria, movimientos: MovimientoFinanciero[]) => {
   let esperado = 0;
   for (const mov of movimientosDeLaCaja(caja, movimientos)) {
+    // El pase a la caja grande y el ajuste del cierre no son parte del turno.
+    if (esCierre(mov)) continue;
     if (mov.tipo === 'transferencia') {
       if (noEsEfectivo(mov)) continue;
       if (mov.cuenta_destino_id === cuentaCajaDiaId) esperado += mov.monto;
@@ -104,6 +106,18 @@ export const recalcularEsperadoEfectivo = (caja: CajaDiaria, movimientos: Movimi
   }
   return redondear(esperado);
 };
+
+/**
+ * Lo que un cierre automático de medianoche (versiones anteriores) ya mandó a la Caja grande mientras
+ * esta caja estaba abierta. Al cerrar se descuenta de lo contado para no pasarlo dos veces.
+ */
+export const yaPasadoACajaGrande = (caja: CajaDiaria, movimientos: MovimientoFinanciero[]) =>
+  redondear(movimientosDeLaCaja(caja, movimientos)
+    .filter(mov => mov.tipo === 'transferencia'
+      && mov.cuenta_id === cuentaCajaDiaId
+      && mov.cuenta_destino_id === cuentaCajaGrandeId
+      && /^cierre autom/i.test(mov.descripcion || ''))
+    .reduce((suma, mov) => suma + mov.monto, 0));
 
 /**
  * La caja que está abierta ahora. Primero la de la jornada de hoy; si no hay, una que quedó abierta

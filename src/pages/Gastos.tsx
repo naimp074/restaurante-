@@ -25,6 +25,7 @@ import { SueldosDelMes } from '../components/Sueldos';
 import { gastosRecuperables } from '../lib/gastosRecuperables';
 import { efectivoDelCajon, nombreUsuario, periodoActual, registrarGasto } from '../lib/sueldos';
 import { useFichadas } from '../lib/fichadas';
+import { RevisionArqueosCajaGrande } from '../components/RevisionArqueosCajaGrande';
 
 const categoriasConfig: Record<CategoriaGasto, { label: string; color: string }> = {
   sueldo: { label: 'Sueldo', color: 'bg-purple-100 text-purple-700' },
@@ -54,6 +55,10 @@ const todayKey = () => dayKey();
 
 const formatMoney = (value: number) =>
   `$${value.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+/** Las correcciones de la Caja grande hechas con los arqueos (ver correccionCajaGrande.ts). */
+const esCorreccionArqueo = (movimiento: { origen: string; descripcion?: string }) =>
+  movimiento.origen === 'ajuste' && (movimiento.descripcion || '').startsWith('Corrección con el arqueo');
 
 const ordenCuentas = (cuentas: CuentaDinero[]) => {
   const prioridad = [cuentaCajaDiaId, cuentaCajaGrandeId, cuentaBancoId, 'cuenta-mercado-pago'];
@@ -593,8 +598,9 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
     const destinoSeleccionado = destinosTraspaso.find(cuenta => cuenta.id === traspasoDestinoId);
     const movimientosCuenta = cuentaAbierta
       ? movimientos.filter(movimiento =>
-          movimiento.origen === 'transferencia_interna'
-          && (movimiento.cuenta_id === cuentaAbierta.id || movimiento.cuenta_destino_id === cuentaAbierta.id)
+          (movimiento.origen === 'transferencia_interna'
+            && (movimiento.cuenta_id === cuentaAbierta.id || movimiento.cuenta_destino_id === cuentaAbierta.id))
+          || (esCorreccionArqueo(movimiento) && movimiento.cuenta_id === cuentaAbierta.id)
         )
       : [];
 
@@ -701,6 +707,18 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
             <p className="text-sm text-slate-500 mt-0.5">{cuentaAbierta.nombre}</p>
           </div>
 
+          {cuentaAbierta.id === cuentaCajaGrandeId && (user?.rol === 'admin' || user?.rol === 'encargado') && (
+            <RevisionArqueosCajaGrande
+              cajas={cajas}
+              movimientos={movimientos}
+              creadoPor={user?.id}
+              onCorregido={() => {
+                setCuentas(loadCuentasDinero());
+                setMovimientos(loadMovimientosFinancieros());
+              }}
+            />
+          )}
+
           <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
             <div>
               <h3 className="font-semibold text-slate-800">Pasar plata a</h3>
@@ -800,12 +818,13 @@ export default function Gastos({ apartadoInicial, onNavigate }: GastosProps) {
             ) : (
               <div className="divide-y divide-slate-100">
                 {movimientosCuenta.map(movimiento => {
-                  const sale = movimiento.cuenta_id === cuentaAbierta.id;
+                  const correccion = esCorreccionArqueo(movimiento);
+                  const sale = correccion ? movimiento.tipo === 'salida' : movimiento.cuenta_id === cuentaAbierta.id;
                   const destino = nombreCuenta(sale ? movimiento.cuenta_destino_id : movimiento.cuenta_id);
                   return (
                     <div key={movimiento.id} className="px-5 py-3 flex items-center justify-between gap-3">
                       <p className="text-sm font-medium text-slate-800">
-                        {sale ? `A ${destino}` : `De ${destino}`}
+                        {correccion ? movimiento.descripcion.replace(/:.*$/, '') : sale ? `A ${destino}` : `De ${destino}`}
                       </p>
                       <p className={`text-sm font-bold ${sale ? 'text-slate-800' : 'text-emerald-600'}`}>
                         {sale ? '−' : '+'}{formatMoney(movimiento.monto)}

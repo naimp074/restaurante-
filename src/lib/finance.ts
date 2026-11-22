@@ -10,7 +10,7 @@ import type {
 import { dayKey } from './fechas';
 import { leerTexto, withStoreTransaction, writeStore } from './storeSync';
 import { loadGastos, saveGastos } from './gastosStore';
-import { aplicarGastoEnCajaDia, efectivoEnCajaAbierta } from './cajaStore';
+import { aplicarGastoEnCajaDia, efectivoEnCajaAbierta, loadCajasDiarias } from './cajaStore';
 import { nuevoId } from './ids';
 
 export const cuentasDineroStorageKey = 'restaurant-cuentas-dinero';
@@ -100,10 +100,16 @@ const separarCajas = (cuentas: CuentaDinero[], hoy: string): CuentaDinero[] => {
   return [cajaDia, cajaGrande, ...resto];
 };
 
-/** Si quedo saldo de una jornada anterior sin cerrar, lo manda a la caja grande y deja el dia en cero. */
+/**
+ * Si quedo saldo de una jornada anterior sin cerrar, lo manda a la caja grande y deja el dia en cero.
+ * Con una caja abierta no se toca: esa plata sigue en el cajón (el turno pasó la medianoche o se olvidaron
+ * de cerrar) y la pasa el cierre con lo contado. Antes se arrastraba a la medianoche y la Caja grande
+ * recibía el saldo de la cuenta en vez del efectivo que de verdad quedó.
+ */
 const arrastrarCajaDia = (cuentas: CuentaDinero[], hoy: string): CuentaDinero[] => {
   const cajaDia = cuentas.find(cuenta => cuenta.id === cuentaCajaDiaId);
   if (!cajaDia || cajaDia.saldo_fecha === hoy) return cuentas;
+  if (loadCajasDiarias().some(caja => caja.estado === 'abierta')) return cuentas;
 
   const arrastre = cajaDia.saldo;
   const siguiente = cuentas.map(cuenta => {
@@ -180,12 +186,33 @@ export const transferirEntreCuentas = (data: {
   saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
 });
 
-/** Pasa el efectivo del mostrador a la caja grande y deja la caja del dia en cero. */
-export const cerrarCajaDia = (descripcion = 'Cierre de caja: efectivo del dia a caja grande') => withStoreTransaction(() => {
+const redondearPesos = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Pasa el efectivo del mostrador a la caja grande y deja la caja del dia en cero.
+ *
+ * Con `efectivoContado` (el conteo del cierre) a la Caja grande va exactamente lo contado en el cajón:
+ * fondo inicial + ventas en efectivo − gastos en efectivo, tal como quedó. El saldo de la cuenta Caja del día
+ * no sirve para eso: también le restan los gastos pagados por transferencia o tarjeta y los traspasos de
+ * transferencias, y no ve los faltantes. Lo que difiere se anota como ajuste del cierre.
+ *
+ * `yaPasado` es lo que un cierre automático viejo ya mandó a la Caja grande durante esta misma caja,
+ * para no contarlo dos veces.
+ */
+export const cerrarCajaDia = (
+  descripcion = 'Cierre de caja: efectivo del dia a caja grande',
+  efectivoContado?: number,
+  yaPasado = 0,
+) => withStoreTransaction(() => {
   const hoy = todayKey();
+  const ahora = new Date().toISOString();
   const cuentas = loadCuentasDinero();
   const cajaDia = cuentas.find(cuenta => cuenta.id === cuentaCajaDiaId);
-  const transferido = cajaDia?.saldo || 0;
+  const saldoDia = cajaDia?.saldo || 0;
+  const transferido = efectivoContado === undefined
+    ? saldoDia
+    : redondearPesos(Math.max(0, efectivoContado) - yaPasado);
+  const ajuste = redondearPesos(saldoDia - transferido);
 
   saveCuentasDinero(cuentas.map(cuenta => {
     if (cuenta.id === cuentaCajaDiaId) return { ...cuenta, saldo: 0, saldo_fecha: hoy };
@@ -193,20 +220,34 @@ export const cerrarCajaDia = (descripcion = 'Cierre de caja: efectivo del dia a 
     return cuenta;
   }));
 
+  const nuevos: MovimientoFinanciero[] = [];
   if (transferido !== 0) {
-    const movimiento: MovimientoFinanciero = {
+    nuevos.push({
       id: createId('mov-fin'),
       fecha: hoy,
       tipo: 'transferencia',
       origen: 'transferencia_interna',
-      cuenta_id: cuentaCajaDiaId,
-      cuenta_destino_id: cuentaCajaGrandeId,
-      monto: transferido,
+      // Si un cierre automático viejo ya había pasado de más, la diferencia vuelve de la caja grande.
+      cuenta_id: transferido > 0 ? cuentaCajaDiaId : cuentaCajaGrandeId,
+      cuenta_destino_id: transferido > 0 ? cuentaCajaGrandeId : cuentaCajaDiaId,
+      monto: Math.abs(transferido),
       descripcion,
-      created_at: new Date().toISOString(),
-    };
-    saveMovimientosFinancieros([movimiento, ...loadMovimientosFinancieros()]);
+      created_at: ahora,
+    });
   }
+  if (efectivoContado !== undefined && Math.abs(ajuste) >= 0.01) {
+    nuevos.push({
+      id: createId('mov-fin'),
+      fecha: hoy,
+      tipo: ajuste > 0 ? 'salida' : 'entrada',
+      origen: 'ajuste',
+      cuenta_id: cuentaCajaDiaId,
+      monto: Math.abs(ajuste),
+      descripcion: 'Cierre de caja: ajuste de la Caja del día al efectivo contado (no va a la caja grande)',
+      created_at: ahora,
+    });
+  }
+  if (nuevos.length) saveMovimientosFinancieros([...nuevos, ...loadMovimientosFinancieros()]);
 
   return transferido;
 });
