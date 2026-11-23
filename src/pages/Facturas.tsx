@@ -334,14 +334,7 @@ export default function Facturas() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">Facturas</h2>
-          <p className="text-sm text-slate-500">
-            {vista === 'arca'
-              ? 'Comprobantes enviados a ARCA. Los pendientes y rechazados se resuelven desde acá.'
-              : 'Todos los tickets. Rechazá la comanda si no va a ARCA, o cancelala si pagaron de otra forma.'}
-          </p>
-        </div>
+        <h2 className="text-xl font-bold text-slate-800">Facturas</h2>
         <button type="button" onClick={() => void cargar()} disabled={cargando} className={`${boton} flex items-center gap-1.5 self-start`}>
           <RefreshCw size={13} className={cargando ? 'animate-spin' : ''} />
           Actualizar
