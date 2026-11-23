@@ -1239,6 +1239,11 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
     </div>
   );
 
+  // En Arqueos, la Caja grande es la suma del efectivo contado en todos los cierres.
+  const arqueosCerrados = cajas.filter(caja =>
+    caja.estado === 'cerrada' && typeof caja.monto_cierre_efectivo === 'number' && Number.isFinite(caja.monto_cierre_efectivo));
+  const sumaEfectivoArqueos = Math.round(arqueosCerrados.reduce((suma, caja) => suma + (caja.monto_cierre_efectivo as number), 0) * 100) / 100;
+
   const renderArqueos = () => (
     <>
       {renderApartadosCaja()}
@@ -1246,7 +1251,7 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100">
             <h3 className="font-semibold text-slate-800">Saldos por cuenta</h3>
-            <p className="text-sm text-slate-500">La caja del día es el efectivo del mostrador de hoy; la caja grande es el acumulado.</p>
+            <p className="text-sm text-slate-500">La caja del día es el efectivo del mostrador de hoy; la caja grande es la suma del efectivo contado en todos los arqueos.</p>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4">
             {cuentasDinero.filter(cuenta => cuenta.activa).map(cuenta => (
@@ -1255,14 +1260,14 @@ export default function Caja({ vista = 'caja', apartadoInicial = 'dia' }: CajaPr
                 className={`rounded-xl border p-3 ${cuenta.id === cuentaCajaDiaId ? 'border-emerald-200 bg-emerald-50' : 'border-slate-100 bg-slate-50'}`}
               >
                 <p className={`text-xs ${cuenta.id === cuentaCajaDiaId ? 'text-emerald-700' : 'text-slate-500'}`}>{cuenta.nombre}</p>
-                <p className={`text-lg font-bold ${cuenta.saldo < 0 ? 'text-red-600' : 'text-slate-800'}`}>
-                  {formatMoney(cuenta.saldo)}
+                <p className={`text-lg font-bold ${(cuenta.id === cuentaCajaGrandeId ? sumaEfectivoArqueos : cuenta.saldo) < 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                  {formatMoney(cuenta.id === cuentaCajaGrandeId ? sumaEfectivoArqueos : cuenta.saldo)}
                 </p>
                 <p className="text-[11px] text-slate-400">
                   {cuenta.id === cuentaCajaDiaId
                     ? 'Solo hoy'
                     : cuenta.id === cuentaCajaGrandeId
-                      ? 'Acumulado'
+                      ? `Efectivo de ${arqueosCerrados.length} ${arqueosCerrados.length === 1 ? 'arqueo' : 'arqueos'}`
                       : cuenta.tipo.replace('_', ' ')}
                 </p>
               </div>
