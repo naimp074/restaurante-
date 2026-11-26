@@ -10,7 +10,8 @@ import type {
 import { dayKey } from './fechas';
 import { leerTexto, withStoreTransaction, writeStore } from './storeSync';
 import { loadGastos, saveGastos } from './gastosStore';
-import { aplicarGastoEnCajaDia, efectivoEnCajaAbierta, loadCajasDiarias } from './cajaStore';
+import { aplicarGastoEnCajaDia, loadCajasDiarias } from './cajaStore';
+import { efectivoEnCajaAbierta } from './esperadoCaja';
 import { nuevoId } from './ids';
 
 export const cuentasDineroStorageKey = 'restaurant-cuentas-dinero';
