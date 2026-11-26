@@ -344,6 +344,7 @@ export type TipoEventoComanda =
   | 'item_modificado'
   | 'item_eliminado'
   | 'item_anulado'
+  | 'precio_cambiado'
   | 'cobro_solicitado'
   | 'cobro_cancelado'
   | 'ticket_emitido'
@@ -406,6 +407,8 @@ export interface PedidoItem {
   /** Anulado después de salir de cocina: quién y por qué. */
   anulado_por?: string;
   motivo_anulacion?: string;
+  /** Precio que tenía antes de que se lo cambiaran a mano en la comanda (el de la carta). */
+  precio_original?: number;
   created_at: string;
   updated_at: string;
   producto?: Producto;

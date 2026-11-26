@@ -16,8 +16,8 @@ import { esDeSalon } from '../lib/pedidosCanal';
 import RelojItem from '../components/RelojItem';
 import { tomarMesaAAbrir } from '../lib/mesaAAbrir';
 import {
-  anularItem, bloqueoEdicion, cambiarDeMesa, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
-  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, liberarComandaVacia, nombreMedio, seReabrioSinAnular, unirComandas, nuevaSolicitud, puedeAnularItems, type Actor,
+  anularItem, bloqueoEdicion, cambiarDeMesa, cambiarPrecioItem, cancelarSolicitud, corregirItemPendiente, enviarACocina, estadoCobro,
+  estadoCobroConfig, itemSinEnviar, itemsSinEnviar, liberarComandaVacia, nombreMedio, seReabrioSinAnular, unirComandas, nuevaSolicitud, puedeAnularItems, puedeCambiarPrecio, type Actor,
 } from '../lib/cobroComanda';
 import SolicitarCobro from '../components/SolicitarCobro';
 import { imprimirCuentaMesa } from '../lib/cuentaMesa';
@@ -42,6 +42,7 @@ const textoEvento: Record<TipoEventoComanda, string> = {
   item_modificado: 'Corrigió',
   item_eliminado: 'Sacó',
   item_anulado: 'Anuló',
+  precio_cambiado: 'Cambió el precio',
   cobro_solicitado: 'Pidió el cobro',
   cobro_cancelado: 'Canceló el pedido de cobro',
   ticket_emitido: 'Caja imprimió el ticket',
@@ -88,6 +89,8 @@ export default function Pedidos() {
   const [newMozaId, setNewMozaId] = useState(() => (user && (user.rol === 'moza' || user.rol === 'encargado') ? user.id : ''));
   const borradorId = useRef<string | null>(null);
   const [pedidoError, setPedidoError] = useState('');
+  /** Cambio de precio a mano de un producto de la comanda (admin, encargado, cajero). */
+  const [editandoPrecio, setEditandoPrecio] = useState<{ itemId: string; precio: string; motivo: string } | null>(null);
   // Producto al que se le están eligiendo opciones; con item, se está corrigiendo uno ya cargado.
   const [eligiendo, setEligiendo] = useState<{ producto: Producto; item?: PedidoItem } | null>(null);
   const [verCobro, setVerCobro] = useState(false);
@@ -669,7 +672,76 @@ export default function Pedidos() {
                           <RelojItem item={item} />
                         </div>
                         <DetalleItem opciones={item.opciones} observaciones={item.observaciones} />
-                        <p className="text-xs text-slate-500 mt-0.5">${item.precio_unitario.toLocaleString()} c/u</p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <p className="text-xs text-slate-500">${item.precio_unitario.toLocaleString()} c/u</p>
+                          {item.precio_original !== undefined && item.precio_original !== item.precio_unitario && (
+                            <span className="text-[11px] text-slate-400 line-through">${item.precio_original.toLocaleString()}</span>
+                          )}
+                          {puedeCambiarPrecio(user?.rol) && !bloqueo && item.estado !== 'cancelado' && editandoPrecio?.itemId !== item.id && (
+                            <button
+                              type="button"
+                              onClick={() => { setPedidoError(''); setEditandoPrecio({ itemId: item.id, precio: String(item.precio_unitario), motivo: '' }); }}
+                              className="p-1 rounded-md text-slate-400 hover:text-amber-600 hover:bg-amber-50"
+                              title="Cambiar el precio en esta comanda"
+                              aria-label={`Cambiar el precio de ${item.producto?.nombre || 'el producto'}`}
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          )}
+                        </div>
+                        {editandoPrecio?.itemId === item.id && (
+                          <form
+                            className="mt-2 space-y-2 rounded-lg border border-amber-200 bg-white p-2"
+                            onSubmit={event => {
+                              event.preventDefault();
+                              try {
+                                updatePedido(cambiarPrecioItem(selectedPedido, item.id, Number(editandoPrecio.precio), editandoPrecio.motivo, actor));
+                                setEditandoPrecio(null);
+                              } catch (error) {
+                                setPedidoError(error instanceof Error ? error.message : 'No se pudo cambiar el precio.');
+                              }
+                            }}
+                          >
+                            <div className="flex gap-2">
+                              <label className="w-28 shrink-0">
+                                <span className="block text-[11px] font-semibold text-slate-500">Precio c/u</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  inputMode="numeric"
+                                  autoFocus
+                                  value={editandoPrecio.precio}
+                                  onChange={event => setEditandoPrecio({ ...editandoPrecio, precio: event.target.value })}
+                                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-amber-400"
+                                />
+                              </label>
+                              <label className="flex-1 min-w-0">
+                                <span className="block text-[11px] font-semibold text-slate-500">Motivo</span>
+                                <input
+                                  type="text"
+                                  maxLength={120}
+                                  placeholder="Ej: cambio por gaseosa de 1,5 L"
+                                  value={editandoPrecio.motivo}
+                                  onChange={event => setEditandoPrecio({ ...editandoPrecio, motivo: event.target.value })}
+                                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-amber-400"
+                                />
+                              </label>
+                            </div>
+                            <div className="flex justify-end gap-2">
+                              <button type="button" onClick={() => setEditandoPrecio(null)} className="px-3 py-1.5 text-xs font-medium text-slate-600 rounded-lg hover:bg-slate-100">
+                                Cancelar
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={!editandoPrecio.motivo.trim() || editandoPrecio.precio.trim() === ''}
+                                className="px-3 py-1.5 text-xs font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-400 disabled:opacity-40"
+                              >
+                                Guardar precio
+                              </button>
+                            </div>
+                          </form>
+                        )}
                         {item.motivo_anulacion && (
                           <p className="text-xs text-red-600 mt-0.5">Anulado por {item.anulado_por || 'sin usuario'}: {item.motivo_anulacion}</p>
                         )}

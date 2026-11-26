@@ -315,6 +315,46 @@ export const corregirItemPendiente = (
   return conEvento(corregido, actor, cantidad <= 0 ? 'item_eliminado' : 'item_modificado', detalle, at);
 };
 
+/** Los roles que pueden cambiar el precio de un producto en una comanda. */
+export const rolesCambianPrecio = ['admin', 'encargado', 'cajero'] as const;
+export const puedeCambiarPrecio = (rol?: string) => (rolesCambianPrecio as readonly string[]).includes(rol || '');
+
+/**
+ * Cambia a mano el precio de un producto en esta comanda (por ejemplo, la diferencia por otra gaseosa).
+ * No toca la carta ni el stock. Vale aunque cocina ya lo tenga: el precio no le cambia nada.
+ * No se puede en una comanda cobrada o con el ticket ya impreso, y queda en el historial con el motivo.
+ */
+export const cambiarPrecioItem = (
+  pedido: Pedido,
+  itemId: string,
+  precio: number,
+  motivo: string,
+  actor: Actor,
+  at = new Date().toISOString(),
+): Pedido => {
+  if (!puedeCambiarPrecio(actor.rol)) throw new Error('Solo admin, encargado o cajero pueden cambiar precios.');
+  const bloqueo = bloqueoEdicion(pedido);
+  if (bloqueo) throw new Error(bloqueo);
+  const item = (pedido.items || []).find(i => i.id === itemId);
+  if (!item) throw new Error('Ese producto ya no está en la comanda.');
+  if (item.estado === 'cancelado') throw new Error('Ese producto está anulado.');
+  const nuevoPrecio = Math.round(precio * 100) / 100;
+  if (!Number.isFinite(nuevoPrecio) || nuevoPrecio < 0) throw new Error('Poné un precio válido (cero o más).');
+  const razon = motivo.trim();
+  if (!razon) throw new Error('Escribí el motivo del cambio de precio.');
+  if (nuevoPrecio === item.precio_unitario) return pedido;
+  const nuevo: PedidoItem = {
+    ...item,
+    precio_unitario: nuevoPrecio,
+    subtotal: item.cantidad * nuevoPrecio,
+    precio_original: item.precio_original ?? item.precio_unitario,
+    updated_at: at,
+  };
+  const corregido = conTotales({ ...pedido, items: (pedido.items || []).map(i => (i.id === itemId ? nuevo : i)), updated_at: at });
+  const pesos = (n: number) => `$${n.toLocaleString('es-AR')}`;
+  return conEvento(corregido, actor, 'precio_cambiado', `${describir(item)}: ${pesos(item.precio_unitario)} → ${pesos(nuevoPrecio)} c/u. Motivo: ${razon}`, at);
+};
+
 /**
  * Anula un ítem que cocina ya empezó, preparó o entregó. Queda en la comanda tachado.
  * Con `cantidad` menor a la del renglón se anulan solo esas unidades (cargaron 2 y era 1):
