@@ -1,5 +1,6 @@
 import type { CajaDiaria, MovimientoFinanciero, Pago } from './types';
-import { cuentaCajaDiaId, cuentaCajaGrandeId } from './finance';
+import { cuentaCajaDiaId, cuentaCajaGrandeId, loadMovimientosFinancieros } from './finance';
+import { loadCajasDiarias } from './cajaStore';
 import { dayKey } from './fechas';
 
 const momento = (fecha?: string) => {
@@ -129,4 +130,19 @@ export const cajaAbiertaActual = (cajas: CajaDiaria[], hoy = dayKey()) => {
   return abiertas.find(caja => caja.fecha === hoy)
     || [...abiertas].sort((a, b) => (b.opened_at || b.fecha).localeCompare(a.opened_at || a.fecha))[0]
     || null;
+};
+
+/**
+ * El efectivo que tiene el cajón de la caja abierta (la de esa jornada, o la que quedó abierta).
+ * Se toma el mayor entre el "Esperado efectivo" que muestra la pantalla de Caja (rehecho con los movimientos)
+ * y el número guardado en la caja. Antes solo se usaba el guardado, que se va sumando de a poco y podía quedar
+ * atrasado (por ejemplo, $64.000 guardados con $237.000 en el cajón), y frenaba gastos que el cajón sí podía pagar.
+ * Sin caja abierta es cero: al cerrar, el efectivo pasó a la Caja grande.
+ */
+export const efectivoEnCajaAbierta = (fecha?: string) => {
+  const abiertas = loadCajasDiarias().filter(item => item.estado === 'abierta');
+  const caja = (fecha && abiertas.find(item => item.fecha === fecha))
+    || [...abiertas].sort((a, b) => (b.opened_at || b.fecha).localeCompare(a.opened_at || a.fecha))[0];
+  if (!caja) return 0;
+  return Math.max(caja.monto_esperado_efectivo || 0, recalcularEsperadoEfectivo(caja, loadMovimientosFinancieros()));
 };

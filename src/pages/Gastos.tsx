@@ -16,7 +16,8 @@ import {
 import { loadProveedores } from '../lib/proveedoresStore';
 import { dayKey } from '../lib/fechas';
 import { loadGastos, saveGastos, useGastos } from '../lib/gastosStore';
-import { aplicarGastoEnCajaDia, efectivoEnCajaAbierta, useCajas } from '../lib/cajaStore';
+import { aplicarGastoEnCajaDia, useCajas } from '../lib/cajaStore';
+import { efectivoEnCajaAbierta } from '../lib/esperadoCaja';
 import { nuevoId } from '../lib/ids';
 import { withStoreTransaction } from '../lib/storeSync';
 import { cajaAbiertaActual, efectivoGastadoDeLaCaja, recalcularEsperadoEfectivo } from '../lib/esperadoCaja';
