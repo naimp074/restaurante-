@@ -20,16 +20,16 @@ import {
 } from 'lucide-react';
 import type { CompraDraft, CompraItemDraft, CondicionPagoCompra, Ingrediente, MetodoPago, MovimientoStock, OrigenCompra, ProduccionPreparada, TipoComprobanteCompra, UnidadMedida } from '../lib/types';
 import { loadProveedores } from '../lib/proveedoresStore';
-import { loadProductos, saveProductos } from '../lib/productosStore';
+import { loadProductos, saveProductos, useProductos } from '../lib/productosStore';
+import { useCategorias } from '../lib/categoriasStore';
+import { productosDelInsumo } from '../lib/stockEnCarta';
+import { VenderEnCarta } from '../components/VenderEnCarta';
 import {
   actualizarCostosProductos,
   actualizarCostosProducciones,
   aplicarPreciosSugeridos,
   analizarImpactoCompra,
-  comboDelInsumo,
-  crearComboDesdeInsumo,
   detectarCambiosCosto,
-  redondearPrecio,
 } from '../lib/costosReceta';
 import type { InsumoEncarecido } from '../lib/costosReceta';
 import BuscadorInsumo from '../components/BuscadorInsumo';
@@ -262,11 +262,11 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
   const [confirmacionCosto, setConfirmacionCosto] = useState<InsumoEncarecido[] | null>(null);
   const [costosElegidos, setCostosElegidos] = useState<Record<string, boolean>>({});
   const [comboIng, setComboIng] = useState<Ingrediente | null>(null);
-  const [comboNombre, setComboNombre] = useState('');
-  const [comboCantidad, setComboCantidad] = useState('1');
-  const [comboPrecio, setComboPrecio] = useState('');
-  const [comboError, setComboError] = useState('');
   const [comboAviso, setComboAviso] = useState('');
+  const productosCarta = useProductos();
+  const categoriasCarta = useCategorias();
+  /** Cuántos productos de la carta descuentan este insumo. */
+  const enCarta = (insumoId: string) => productosDelInsumo(insumoId, productosCarta).length;
   const [busquedaStock, setBusquedaStock] = useState('');
   const compraEnProceso = useRef(false);
   const costosMarcados = confirmacionCosto
@@ -455,52 +455,10 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
     setShowForm(true);
   };
 
-  const comboExistente = comboIng ? comboDelInsumo(loadProductos(), comboIng.id) : undefined;
-  const comboCantidadNum = parseFloat(comboCantidad) || 0;
-  const comboCosto = comboIng ? comboCantidadNum * comboIng.costo_por_unidad : 0;
-  const comboPrecioSugerido = comboCosto > 0 ? redondearPrecio(comboCosto / 0.5) : 0;
-
+  /** "Vender en carta": crea el producto en Cartas o lo une a uno que ya está (ver VenderEnCarta). */
   const abrirComboDesdeInsumo = (ing: Ingrediente) => {
-    const existente = comboDelInsumo(loadProductos(), ing.id);
-    setComboIng(ing);
-    setComboNombre(existente?.nombre || ing.nombre);
-    setComboCantidad(String(existente?.receta?.[0]?.cantidad || 1));
-    setComboPrecio(existente?.precio_venta ? String(existente.precio_venta) : '');
-    setComboError('');
     setComboAviso('');
-  };
-
-  const guardarComboDesdeInsumo = () => {
-    if (!comboIng) return;
-    const precioVenta = parseFloat(comboPrecio) || 0;
-    if (!comboNombre.trim()) {
-      setComboError('Poné el nombre con el que se va a vender.');
-      return;
-    }
-    if (comboCantidadNum <= 0) {
-      setComboError('La cantidad que se descuenta por venta tiene que ser mayor a cero.');
-      return;
-    }
-    if (precioVenta <= 0) {
-      setComboError('Poné el precio de venta para poder ofrecerlo en el menú.');
-      return;
-    }
-
-    const existente = comboDelInsumo(loadProductos(), comboIng.id);
-    const combo = crearComboDesdeInsumo(comboIng, {
-      nombre: comboNombre,
-      precioVenta,
-      cantidad: comboCantidadNum,
-      existente,
-    });
-    const actuales = loadProductos();
-    saveProductos(existente
-      ? actuales.map(producto => producto.id === combo.id ? combo : producto)
-      : [combo, ...actuales]);
-    setComboAviso(existente
-      ? `Actualizamos el combo ${combo.nombre}. Ya se puede vender.`
-      : `${combo.nombre} quedó en Combos y se puede vender suelto.`);
-    setComboIng(null);
+    setComboIng(ing);
   };
 
   const openCompra = (origen: OrigenCompra = 'manual', items: CompraItemDraft[] = []) => {
@@ -1901,10 +1859,12 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                         </button>
                         <button
                           onClick={() => abrirComboDesdeInsumo(ing)}
-                          className="px-2 py-1 rounded-lg text-xs font-semibold text-amber-700 hover:bg-amber-50 transition-colors whitespace-nowrap"
-                          title="Crear un combo para venderlo suelto"
+                          className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                            enCarta(ing.id) ? 'text-emerald-700 hover:bg-emerald-50' : 'text-amber-700 hover:bg-amber-50'
+                          }`}
+                          title={enCarta(ing.id) ? 'Se vende en la carta y descuenta de este stock' : 'Ponerlo en la carta para venderlo'}
                         >
-                          Agregar a combo
+                          {enCarta(ing.id) ? `En carta (${enCarta(ing.id)})` : 'Vender en carta'}
                         </button>
                       </div>
                     </td>
@@ -2465,7 +2425,7 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
                 onClick={() => abrirComboDesdeInsumo(selectedIngrediente)}
                 className="px-4 py-2.5 border border-amber-200 text-amber-800 rounded-xl text-sm font-semibold hover:bg-amber-50 transition-colors"
               >
-                {comboDelInsumo(loadProductos(), selectedIngrediente.id) ? 'Editar combo' : 'Agregar a combo'}
+                {enCarta(selectedIngrediente.id) ? `En carta (${enCarta(selectedIngrediente.id)})` : 'Vender en carta'}
               </button>
               <button
                 onClick={() => setSelectedIngId(null)}
@@ -2479,94 +2439,13 @@ export default function Stock({ apartadoInicial = 'stock' }: StockProps) {
       )}
 
       {comboIng && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-0 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-start justify-between p-6 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-800 text-lg">
-                  {comboExistente ? 'Editar combo' : 'Agregar a combo'}
-                </h3>
-                <p className="text-sm text-slate-500">
-                  {comboExistente
-                    ? `${comboIng.nombre} ya se vende suelto. Podés cambiar el nombre, la cantidad o el precio.`
-                    : `Vas a crear un combo de ${comboIng.nombre} para venderlo solo. Al cobrarlo se descuenta del stock.`}
-                </p>
-              </div>
-              <button onClick={() => setComboIng(null)} className="text-slate-400 hover:text-slate-600" aria-label="Cerrar">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre en el menú</label>
-                <input
-                  value={comboNombre}
-                  onChange={e => setComboNombre(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-                  placeholder="Ej: Tortilla"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Cantidad por venta</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.001"
-                    value={comboCantidad}
-                    onChange={e => setComboCantidad(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-right outline-none focus:border-amber-400"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">{comboIng.unidad_medida}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Precio de venta</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={comboPrecio}
-                    onChange={e => setComboPrecio(e.target.value)}
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-right outline-none focus:border-amber-400"
-                    placeholder="0"
-                  />
-                  {comboPrecioSugerido > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setComboPrecio(String(comboPrecioSugerido))}
-                      className="text-xs font-semibold text-amber-600 mt-1 hover:text-amber-700"
-                    >
-                      Sugerido {pesos(comboPrecioSugerido)}
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-sm text-slate-600">
-                Costo {pesos(comboCosto)} por {comboCantidadNum || 0} {comboIng.unidad_medida}
-              </div>
-              {comboError && (
-                <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 text-sm text-amber-700">
-                  {comboError}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button
-                onClick={() => setComboIng(null)}
-                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm font-medium hover:bg-slate-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={guardarComboDesdeInsumo}
-                className="flex-1 py-2.5 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-400"
-              >
-                {comboExistente ? 'Guardar combo' : 'Agregar a combo'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <VenderEnCarta
+          insumo={comboIng}
+          productos={productosCarta}
+          categorias={categoriasCarta}
+          onClose={() => setComboIng(null)}
+          onListo={mensaje => { setComboAviso(mensaje); setComboIng(null); }}
+        />
       )}
 
       {confirmacionCosto && (
